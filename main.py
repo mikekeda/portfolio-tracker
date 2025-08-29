@@ -11,8 +11,10 @@ Designed for UK ISAs (no tax logic) but easy to extend.
 * Run ad‑hoc: ``python main.py``
 * Schedule via cron / GitHub Actions for daily Slack posts
 
-You **must** set an environment variable:
+You **must** set environment variables:
 export TRADING212_API_KEY="live‑api‑key‑goes‑here"
+export DB_NAME="your_database_name"
+export DB_PASSWORD="your_database_password"
 """
 from __future__ import annotations
 
@@ -35,7 +37,9 @@ import yfinance as yf
 import numpy as np
 
 from data import STOCKS_SUFFIX, STOCKS_ALIASES, STOCKS_DELISTED, ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
-from db import currency_table, DailyPriceManager
+from models import init_database
+from database import get_db_service
+from currency import get_currency_service
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration  ───────────────────────────────────────────────────────────────
@@ -44,7 +48,7 @@ API_KEY: str = os.environ["TRADING212_API_KEY"]
 CACHE_DIR = Path("~/.cache/t212").expanduser()
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-PRICE_FIELD = "Adj Close"            # or "Close" if you prefer raw closes
+PRICE_FIELD = "adj_close_price"            # or "Close" if you prefer raw closes
 BATCH_SIZE_YF = 25                    # tickers per yahoo request
 REQUEST_RETRY = 5
 REQUEST_SLEEP = 1.0                   # polite pause between Yahoo calls
@@ -57,7 +61,9 @@ RED   = "\033[91m"
 GREEN = "\033[92m"
 RESET = "\033[0m"
 
-price_manager = DailyPriceManager()
+# Initialize services
+db_service = get_db_service()
+currency_service = get_currency_service()
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -158,8 +164,8 @@ def fetch_portfolio() -> Iterable[Holding]:
 
     instr_map = fetch_instruments()
 
-    tickers = [instr_map[h["ticker"]].yahoo for h in raw]
-    hist = price_manager.history(tickers, datetime.now() - timedelta(days=7), datetime.now(), PRICE_FIELD)
+    tickers = [instr_map[h["ticker"]].yahoo for h in raw if instr_map[h["ticker"]].yahoo]
+    hist = db_service.get_price_history(tickers, datetime.now() - timedelta(days=8), datetime.now() - timedelta(days=1), PRICE_FIELD)
 
     return [
         Holding(
@@ -169,7 +175,7 @@ def fetch_portfolio() -> Iterable[Holding]:
             current_price=h["currentPrice"],
             ppl=h["ppl"],
             fx_ppl=h["fxPpl"] or 0.0,
-            prices=hist[instr_map[h["ticker"]].yahoo]
+            prices=hist[instr_map[h["ticker"]].yahoo] if instr_map[h["ticker"]].yahoo in hist.columns else None
         )
         for h in raw
     ]
@@ -196,12 +202,16 @@ def yahoo_profile(symbol: str) -> dict:  # cached 24h
 # ----------------------------------------------------------------------------
 
 def build_snapshot(holdings) -> pd.DataFrame:
-    rates = currency_table()
+    rates = currency_service.get_currency_table()
 
     records: list[dict] = []
     for h in holdings:
         gbp_value = h.market_value_native * rates[h.instr.currency]
-        info = yahoo_profile(h.instr.yahoo)
+        info = yahoo_profile(h.instr.yahoo) if h.instr.yahoo else {}
+
+        # Calculate return percentage safely
+        cost_basis = gbp_value - h.ppl
+        return_pct = round(h.ppl / cost_basis * 100.0, 2) if cost_basis > 0 else 0.0
 
         records.append(
             {
@@ -210,7 +220,7 @@ def build_snapshot(holdings) -> pd.DataFrame:
                 "%": 0.0,
                 "value_gbp": gbp_value,
                 "profit": h.ppl,
-                "return": round(h.ppl / (gbp_value - h.ppl) * 100.0, 2),
+                "return": return_pct,
                 "prediction": round((info["targetMedianPrice"] / h.current_price - 1) * 100.0) if info.get("targetMedianPrice") else "",
                 "instit": round(info["heldPercentInstitutions"] * 100.0) if info.get("heldPercentInstitutions") else "",
                 "marketCap": round(info["marketCap"] / 1_000_000_000.0) if info.get("marketCap") else "",
@@ -277,21 +287,21 @@ def etf_equity_allocation(df: pd.DataFrame) -> pd.Series:
     """
     Return % of portfolio in ETFs vs direct equities.
     """
-    # 1. make a clean “kind” Series
+    # 1. make a clean "kind" Series
     kind = df["quoteType"].fillna("EQUITY").where(df["quoteType"] == "ETF", "EQUITY")
 
     # 2. aggregate and convert to %
     value_by_kind = df.groupby(kind)["value_gbp"].sum()
     pct = (value_by_kind / value_by_kind.sum() * 100).round(2)
 
-    # 3. remove the index name so it doesn’t print
+    # 3. remove the index name so it doesn't print
     pct = pct.rename_axis(None)
 
     return pct
 
 def daily_changes(df: pd.DataFrame, lookback: int = 7) -> pd.Series:
     syms = df.index.dropna().tolist()
-    hist = price_manager.history(syms, datetime.now() - timedelta(days=lookback), datetime.now(), PRICE_FIELD)
+    hist = db_service.get_price_history(syms, datetime.now() - timedelta(days=lookback), datetime.now() - timedelta(days=1), PRICE_FIELD)
     # use first valid price in window per symbol
     first_px = hist.apply(lambda s: s.dropna().iloc[0] if s.notna().any() else np.nan)
     out = (df["current_price"].astype(float).reindex(first_px.index) / first_px - 1).round(4)
@@ -328,7 +338,7 @@ def colour_money(x: float, /, *, pct: bool=False,
     is_negative = x < min_
 
     if is_positive or is_negative:
-        # XOR decides whether the “alert” colour should be red
+        # XOR decides whether the "alert" colour should be red
         want_red = is_negative ^ reverse
         colour   = RED if want_red else GREEN
         return f"{colour}{val}{RESET}"
@@ -343,6 +353,14 @@ def colour_money(x: float, /, *, pct: bool=False,
 
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s ▸ %(message)s")
+
+    # Initialize database
+    try:
+        init_database()
+        logging.debug("Database initialized successfully")
+    except Exception as e:
+        logging.error("Failed to initialize database: %s", e)
+        sys.exit(1)
 
     number_of_holdings = 100
     holdings = fetch_portfolio()
