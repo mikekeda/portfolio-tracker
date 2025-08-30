@@ -27,7 +27,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import sleep
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Set
 
 import pandas as pd
 import requests
@@ -39,7 +39,7 @@ from models import init_database
 from database import get_db_service
 from currency import get_currency_service
 from config import (
-    TRADING212_API_KEY, CACHE_DIR, PRICE_FIELD, REQUEST_RETRY, MAX_HOLDINGS_DISPLAY, MAX_COUNTRIES_DISPLAY,
+    TRADING212_API_KEY, CACHE_DIR, PRICE_FIELD, REQUEST_RETRY, MAX_COUNTRIES_DISPLAY,
     MAX_SECTORS_DISPLAY, MAX_PERFORMERS_DISPLAY, RED, GREEN, RESET, validate_config
 )
 
@@ -137,9 +137,25 @@ def request_json(url: str, headers: Mapping[str, str], retries: int = REQUEST_RE
 # Data pulls  ─────────────────────────────────────────────────────────────────
 # ----------------------------------------------------------------------------
 
-def fetch_instruments() -> dict[str, Instrument]:
+def fetch_instruments(tickers: Set[str]) -> dict[str, Instrument]:
     url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
     raw = request_json(url, {"Authorization": TRADING212_API_KEY})
+
+    # Store instruments in database
+    instruments_data = []
+    for item in raw:
+        if item["ticker"] in tickers:
+            instruments_data.append({
+                't212_code': item["ticker"],
+                'name': item["name"],
+                'currency': item["currencyCode"],
+                'yahoo_symbol': convert_ticker(item["ticker"]) if item["ticker"] not in STOCKS_DELISTED else None
+            })
+
+    # Save to database
+    db_service.save_instruments(instruments_data)
+    logging.debug(f"Saved {len(instruments_data)} instruments to database")
+
     return {i["ticker"]: Instrument(i["ticker"], i["name"], i["currencyCode"]) for i in raw}
 
 
@@ -148,12 +164,12 @@ def fetch_portfolio() -> Iterable[Holding]:
     raw = request_json(url, {"Authorization": TRADING212_API_KEY})
     raw = [h for h in raw if h["ticker"] not in STOCKS_DELISTED]
 
-    instr_map = fetch_instruments()
+    instr_map = fetch_instruments({h["ticker"] for h in raw})
 
     tickers = [instr_map[h["ticker"]].yahoo for h in raw if instr_map[h["ticker"]].yahoo]
     hist = db_service.get_price_history(tickers, datetime.now() - timedelta(days=8), datetime.now() - timedelta(days=1), PRICE_FIELD)
 
-    return [
+    holdings = [
         Holding(
             instr=instr_map[h["ticker"]],
             quantity=h["quantity"],
@@ -165,6 +181,35 @@ def fetch_portfolio() -> Iterable[Holding]:
         )
         for h in raw
     ]
+
+    # Store holdings in database
+    holdings_data = []
+    for holding in holdings:
+        # Get Yahoo Finance data for additional metadata
+        yahoo_info = yahoo_profile(holding.instr.yahoo) if holding.instr.yahoo else {}
+
+        holdings_data.append({
+            't212_code': holding.instr.t212_code,
+            'name': holding.instr.name,
+            'currency': holding.instr.currency,
+            'yahoo_symbol': holding.instr.yahoo,
+            'quantity': holding.quantity,
+            'avg_price': holding.avg_price,
+            'current_price': holding.current_price,
+            'ppl': holding.ppl,
+            'fx_ppl': holding.fx_ppl,
+            'country': yahoo_info.get("country", "Other"),
+            'sector': yahoo_info.get("sector", "Other"),
+            'market_cap': yahoo_info.get("marketCap"),
+            'pe_ratio': yahoo_info.get("trailingPE"),
+            'beta': yahoo_info.get("beta"),
+        })
+
+    # Save to database
+    db_service.save_holdings(holdings_data)
+    logging.info(f"Saved {len(holdings_data)} holdings to database")
+
+    return holdings
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Finance helpers  ────────────────────────────────────────────────────────────
@@ -412,8 +457,8 @@ def main():
     print()
 
     # Calculate summary statistics
-    total_value = snapshot["value_gbp"].sum()
-    total_profit = snapshot["profit"].sum()
+    total_value = float(snapshot["value_gbp"].sum())
+    total_profit = float(snapshot["profit"].sum())
     total_return_pct = (total_profit / (total_value - total_profit) * 100) if (total_value - total_profit) > 0 else 0
 
     # Portfolio summary
@@ -486,6 +531,20 @@ def main():
 
     print()
     print("=" * 80)
+
+    # Store portfolio snapshot in database
+    snapshot_data = {
+        'total_value': total_value,
+        'total_profit': total_profit,
+        'total_return_pct': total_return_pct,
+        'snapshot_date': datetime.now().date(),
+        'country_allocation': country_alloc.to_dict(),
+        'sector_allocation': sector_alloc.to_dict(),
+        'etf_equity_split': etf_equity.to_dict(),
+    }
+
+    db_service.save_portfolio_snapshot(snapshot_data)
+    logging.info("Saved portfolio snapshot to database")
 
 
 if __name__ == "__main__":

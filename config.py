@@ -58,8 +58,8 @@ def validate_config():
     """Validate that all required configuration is present."""
     if not TRADING212_API_KEY:
         raise ValueError("TRADING212_API_KEY environment variable is required")
-    
+
     if not DB_PASSWORD:
         raise ValueError("DB_PASSWORD environment variable is required")
-    
+
     return True
