@@ -188,6 +188,12 @@ def fetch_portfolio() -> Iterable[Holding]:
         # Get Yahoo Finance data for additional metadata
         yahoo_info = yahoo_profile(holding.instr.yahoo) if holding.instr.yahoo else {}
 
+        db_service.update_instrument_metadata(
+            t212_code=holding.instr.t212_code,
+            sector=yahoo_info.get("sector"),
+            country=yahoo_info.get("country")
+        )
+
         holdings_data.append({
             't212_code': holding.instr.t212_code,
             'name': holding.instr.name,
