@@ -5,10 +5,10 @@ Handles currency conversion with database caching.
 """
 
 import logging
+import requests
 from datetime import date
 from typing import Dict, Optional
 
-from forex_python.converter import CurrencyRates
 from database import get_db_service
 from config import FALLBACK_RATES
 
@@ -20,7 +20,6 @@ class CurrencyService:
 
     def __init__(self):
         self.db_service = get_db_service()
-        self.converter = CurrencyRates()
         self.fallback_rates = FALLBACK_RATES
 
     def get_currency_table(self) -> Dict[str, float]:
@@ -30,33 +29,76 @@ class CurrencyService:
         """
         today = date.today()
         table = {"GBX": 0.01, "GBP": 1.0}  # Base currencies
-        currency_source_ready = True
 
         # Try to get rates from database first
+        currencies_to_fetch = []
         for currency in ["USD", "EUR", "CAD"]:
             cached_rate = self.db_service.get_currency_rate(currency, "GBP", today)
             if cached_rate:
                 table[currency] = cached_rate
-                continue
+            else:
+                currencies_to_fetch.append(currency)
 
-            # Try to fetch from API
-            rate = None
-            if currency_source_ready:
-                try:
-                    rate = self.converter.get_rate(currency, "GBP")
-                    self.db_service.save_currency_rate(currency, "GBP", rate, today)
-                    table[currency] = rate
-                    logger.info("Fetched fresh rate for %s/GBP: %f", currency, rate)
-                except Exception as exc:
-                    currency_source_ready = False
-                    logger.warning("Currency API failed for %s, using fallback rate %f: %s",
-                                   currency, self.fallback_rates[currency], exc)
-
-            if not rate:
-                # Use fallback rate
-                table[currency] = self.fallback_rates[currency]
+        # Fetch missing rates from API in batch
+        if currencies_to_fetch:
+            try:
+                rates = self._fetch_rates_batch(currencies_to_fetch)
+                for currency, rate in rates.items():
+                    if rate:
+                        self.db_service.save_currency_rate(currency, "GBP", rate, today)
+                        table[currency] = rate
+                        logger.info("Fetched fresh rate for %s/GBP: %f", currency, rate)
+                    else:
+                        table[currency] = self.fallback_rates[currency]
+                        logger.warning("Using fallback rate for %s: %f", currency, self.fallback_rates[currency])
+            except Exception as exc:
+                logger.warning("Currency API failed, using fallback rates: %s", exc)
+                for currency in currencies_to_fetch:
+                    table[currency] = self.fallback_rates[currency]
 
         return table
+
+    def _fetch_rates_batch(self, currencies: list) -> Dict[str, float]:
+        """Fetch currency rates from a reliable API in batch."""
+        rates = {}
+
+        # Use exchangerate-api.com (free tier available)
+        try:
+            url = "https://api.exchangerate-api.com/v4/latest/GBP"
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            # Convert from GBP to other currencies (invert the rates)
+            for currency in currencies:
+                if currency in data['rates']:
+                    # Invert the rate since we want TO GBP, not FROM GBP
+                    rates[currency] = 1.0 / data['rates'][currency]
+                else:
+                    rates[currency] = None
+
+        except Exception as e:
+            logger.warning("exchangerate-api.com failed: %s", e)
+
+            # Fallback to a simpler API
+            try:
+                for currency in currencies:
+                    url = f"https://api.exchangerate.host/latest?base={currency}&symbols=GBP"
+                    response = requests.get(url, timeout=5)
+                    response.raise_for_status()
+                    data = response.json()
+
+                    if 'rates' in data and 'GBP' in data['rates']:
+                        rates[currency] = data['rates']['GBP']
+                    else:
+                        rates[currency] = None
+
+            except Exception as e2:
+                logger.warning("exchangerate.host also failed: %s", e2)
+                for currency in currencies:
+                    rates[currency] = None
+
+        return rates
 
     def convert_to_gbp(self, amount: float, from_currency: str) -> float:
         """Convert amount from given currency to GBP."""
@@ -91,19 +133,26 @@ class CurrencyService:
         today = date.today()
         table = {"GBX": 0.01, "GBP": 1.0}
 
-        for currency in ["USD", "EUR", "CAD"]:
-            try:
-                rate = self.converter.get_rate(currency, "GBP")
-                self.db_service.save_currency_rate(currency, "GBP", rate, today)
-                table[currency] = rate
-                logger.info("Refreshed rate for %s/GBP: %f", currency, rate)
-            except Exception as exc:
-                fallback_rate = self.fallback_rates.get(currency)
-                if fallback_rate:
-                    table[currency] = fallback_rate
-                    logger.warning("Failed to refresh %s rate, using fallback: %s", currency, exc)
+        currencies = ["USD", "EUR", "CAD"]
+        try:
+            rates = self._fetch_rates_batch(currencies)
+            for currency in currencies:
+                rate = rates.get(currency)
+                if rate:
+                    self.db_service.save_currency_rate(currency, "GBP", rate, today)
+                    table[currency] = rate
+                    logger.info("Refreshed rate for %s/GBP: %f", currency, rate)
                 else:
-                    logger.error("No fallback rate for %s", currency)
+                    fallback_rate = self.fallback_rates.get(currency)
+                    if fallback_rate:
+                        table[currency] = fallback_rate
+                        logger.warning("Failed to refresh %s rate, using fallback", currency)
+                    else:
+                        logger.error("No fallback rate for %s", currency)
+        except Exception as exc:
+            logger.warning("Failed to refresh rates, using fallbacks: %s", exc)
+            for currency in currencies:
+                table[currency] = self.fallback_rates.get(currency, 1.0)
 
         return table
 
