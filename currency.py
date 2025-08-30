@@ -10,6 +10,7 @@ from typing import Dict, Optional
 
 from forex_python.converter import CurrencyRates
 from database import get_db_service
+from config import FALLBACK_RATES
 
 logger = logging.getLogger(__name__)
 
@@ -20,13 +21,7 @@ class CurrencyService:
     def __init__(self):
         self.db_service = get_db_service()
         self.converter = CurrencyRates()
-        self.fallback_rates = {
-            "GBX": 0.01,
-            "GBP": 1.0,
-            "USD": 0.74,
-            "EUR": 0.87,
-            "CAD": 0.54,
-        }
+        self.fallback_rates = FALLBACK_RATES
     
     def get_currency_table(self) -> Dict[str, float]:
         """

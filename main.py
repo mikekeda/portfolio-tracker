@@ -20,14 +20,12 @@ from __future__ import annotations
 
 import logging
 import json
-import os
 import re
 import sys
 
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from pathlib import Path
 from time import sleep
 from typing import Iterable, Mapping
 
@@ -40,26 +38,14 @@ from data import STOCKS_SUFFIX, STOCKS_ALIASES, STOCKS_DELISTED, ETF_COUNTRY_ALL
 from models import init_database
 from database import get_db_service
 from currency import get_currency_service
+from config import (
+    TRADING212_API_KEY, CACHE_DIR, PRICE_FIELD, REQUEST_RETRY, MAX_HOLDINGS_DISPLAY, MAX_COUNTRIES_DISPLAY,
+    MAX_SECTORS_DISPLAY, MAX_PERFORMERS_DISPLAY, RED, GREEN, RESET, validate_config
+)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Configuration  ───────────────────────────────────────────────────────────────
 # ----------------------------------------------------------------------------
-API_KEY: str = os.environ["TRADING212_API_KEY"]
-CACHE_DIR = Path("~/.cache/t212").expanduser()
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-PRICE_FIELD = "adj_close_price"            # or "Close" if you prefer raw closes
-BATCH_SIZE_YF = 25                    # tickers per yahoo request
-REQUEST_RETRY = 5
-REQUEST_SLEEP = 1.0                   # polite pause between Yahoo calls
-HISTORY_YEARS = 10
-
-BENCH = "SPY"         # or VUAG.L to keep GBP base
-RISK_FREE = 0.045     # annual risk-free guess (4.5 %); replace with 3-month T-bill
-
-RED   = "\033[91m"
-GREEN = "\033[92m"
-RESET = "\033[0m"
 
 # Initialize services
 db_service = get_db_service()
@@ -153,13 +139,13 @@ def request_json(url: str, headers: Mapping[str, str], retries: int = REQUEST_RE
 
 def fetch_instruments() -> dict[str, Instrument]:
     url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
-    raw = request_json(url, {"Authorization": API_KEY})
+    raw = request_json(url, {"Authorization": TRADING212_API_KEY})
     return {i["ticker"]: Instrument(i["ticker"], i["name"], i["currencyCode"]) for i in raw}
 
 
 def fetch_portfolio() -> Iterable[Holding]:
     url = "https://live.trading212.com/api/v0/equity/portfolio"
-    raw = request_json(url, {"Authorization": API_KEY})
+    raw = request_json(url, {"Authorization": TRADING212_API_KEY})
     raw = [h for h in raw if h["ticker"] not in STOCKS_DELISTED]
 
     instr_map = fetch_instruments()
@@ -202,6 +188,7 @@ def yahoo_profile(symbol: str) -> dict:  # cached 24h
 # ----------------------------------------------------------------------------
 
 def build_snapshot(holdings) -> pd.DataFrame:
+    # Get currency rates once for all conversions
     rates = currency_service.get_currency_table()
 
     records: list[dict] = []
@@ -354,6 +341,14 @@ def colour_money(x: float, /, *, pct: bool=False,
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s ▸ %(message)s")
 
+    # Validate configuration
+    try:
+        validate_config()
+        logging.debug("Configuration validated successfully")
+    except Exception as e:
+        logging.error("Configuration error: %s", e)
+        sys.exit(1)
+
     # Initialize database
     try:
         init_database()
@@ -365,6 +360,7 @@ def main():
     number_of_holdings = 100
     holdings = fetch_portfolio()
     snapshot = build_snapshot(holdings)
+
     colored_snapshot = snapshot.copy()
     print(f"Portfolio ({len(colored_snapshot)}):")
     print(colored_snapshot.index.tolist())
@@ -413,29 +409,83 @@ def main():
         lambda x: colour_money(x, min_=0, max_=20, pct=True, reverse=True, sign=False)
     )
     print(colored_snapshot.head(number_of_holdings).to_markdown(floatfmt=".2f"))
-    print("\nTotal ISA value £{:.2f}".format(snapshot["value_gbp"].sum()))
-    print("Total ISA profit £{:.2f} ({:.0f}%)".format(snapshot["profit"].sum(), snapshot["profit"].sum() / (snapshot["value_gbp"].sum() - snapshot["profit"].sum()) * 100.0))
+    print()
 
-    print(f"\nETF / Equity split:")
-    print(etf_equity_allocation(snapshot).to_string(float_format=lambda x: f"{x:5.2f}%"))
+    # Calculate summary statistics
+    total_value = snapshot["value_gbp"].sum()
+    total_profit = snapshot["profit"].sum()
+    total_return_pct = (total_profit / (total_value - total_profit) * 100) if (total_value - total_profit) > 0 else 0
 
-    print("\nCountry allocation:")
-    print(country_allocation(snapshot).to_string(float_format=lambda x: f"{x:5.2f}%"))
+    # Portfolio summary
+    print("=" * 80)
+    print("📊 PORTFOLIO SUMMARY")
+    print("=" * 80)
+    print(f"💰 Total Value: £{total_value:,.2f}")
+    print(f"📈 Total Profit: £{total_profit:,.2f} ({total_return_pct:.1f}%)")
+    print(f"📦 Number of Holdings: {len(snapshot)}")
+    print(f"🏢 Top 5 Holdings: {', '.join(snapshot.head(5).index.tolist())}")
 
-    print("\nSector allocation:")
-    print(sector_allocation(snapshot).to_string(float_format=lambda x: f"{x:5.2f}%"))
+    # Risk metrics
+    profitable_holdings = snapshot[snapshot["profit"] > 0]
+    losing_holdings = snapshot[snapshot["profit"] < 0]
 
-    # Daily change
+    print(f"✅ Profitable Positions: {len(profitable_holdings)} ({len(profitable_holdings)/len(snapshot)*100:.1f}%)")
+    print(f"❌ Losing Positions: {len(losing_holdings)} ({len(losing_holdings)/len(snapshot)*100:.1f}%)")
+
+    if len(losing_holdings) > 0:
+        worst_loss = losing_holdings["profit"].min()
+        worst_ticker = losing_holdings.loc[losing_holdings["profit"].idxmin()].name
+        print(f"📉 Biggest Loss: {worst_ticker} (£{worst_loss:,.2f})")
+
+    if len(profitable_holdings) > 0:
+        best_gain = profitable_holdings["profit"].max()
+        best_ticker = profitable_holdings.loc[profitable_holdings["profit"].idxmax()].name
+        print(f"📈 Biggest Gain: {best_ticker} (£{best_gain:,.2f})")
+
+    # Allocations
+    print()
+    print("🌍 ALLOCATIONS")
+    print("-" * 80)
+
+    print("ETF / Equity split:")
+    etf_equity = etf_equity_allocation(snapshot)
+    for asset_type, pct in etf_equity.items():
+        print(f"  {asset_type}: {pct:.1f}%")
+
+    print(f"\nTop {MAX_COUNTRIES_DISPLAY} Countries:")
+    country_alloc = country_allocation(snapshot)
+    for country, pct in country_alloc.head(MAX_COUNTRIES_DISPLAY).items():
+        print(f"  {country}: {pct:.1f}%")
+
+    print(f"\nTop {MAX_SECTORS_DISPLAY} Sectors:")
+    sector_alloc = sector_allocation(snapshot)
+    for sector, pct in sector_alloc.head(MAX_SECTORS_DISPLAY).items():
+        print(f"  {sector}: {pct:.1f}%")
+
+    print()
+
+    # Weekly performance
+    print("📅 WEEKLY PERFORMANCE")
+    print("-" * 80)
+
     pct = daily_changes_from_holdings(holdings)
-    worst = pct.nsmallest(10)
-    print("\nWorst 1‑week moves:")
-    for i, (k, s) in enumerate(worst.items()):
-        print(f"{k:<8} {colour_money(round(s * 100, 2), pct=True)}")
 
-    best = pct.nlargest(10)
-    print("\nBest 1‑week moves:")
-    for i, (k, s) in enumerate(best.items()):
-        print(f"{k:<8} {colour_money(round(s * 100, 2), pct=True)}")
+    print("🔥 Best Performers:")
+    best = pct.nlargest(MAX_PERFORMERS_DISPLAY)
+    for ticker, change in best.items():
+        print(f"  {ticker:<8} {colour_money(round(change * 100, 2), pct=True)}")
+
+    print("\n📉 Worst Performers:")
+    worst = pct.nsmallest(MAX_PERFORMERS_DISPLAY)
+    for ticker, change in worst.items():
+        print(f"  {ticker:<8} {colour_money(round(change * 100, 2), pct=True)}")
+
+    # Portfolio performance
+    portfolio_change = (pct * snapshot.loc[pct.index, "value_gbp"]).sum() / total_value
+    print(f"\n📊 Portfolio Weekly Change: {colour_money(round(portfolio_change * 100, 2), pct=True)}")
+
+    print()
+    print("=" * 80)
 
 
 if __name__ == "__main__":
