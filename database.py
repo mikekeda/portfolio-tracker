@@ -7,7 +7,7 @@ Provides high-level database operations using SQLAlchemy models.
 import logging
 import time
 from datetime import datetime, date, timedelta, timezone
-from typing import Iterable, Sequence, List, Dict, Optional, Tuple
+from typing import Iterable, Sequence, List, Dict, Optional, Tuple, Set
 from contextlib import contextmanager
 
 import pandas as pd
@@ -216,6 +216,27 @@ class DatabaseService:
                     session.add(DailyPrice(**record))
 
     # Instrument Operations
+    def get_instruments_by_codes(self, t212_codes: Set[str]) -> Dict[str, dict]:
+        """Get instruments by their Trading212 codes."""
+        with self.get_session() as session:
+            instruments = session.query(Instrument).filter(
+                Instrument.t212_code.in_(t212_codes),
+                Instrument.created_at > datetime.now(timezone.utc) - timedelta(days=30),
+            ).all()
+
+            # Return dictionary data instead of ORM objects to avoid session issues
+            return {
+                instrument.t212_code: {
+                    't212_code': instrument.t212_code,
+                    'name': instrument.name,
+                    'currency': instrument.currency,
+                    'sector': instrument.sector,
+                    'country': instrument.country,
+                    'yahoo_symbol': instrument.yahoo_symbol
+                }
+                for instrument in instruments
+            }
+
     def save_instruments(self, instruments_data: List[Dict]) -> None:
         """Save instruments in bulk to database."""
         with self.get_session() as session:
@@ -283,7 +304,7 @@ class DatabaseService:
         """Save portfolio holdings to database."""
         with self.get_session() as session:
             # Get current date (without time) for snapshot
-            current_date = datetime.utcnow().date()
+            current_date = datetime.now(timezone.utc).date()
 
             for holding_data in holdings_data:
                 # Get or create instrument within the same session

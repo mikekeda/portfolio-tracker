@@ -27,7 +27,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from time import sleep
-from typing import Iterable, Mapping, Set
+from typing import Iterable, Mapping, Set, List, Dict, Optional
 
 import pandas as pd
 import requests
@@ -60,6 +60,8 @@ class Instrument:
     t212_code: str
     name: str
     currency: str
+    sector: Optional[str] = None
+    country: Optional[str] = None
 
     @property
     def yahoo(self) -> str | None:
@@ -138,25 +140,56 @@ def request_json(url: str, headers: Mapping[str, str], retries: int = REQUEST_RE
 # ----------------------------------------------------------------------------
 
 def fetch_instruments(tickers: Set[str]) -> dict[str, Instrument]:
-    url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
-    raw = request_json(url, {"Authorization": TRADING212_API_KEY})
+    """Fetch instruments from database first, then API if needed."""
+    # Check what we have in database
+    existing_instruments = db_service.get_instruments_by_codes(tickers)
+    missing_tickers = tickers - set(existing_instruments.keys())
 
-    # Store instruments in database
-    instruments_data = []
-    for item in raw:
-        if item["ticker"] in tickers:
-            instruments_data.append({
-                't212_code': item["ticker"],
-                'name': item["name"],
-                'currency': item["currencyCode"],
-                'yahoo_symbol': convert_ticker(item["ticker"]) if item["ticker"] not in STOCKS_DELISTED else None
-            })
+    instruments_map = {}
 
-    # Save to database
-    db_service.save_instruments(instruments_data)
-    logging.debug(f"Saved {len(instruments_data)} instruments to database")
+    # Use existing instruments from database
+    for t212_code, instrument_data in existing_instruments.items():
+        instruments_map[t212_code] = Instrument(
+            t212_code=instrument_data['t212_code'],
+            name=instrument_data['name'],
+            currency=instrument_data['currency'],
+            sector=instrument_data['sector'],
+            country=instrument_data['country'],
+        )
 
-    return {i["ticker"]: Instrument(i["ticker"], i["name"], i["currencyCode"]) for i in raw}
+    # Fetch missing instruments from API
+    if missing_tickers:
+        logging.info(f"Fetching {len(missing_tickers)} missing instruments from API")
+        url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
+        raw = request_json(url, {"Authorization": TRADING212_API_KEY})
+
+        # Store new instruments in database
+        instruments_data = []
+        for item in raw:
+            if item["ticker"] in missing_tickers:
+                instruments_data.append({
+                    't212_code': item["ticker"],
+                    'name': item["name"],
+                    'currency': item["currencyCode"],
+                    'yahoo_symbol': convert_ticker(item["ticker"]) if item["ticker"] not in STOCKS_DELISTED else None
+                })
+
+        # Save to database
+        db_service.save_instruments(instruments_data)
+        logging.debug(f"Saved {len(instruments_data)} new instruments to database")
+
+        # Add new instruments to map
+        for item in raw:
+            if item["ticker"] in missing_tickers:
+                instruments_map[item["ticker"]] = Instrument(
+                    t212_code=item["ticker"],
+                    name=item["name"],
+                    currency=item["currencyCode"]
+                )
+    else:
+        logging.info("All instruments found in database, no API call needed")
+
+    return instruments_map
 
 
 def fetch_portfolio() -> Iterable[Holding]:
@@ -188,11 +221,12 @@ def fetch_portfolio() -> Iterable[Holding]:
         # Get Yahoo Finance data for additional metadata
         yahoo_info = yahoo_profile(holding.instr.yahoo) if holding.instr.yahoo else {}
 
-        db_service.update_instrument_metadata(
-            t212_code=holding.instr.t212_code,
-            sector=yahoo_info.get("sector"),
-            country=yahoo_info.get("country")
-        )
+        if not holding.instr.sector or not holding.instr.country:
+            db_service.update_instrument_metadata(
+                t212_code=holding.instr.t212_code,
+                sector=yahoo_info.get("sector"),
+                country=yahoo_info.get("country")
+            )
 
         holdings_data.append({
             't212_code': holding.instr.t212_code,
@@ -234,6 +268,55 @@ def yahoo_profile(symbol: str) -> dict:  # cached 24h
     return info
 
 
+def yahoo_profiles_batch(symbols: List[str]) -> Dict[str, dict]:
+    """Get Yahoo Finance profiles for multiple symbols efficiently."""
+    profiles = {}
+    symbols_to_fetch = []
+
+    # Check cache first
+    for symbol in symbols:
+        cache_file = CACHE_DIR / f"profile_{symbol}.json"
+        if cache_file.exists() and cache_file.stat().st_mtime > (
+            datetime.now().timestamp() - 86_400
+        ):
+            profiles[symbol] = json.loads(cache_file.read_text())
+        else:
+            symbols_to_fetch.append(symbol)
+
+    # Fetch missing symbols in batches
+    if symbols_to_fetch:
+        logging.info(f"Fetching {len(symbols_to_fetch)} Yahoo Finance profiles")
+        batch_size = 10  # Yahoo Finance can handle small batches
+
+        for i in range(0, len(symbols_to_fetch), batch_size):
+            batch = symbols_to_fetch[i:i + batch_size]
+            try:
+                # Use yfinance's batch download capability
+                tickers = yf.Tickers(' '.join(batch))
+                for symbol in batch:
+                    info = tickers.tickers[symbol].info or {}
+                    profiles[symbol] = info
+
+                    # Cache the result
+                    cache_file = CACHE_DIR / f"profile_{symbol}.json"
+                    cache_file.write_text(json.dumps(info))
+
+            except Exception as e:
+                logging.warning(f"Failed to fetch batch {batch}: {e}")
+                # Fallback to individual requests
+                for symbol in batch:
+                    try:
+                        info = yf.Ticker(symbol).info or {}
+                        profiles[symbol] = info
+                        cache_file = CACHE_DIR / f"profile_{symbol}.json"
+                        cache_file.write_text(json.dumps(info))
+                    except Exception as e2:
+                        logging.warning(f"Failed to fetch {symbol}: {e2}")
+                        profiles[symbol] = {}
+
+    return profiles
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Main business logic  ────────────────────────────────────────────────────────
 # ----------------------------------------------------------------------------
@@ -242,10 +325,16 @@ def build_snapshot(holdings) -> pd.DataFrame:
     # Get currency rates once for all conversions
     rates = currency_service.get_currency_table()
 
+    # Get all Yahoo symbols for batch processing
+    yahoo_symbols = [h.instr.yahoo for h in holdings if h.instr.yahoo]
+
+    # Fetch all Yahoo profiles in batch
+    yahoo_profiles = yahoo_profiles_batch(yahoo_symbols) if yahoo_symbols else {}
+
     records: list[dict] = []
     for h in holdings:
         gbp_value = h.market_value_native * rates[h.instr.currency]
-        info = yahoo_profile(h.instr.yahoo) if h.instr.yahoo else {}
+        info = yahoo_profiles.get(h.instr.yahoo, {}) if h.instr.yahoo else {}
 
         # Calculate return percentage safely
         cost_basis = gbp_value - h.ppl
