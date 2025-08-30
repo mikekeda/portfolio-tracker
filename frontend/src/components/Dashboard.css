@@ -1,0 +1,144 @@
+.dashboard-container {
+  padding: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.dashboard-container h1 {
+  color: #333;
+  margin-bottom: 30px;
+  text-align: center;
+}
+
+/* Summary Cards */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 20px;
+  margin-bottom: 40px;
+}
+
+.card {
+  background: white;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  text-align: center;
+  transition: transform 0.2s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.card h3 {
+  color: #6c757d;
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 10px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.card .value {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 0;
+  color: #333;
+}
+
+.card .value.positive {
+  color: #28a745;
+}
+
+.card .value.negative {
+  color: #dc3545;
+}
+
+/* Allocations Section */
+.allocations-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  gap: 30px;
+}
+
+.allocation-table {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.allocation-table h3 {
+  background: #f8f9fa;
+  color: #495057;
+  margin: 0;
+  padding: 15px 20px;
+  font-size: 16px;
+  font-weight: 600;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.allocation-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.allocation-table th {
+  background: #f8f9fa;
+  color: #495057;
+  font-weight: 600;
+  padding: 12px 20px;
+  text-align: left;
+  border-bottom: 1px solid #dee2e6;
+  font-size: 14px;
+}
+
+.allocation-table td {
+  padding: 12px 20px;
+  border-bottom: 1px solid #e9ecef;
+  font-size: 14px;
+}
+
+.allocation-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.allocation-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Loading and Error States */
+
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .dashboard-container {
+    padding: 15px;
+  }
+
+  .summary-cards {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+  }
+
+  .card {
+    padding: 15px;
+  }
+
+  .card .value {
+    font-size: 20px;
+  }
+
+  .allocations-section {
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+
+  .allocation-table th,
+  .allocation-table td {
+    padding: 10px 15px;
+    font-size: 13px;
+  }
+}

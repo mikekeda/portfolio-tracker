@@ -1,0 +1,326 @@
+.holdings-container {
+  padding: 0;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.holdings-container h2 {
+  color: #333;
+  margin-bottom: 30px;
+  text-align: center;
+  font-size: 32px;
+  font-weight: 700;
+}
+
+/* Table Controls */
+.table-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.search-box {
+  flex: 1;
+  min-width: 300px;
+  max-width: 500px;
+}
+
+.search-input {
+  width: 100%;
+  padding: 10px 15px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.table-info {
+  color: #6c757d;
+  font-size: 14px;
+  white-space: nowrap;
+  min-width: 150px;
+  text-align: right;
+}
+
+
+
+.holdings-table-container {
+  overflow-x: auto;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  margin-bottom: 20px;
+  width: 100%;
+}
+
+.holdings-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.holdings-table th {
+  background-color: #f8f9fa;
+  color: #2c3e50;  /* Dark blue-gray for headers */
+  font-weight: 700;
+  padding: 12px 8px;
+  text-align: left;
+  border-bottom: 2px solid #dee2e6;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.holdings-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s ease;
+}
+
+.holdings-table th.sortable:hover {
+  background-color: #e9ecef;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sort-indicator {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.holdings-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid #e9ecef;
+  vertical-align: middle;
+  font-weight: 700;
+}
+
+.holdings-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.holdings-table .symbol {
+  font-weight: 600;
+  color: #007bff;
+  font-family: 'Courier New', monospace;
+}
+
+.holdings-table .name {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #34495e;  /* Slightly lighter for body text */
+  font-weight: 700;
+}
+
+.holdings-table .quantity {
+  text-align: right;
+  font-family: 'Courier New', monospace;
+  color: #34495e;  /* Slightly lighter for body text */
+  font-weight: 700;
+}
+
+.holdings-table .price {
+  text-align: right;
+  font-family: 'Courier New', monospace;
+  color: #34495e;  /* Slightly lighter for body text */
+  font-weight: 700;
+}
+
+.holdings-table .value {
+  text-align: right;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+  color: #34495e;  /* Slightly lighter for body text */
+}
+
+.holdings-table .pnl {
+  text-align: right;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+}
+
+.holdings-table .pnl.positive {
+  color: #28a745;
+}
+
+.holdings-table .pnl.negative {
+  color: #dc3545;
+}
+
+.holdings-table .return {
+  text-align: right;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+}
+
+.holdings-table .return.positive {
+  color: #28a745;
+}
+
+.holdings-table .return.negative {
+  color: #dc3545;
+}
+
+/* Conditional coloring for financial metrics */
+.holdings-table .prediction.positive,
+.holdings-table .institutional.positive,
+.holdings-table .peg.positive,
+.holdings-table .pe.positive,
+.holdings-table .beta.positive,
+.holdings-table .margins.positive,
+.holdings-table .growth.positive,
+.holdings-table .roa.positive,
+.holdings-table .fcf-yield.positive,
+.holdings-table .recommendation.positive,
+.holdings-table .short.positive {
+  color: #28a745;
+}
+
+.holdings-table .prediction.negative,
+.holdings-table .institutional.negative,
+.holdings-table .peg.negative,
+.holdings-table .pe.negative,
+.holdings-table .beta.negative,
+.holdings-table .margins.negative,
+.holdings-table .growth.negative,
+.holdings-table .roa.negative,
+.holdings-table .fcf-yield.negative,
+.holdings-table .recommendation.negative,
+.holdings-table .short.negative {
+  color: #dc3545;
+}
+
+.holdings-table .currency {
+  text-align: center;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+  color: #5a6c7d;  /* Medium gray for secondary info */
+}
+
+
+
+/* New column styles */
+.holdings-table .portfolio-pct {
+  text-align: right;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+  color: #34495e;  /* Slightly lighter for body text */
+}
+
+.holdings-table .prediction,
+.holdings-table .institutional,
+.holdings-table .market-cap,
+.holdings-table .peg,
+.holdings-table .pe,
+.holdings-table .beta,
+.holdings-table .margins,
+.holdings-table .growth,
+.holdings-table .roa,
+.holdings-table .fcf-yield,
+.holdings-table .recommendation,
+.holdings-table .short,
+.holdings-table .rsi,
+.holdings-table .quote-type {
+  text-align: center;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+  color: #34495e;  /* Slightly lighter for body text */
+}
+
+.holdings-table .week-change {
+  text-align: center;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+}
+
+.holdings-table .week-change.positive {
+  color: #28a745;
+}
+
+.holdings-table .week-change.negative {
+  color: #dc3545;
+}
+
+.holdings-table .sector,
+.holdings-table .country {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #5a6c7d;  /* Medium gray for secondary info */
+  font-weight: 700;
+}
+
+.holdings-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #6c757d;
+}
+
+.holdings-summary p {
+  margin: 0;
+}
+
+
+
+/* Responsive design */
+@media (max-width: 768px) {
+
+  .table-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 15px;
+  }
+
+  .search-box {
+    min-width: auto;
+  }
+
+
+
+  .table-info {
+    text-align: center;
+    min-width: auto;
+  }
+
+  .holdings-table {
+    font-size: 12px;
+  }
+
+  .holdings-table th,
+  .holdings-table td {
+    padding: 8px 4px;
+  }
+
+  .holdings-summary {
+    flex-direction: column;
+    gap: 10px;
+    text-align: center;
+  }
+
+  .holdings-container h2 {
+    font-size: 24px;
+    margin-bottom: 20px;
+  }
+}

@@ -1,0 +1,33 @@
+.App {
+  min-height: 100vh;
+  background-color: #f5f5f5;
+}
+
+.main-content {
+  padding-top: 20px;
+}
+
+/* Global styles for loading and error states */
+.loading,
+.error {
+  text-align: center;
+  padding: 40px;
+  font-size: 18px;
+}
+
+.loading {
+  color: #6c757d;
+}
+
+.error {
+  color: #dc3545;
+}
+
+/* Utility classes */
+.positive {
+  color: #28a745;
+}
+
+.negative {
+  color: #dc3545;
+}

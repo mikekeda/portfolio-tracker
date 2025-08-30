@@ -1,0 +1,308 @@
+"""
+FastAPI backend for Trading212 Portfolio Manager
+===============================================
+Serves portfolio data from PostgreSQL database.
+"""
+
+# Standard library imports
+import logging
+
+# Third-party imports
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func
+
+# Local imports
+from currency import get_currency_service
+from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
+from database import get_db_service
+from models import Holding, Instrument, PortfolioSnapshot
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="Trading212 Portfolio API",
+    description="API for accessing portfolio data",
+    version="1.0.0"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Get database service
+db_service = get_db_service()
+
+
+def _weighted_add(target: dict[str, float], weights: dict[str, float], value: float):
+    """Add *value* into target buckets using percentage weights."""
+    for bucket, pct in weights.items():
+        target[bucket] += value * pct / 100.0
+
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {"message": "Trading212 Portfolio API", "status": "running"}
+
+
+@app.get("/api/portfolio/current")
+async def get_current_portfolio():
+    """Get current portfolio holdings."""
+    try:
+        with db_service.get_session() as session:
+            # Get the latest snapshot date
+            latest_date = session.query(func.max(Holding.date)).scalar()
+
+            if not latest_date:
+                return {
+                    "holdings": [],
+                    "total_holdings": 0,
+                    "last_updated": None
+                }
+
+            # Query holdings with instrument data in the same session
+            holdings = session.query(Holding).join(Instrument).filter(
+                Holding.date == latest_date
+            ).order_by(Instrument.name).all()
+
+            # Get currency rates using the centralized service
+            currency_service = get_currency_service()
+            currency_rates = currency_service.get_currency_table()
+
+                        # Get Yahoo Finance data from database cache
+            yahoo_profiles = {}
+            for holding in holdings:
+                if holding.instrument.yahoo_symbol:
+                    # Get cached Yahoo data from database
+                    cached_data = db_service.get_yahoo_profile_from_cache(holding.instrument.yahoo_symbol)
+                    if cached_data:
+                        yahoo_profiles[holding.instrument.yahoo_symbol] = cached_data
+
+            # Calculate total portfolio value for percentage calculation
+            total_portfolio_value = 0
+            for holding in holdings:
+                market_value_native = holding.quantity * holding.current_price
+                market_value_gbp = market_value_native * currency_rates.get(holding.instrument.currency, 1.0)
+                total_portfolio_value += market_value_gbp
+
+            portfolio_data = []
+            for holding in holdings:
+                market_value_native = holding.quantity * holding.current_price
+                market_value_gbp = market_value_native * currency_rates.get(holding.instrument.currency, 1.0)
+                portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
+
+                # Get Yahoo Finance data for this holding (same as terminal)
+                info = yahoo_profiles.get(holding.instrument.yahoo_symbol, {}) if holding.instrument.yahoo_symbol else {}
+
+                portfolio_data.append({
+                    "t212_code": holding.instrument.t212_code,
+                    "name": holding.instrument.name,
+                    "yahoo_symbol": holding.instrument.yahoo_symbol,
+                    "currency": holding.instrument.currency,
+                    "sector": holding.instrument.sector,
+                    "country": holding.instrument.country,
+                    "quantity": holding.quantity,
+                    "avg_price": holding.avg_price,
+                    "current_price": holding.current_price,
+                    "ppl": holding.ppl,
+                    "fx_ppl": holding.fx_ppl,
+                    "market_cap": holding.market_cap,
+                    "pe_ratio": holding.pe_ratio,
+                    "beta": holding.beta,
+                    "date": holding.date.isoformat(),
+                    "market_value": market_value_gbp,  # Now in GBP
+                    "profit": holding.ppl,  # Total profit (same as terminal - ppl already includes FX)
+                    "return_pct": round((holding.ppl / (market_value_gbp - holding.ppl) * 100.0), 2) if (market_value_gbp - holding.ppl) > 0 else 0.0,  # Same formula as terminal
+                    "portfolio_pct": portfolio_pct,
+                    # Additional fields from Yahoo Finance (same as terminal)
+                    "prediction": round((info["targetMedianPrice"] / holding.current_price - 1) * 100.0) if info.get("targetMedianPrice") else None,
+                    "institutional_ownership": round(info["heldPercentInstitutions"] * 100.0) if info.get("heldPercentInstitutions") else None,
+                    "peg_ratio": round(info["trailingPegRatio"], 2) if info.get("trailingPegRatio") else None,
+                    "profit_margins": round(info["profitMargins"] * 100.0) if info.get("profitMargins") else None,
+                    "revenue_growth": round(info["revenueGrowth"] * 100.0) if info.get("revenueGrowth") else None,
+                    "return_on_assets": round(info["returnOnAssets"] * 100.0) if info.get("returnOnAssets") else None,
+                    "free_cashflow_yield": round(info["freeCashflow"] / info["enterpriseValue"] * 100, 2) if (info.get("freeCashflow") and info.get("enterpriseValue")) else None,
+                    "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
+                    "fifty_two_week_change": round(info["fiftyTwoWeekHighChangePercent"] * 100) if info.get("fiftyTwoWeekHighChangePercent") else None,
+                    "short_percent_of_float": round(info["shortPercentOfFloat"] * 100) if info.get("shortPercentOfFloat") else None,
+                    "rsi": None,  # RSI (not available in Yahoo data)
+                    "quote_type": info.get("quoteType", "Unknown")
+                })
+
+            return {
+                "holdings": portfolio_data,
+                "total_holdings": len(portfolio_data),
+                "last_updated": latest_date.isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Error fetching current portfolio: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/portfolio/summary")
+async def get_portfolio_summary():
+    """Get portfolio summary statistics."""
+    try:
+        with db_service.get_session() as session:
+            # Get the latest portfolio snapshot
+            latest_snapshot = session.query(PortfolioSnapshot).order_by(
+                PortfolioSnapshot.date.desc()
+            ).first()
+
+            if not latest_snapshot:
+                return {"error": "No portfolio data available"}
+
+            # Get holdings for the same date to calculate win rate
+            holdings = session.query(Holding).filter(
+                Holding.date == latest_snapshot.date
+            ).all()
+
+            profitable_count = 0
+            losing_count = 0
+
+            for holding in holdings:
+                profit = holding.ppl  # Total profit (same as terminal - ppl already includes FX)
+                if profit > 0:
+                    profitable_count += 1
+                else:
+                    losing_count += 1
+
+            win_rate = (profitable_count / len(holdings) * 100) if holdings else 0
+
+            return {
+                "total_value": round(latest_snapshot.total_value_gbp, 2),
+                "total_profit": round(latest_snapshot.total_profit_gbp, 2),
+                "total_return_pct": round(latest_snapshot.total_return_pct, 2),
+                "total_holdings": len(holdings),
+                "profitable_holdings": profitable_count,
+                "losing_holdings": losing_count,
+                "win_rate": round(win_rate, 2),
+                "last_updated": latest_snapshot.date.isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Error fetching portfolio summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/portfolio/allocations")
+async def get_portfolio_allocations():
+    """Get portfolio allocations by sector and country."""
+    try:
+        with db_service.get_session() as session:
+            # Get the latest portfolio snapshot
+            latest_snapshot = session.query(PortfolioSnapshot).order_by(
+                PortfolioSnapshot.date.desc()
+            ).first()
+
+            if not latest_snapshot:
+                return {"error": "No portfolio data available"}
+
+            # Use the stored allocations from the snapshot if available
+            if latest_snapshot.sector_allocation and latest_snapshot.country_allocation:
+                return {
+                    "sector_allocation": latest_snapshot.sector_allocation,
+                    "country_allocation": latest_snapshot.country_allocation,
+                    "total_value": latest_snapshot.total_value_gbp
+                }
+
+            # Fallback: calculate from holdings (same logic as terminal)
+            holdings = session.query(Holding).join(Instrument).filter(
+                Holding.date == latest_snapshot.date
+            ).all()
+
+            if not holdings:
+                return {"error": "No portfolio data available"}
+
+            # Get currency rates using the centralized service
+            currency_service = get_currency_service()
+            currency_rates = currency_service.get_currency_table()
+
+            sector_allocation = {}
+            country_allocation = {}
+
+            for holding in holdings:
+                # Calculate GBP value (same as terminal)
+                market_value_native = holding.quantity * holding.current_price
+                market_value_gbp = market_value_native * currency_rates.get(holding.instrument.currency, 1.0)
+                
+                # Get symbol for ETF allocation lookup
+                symbol = holding.instrument.yahoo_symbol
+                
+                # Apply ETF allocation logic (same as terminal)
+                if symbol in ETF_SECTOR_ALLOCATION:
+                    _weighted_add(sector_allocation, ETF_SECTOR_ALLOCATION[symbol], market_value_gbp)
+                else:
+                    sector = holding.instrument.sector or "Other"
+                    sector_allocation[sector] = sector_allocation.get(sector, 0) + market_value_gbp
+                
+                if symbol in ETF_COUNTRY_ALLOCATION:
+                    _weighted_add(country_allocation, ETF_COUNTRY_ALLOCATION[symbol], market_value_gbp)
+                else:
+                    country = holding.instrument.country or "Other"
+                    country_allocation[country] = country_allocation.get(country, 0) + market_value_gbp
+
+            # Convert to percentages (same as terminal)
+            total_value = sum(sector_allocation.values())
+            
+            sector_pct = {k: round((v / total_value) * 100, 2) for k, v in sorted(sector_allocation.items(), key=lambda kv: kv[1], reverse=True)}
+            country_pct = {k: round((v / total_value) * 100, 2) for k, v in sorted(country_allocation.items(), key=lambda kv: kv[1], reverse=True)}
+
+            return {
+                "sector_allocation": sector_pct,
+                "country_allocation": country_pct,
+                "total_value": latest_snapshot.total_value_gbp  # Use correct GBP value
+            }
+    except Exception as e:
+        logger.error(f"Error fetching allocations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/portfolio/history")
+async def get_portfolio_history(days: int = 30):
+    """Get portfolio history for the last N days."""
+    try:
+        snapshots = db_service.get_portfolio_history(days)
+
+        history_data = []
+        for snapshot in snapshots:
+            history_data.append({
+                "date": snapshot.date.isoformat(),
+                "total_value": snapshot.total_value_gbp,
+                "total_profit": snapshot.total_profit_gbp,
+                "total_return_pct": snapshot.total_return_pct,
+                "country_allocation": snapshot.country_allocation,
+                "sector_allocation": snapshot.sector_allocation
+            })
+
+        return {
+            "history": history_data,
+            "days": days
+        }
+    except Exception as e:
+        logger.error(f"Error fetching portfolio history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/instruments")
+async def get_instruments():
+    """Get all instruments in the database."""
+    try:
+        # This would need a new method in DatabaseService
+        # For now, return a placeholder
+        return {"message": "Instruments endpoint - to be implemented"}
+    except Exception as e:
+        logger.error(f"Error fetching instruments: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

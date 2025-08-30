@@ -1,0 +1,70 @@
+import axios from 'axios';
+import config from '../config';
+
+// API configuration
+const API_BASE_URL = config.API_BASE_URL;
+
+// Create axios instance with default configuration
+const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: config.API_TIMEOUT,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Request interceptor for logging
+apiClient.interceptors.request.use(
+  (config) => {
+    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
+    return config;
+  },
+  (error) => {
+    console.error('API Request Error:', error);
+    return Promise.reject(error);
+  }
+);
+
+// Response interceptor for error handling
+apiClient.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  (error) => {
+    console.error('API Response Error:', error);
+    if (error.response) {
+      // Server responded with error status
+      console.error('Error Status:', error.response.status);
+      console.error('Error Data:', error.response.data);
+    } else if (error.request) {
+      // Request was made but no response received
+      console.error('No response received from server');
+    } else {
+      // Something else happened
+      console.error('Request setup error:', error.message);
+    }
+    return Promise.reject(error);
+  }
+);
+
+// Portfolio API methods
+export const portfolioAPI = {
+  // Get current portfolio holdings
+  getCurrentHoldings: async () => {
+    const response = await apiClient.get('/api/portfolio/current');
+    return response.data;
+  },
+
+  // Get portfolio summary statistics
+  getSummary: async () => {
+    const response = await apiClient.get('/api/portfolio/summary');
+    return response.data;
+  },
+
+  // Get portfolio allocations
+  getAllocations: async () => {
+    const response = await apiClient.get('/api/portfolio/allocations');
+    return response.data;
+  },
+
+};
