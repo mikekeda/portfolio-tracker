@@ -24,6 +24,12 @@ const Navigation = () => {
           >
             Holdings
           </Link>
+          <Link
+            to="/chart"
+            className={location.pathname === '/chart' ? 'active' : ''}
+          >
+            Chart
+          </Link>
         </div>
       </div>
     </nav>

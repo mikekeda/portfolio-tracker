@@ -6,13 +6,16 @@ Serves portfolio data from PostgreSQL database.
 
 # Standard library imports
 import logging
+from datetime import datetime, timedelta, timezone
 
 # Third-party imports
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 
 # Local imports
+from config import PRICE_FIELD
 from currency import get_currency_service
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from database import get_db_service
@@ -232,17 +235,17 @@ async def get_portfolio_allocations():
                 # Calculate GBP value (same as terminal)
                 market_value_native = holding.quantity * holding.current_price
                 market_value_gbp = market_value_native * currency_rates.get(holding.instrument.currency, 1.0)
-                
+
                 # Get symbol for ETF allocation lookup
                 symbol = holding.instrument.yahoo_symbol
-                
+
                 # Apply ETF allocation logic (same as terminal)
                 if symbol in ETF_SECTOR_ALLOCATION:
                     _weighted_add(sector_allocation, ETF_SECTOR_ALLOCATION[symbol], market_value_gbp)
                 else:
                     sector = holding.instrument.sector or "Other"
                     sector_allocation[sector] = sector_allocation.get(sector, 0) + market_value_gbp
-                
+
                 if symbol in ETF_COUNTRY_ALLOCATION:
                     _weighted_add(country_allocation, ETF_COUNTRY_ALLOCATION[symbol], market_value_gbp)
                 else:
@@ -251,7 +254,7 @@ async def get_portfolio_allocations():
 
             # Convert to percentages (same as terminal)
             total_value = sum(sector_allocation.values())
-            
+
             sector_pct = {k: round((v / total_value) * 100, 2) for k, v in sorted(sector_allocation.items(), key=lambda kv: kv[1], reverse=True)}
             country_pct = {k: round((v / total_value) * 100, 2) for k, v in sorted(country_allocation.items(), key=lambda kv: kv[1], reverse=True)}
 
@@ -293,14 +296,75 @@ async def get_portfolio_history(days: int = 30):
 
 @app.get("/api/instruments")
 async def get_instruments():
-    """Get all instruments in the database."""
+    """Get all instruments in the database for autocomplete."""
     try:
-        # This would need a new method in DatabaseService
-        # For now, return a placeholder
-        return {"message": "Instruments endpoint - to be implemented"}
+        with db_service.get_session() as session:
+            instruments = session.query(Instrument).filter(
+                Instrument.yahoo_symbol.isnot(None)
+            ).order_by(Instrument.name).all()
+
+            return {
+                "instruments": [
+                    {
+                        "id": instrument.id,
+                        "symbol": instrument.yahoo_symbol,
+                        "name": instrument.name,
+                        "t212_code": instrument.t212_code
+                    }
+                    for instrument in instruments
+                ]
+            }
     except Exception as e:
         logger.error(f"Error fetching instruments: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/chart/prices")
+async def get_chart_prices(symbols: str, days: int = 30):
+    """Get daily price data for charting."""
+    # Parse symbols from comma-separated string
+    symbol_list = [s.strip().upper() for s in symbols.split(',') if s.strip()]
+
+    if not symbol_list:
+        raise HTTPException(status_code=400, detail="No symbols provided")
+
+    # Calculate date range
+    end_date = datetime.now(timezone.utc)
+    start_date = end_date - timedelta(days=days)
+
+    # Get price data from database service
+    price_data = db_service.get_price_history(
+        tickers=symbol_list,
+        start=start_date,
+        end=end_date,
+        price_field=PRICE_FIELD,
+    )
+
+    if price_data.empty:
+        return {"error": "No price data available"}
+
+    # Convert to chart format
+    chart_data = {}
+    for symbol in symbol_list:
+        if symbol in price_data.columns:
+            symbol_data = price_data[symbol].dropna()
+            chart_data[symbol] = [
+                {
+                    "date": date.isoformat(),
+                    "price": float(price)
+                }
+                for date, price in symbol_data.items()
+                if pd.notna(price) and price > 0
+            ]
+        else:
+            # Symbol not found in data
+            chart_data[symbol] = []
+
+    return {
+        "symbols": symbol_list,
+        "data": chart_data,
+        "days": days
+    }
 
 
 if __name__ == "__main__":

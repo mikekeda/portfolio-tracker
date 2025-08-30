@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Navigation from './components/Navigation';
 import Dashboard from './components/Dashboard';
 import Holdings from './components/Holdings';
+import Chart from './components/Chart';
 import './App.css';
 
 function App() {
@@ -11,10 +12,11 @@ function App() {
       <div className="App">
         <Navigation />
         <main className="main-content">
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/holdings" element={<Holdings />} />
-          </Routes>
+                  <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/holdings" element={<Holdings />} />
+          <Route path="/chart" element={<Chart />} />
+        </Routes>
         </main>
       </div>
     </Router>

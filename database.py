@@ -181,7 +181,7 @@ class DatabaseService:
         df.index.name = "Date"
 
         wide = df[["Open", "High", "Low", "Close", "Adj Close", "Volume"]]
-        df_long = wide.stack(level="Ticker").reset_index()
+        df_long = wide.stack(level="Ticker", future_stack=True).reset_index()
         df_long = df_long.rename(columns={"Adj Close": "Adj_Close"})
         for _, row in df_long.iterrows():
             if pd.isna(row["Close"]):

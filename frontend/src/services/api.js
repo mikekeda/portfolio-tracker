@@ -67,4 +67,16 @@ export const portfolioAPI = {
     return response.data;
   },
 
+  // Get all instruments for autocomplete
+  getInstruments: async () => {
+    const response = await apiClient.get('/api/instruments');
+    return response.data;
+  },
+
+  // Get chart price data
+  getChartPrices: async (symbols, days = 30) => {
+    const symbolsParam = Array.isArray(symbols) ? symbols.join(',') : symbols;
+    const response = await apiClient.get(`/api/chart/prices?symbols=${symbolsParam}&days=${days}`);
+    return response.data;
+  },
 };

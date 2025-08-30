@@ -21,7 +21,7 @@ A React-based frontend for the Trading212 Portfolio Manager.
 
 ### Prerequisites
 
-- Node.js 18+ 
+- Node.js 18+
 - npm or yarn
 - Backend API running on `http://localhost:8000`
 
