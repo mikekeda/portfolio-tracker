@@ -66,6 +66,9 @@ class Instrument(Base):
     sector = Column(String(100), nullable=True)
     country = Column(String(100), nullable=True)
 
+    # Yahoo Finance data cache
+    yahoo_data = Column(JSONB, nullable=True)  # Stores Yahoo Finance profile data
+
     # Metadata
     created_at = Column(DateTime, default=datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))

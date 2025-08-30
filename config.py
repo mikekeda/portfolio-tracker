@@ -5,7 +5,6 @@ Centralized configuration settings.
 """
 
 import os
-from pathlib import Path
 
 # API Configuration
 TRADING212_API_KEY = os.environ["TRADING212_API_KEY"]
@@ -16,10 +15,6 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
-
-# Cache Configuration
-CACHE_DIR = Path("~/.cache/t212").expanduser()
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Yahoo Finance Configuration
 PRICE_FIELD = "adj_close_price"  # or "close_price" if you prefer raw closes

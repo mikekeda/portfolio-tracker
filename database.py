@@ -232,7 +232,9 @@ class DatabaseService:
                     'currency': instrument.currency,
                     'sector': instrument.sector,
                     'country': instrument.country,
-                    'yahoo_symbol': instrument.yahoo_symbol
+                    'yahoo_symbol': instrument.yahoo_symbol,
+                    'yahoo_data': instrument.yahoo_data,
+                    'updated_at': instrument.updated_at
                 }
                 for instrument in instruments
             }
@@ -298,6 +300,68 @@ class DatabaseService:
                     instrument.sector = sector
                 if country is not None:
                     instrument.country = country
+
+    def update_instrument_yahoo_data(
+        self,
+        t212_code: str,
+        yahoo_data: dict
+    ) -> None:
+        """Update instrument with Yahoo Finance data."""
+        with self.get_session() as session:
+            instrument = session.query(Instrument).filter(
+                Instrument.t212_code == t212_code
+            ).first()
+
+            if instrument:
+                instrument.yahoo_data = yahoo_data
+                # updated_at will be automatically set by SQLAlchemy
+
+    def get_instruments_with_fresh_yahoo_data(self, t212_codes: Set[str], max_age_days: int = 1) -> Dict[str, dict]:
+        """Get instruments that have fresh Yahoo Finance data (less than max_age_seconds old)."""
+        cutoff_time = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+
+        with self.get_session() as session:
+            instruments = session.query(Instrument).filter(
+                Instrument.t212_code.in_(t212_codes),
+                Instrument.updated_at >= cutoff_time,
+                Instrument.yahoo_data.isnot(None)  # Only instruments with Yahoo data
+            ).all()
+
+            return {
+                instrument.t212_code: {
+                    't212_code': instrument.t212_code,
+                    'name': instrument.name,
+                    'currency': instrument.currency,
+                    'sector': instrument.sector,
+                    'country': instrument.country,
+                    'yahoo_symbol': instrument.yahoo_symbol,
+                    'yahoo_data': instrument.yahoo_data,
+                    'updated_at': instrument.updated_at
+                }
+                for instrument in instruments
+            }
+
+    def get_yahoo_profile_from_cache(self, yahoo_symbol: str, max_age_seconds: int = 86400) -> Optional[dict]:
+        """Get Yahoo Finance profile from database cache if it's fresh enough."""
+        cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=max_age_seconds)
+
+        with self.get_session() as session:
+            instrument = session.query(Instrument).filter(
+                Instrument.yahoo_symbol == yahoo_symbol,
+                Instrument.updated_at >= cutoff_time,
+                Instrument.yahoo_data.isnot(None)
+            ).first()
+
+            return instrument.yahoo_data if instrument else None
+
+    def get_instruments_by_yahoo_symbols(self, yahoo_symbols: List[str]) -> List[str]:
+        """Get T212 codes for given Yahoo symbols."""
+        with self.get_session() as session:
+            instruments = session.query(Instrument).filter(
+                Instrument.yahoo_symbol.in_(yahoo_symbols)
+            ).all()
+
+            return [instrument.t212_code for instrument in instruments]
 
     # Holding Operations
     def save_holdings(self, holdings_data: List[Dict]) -> None:

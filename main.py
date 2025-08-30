@@ -19,13 +19,12 @@ export DB_PASSWORD="your_database_password"
 from __future__ import annotations
 
 import logging
-import json
 import re
 import sys
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from time import sleep
 from typing import Iterable, Mapping, Set, List, Dict, Optional
 
@@ -39,7 +38,7 @@ from models import init_database
 from database import get_db_service
 from currency import get_currency_service
 from config import (
-    TRADING212_API_KEY, CACHE_DIR, PRICE_FIELD, REQUEST_RETRY, MAX_COUNTRIES_DISPLAY,
+    TRADING212_API_KEY, PRICE_FIELD, REQUEST_RETRY, MAX_COUNTRIES_DISPLAY,
     MAX_SECTORS_DISPLAY, MAX_PERFORMERS_DISPLAY, RED, GREEN, RESET, validate_config
 )
 
@@ -257,31 +256,43 @@ def fetch_portfolio() -> Iterable[Holding]:
 
 
 def yahoo_profile(symbol: str) -> dict:  # cached 24h
-    cache_file = CACHE_DIR / f"profile_{symbol}.json"
-    if cache_file.exists() and cache_file.stat().st_mtime > (
-        datetime.now().timestamp() - 86_400
-    ):
-        return json.loads(cache_file.read_text())
+    """Get Yahoo Finance profile for a single symbol using database cache."""
+    # Check if we have fresh data in database
+    cached_data = db_service.get_yahoo_profile_from_cache(symbol)
+    if cached_data:
+        return cached_data
+
+    # Fetch fresh data from Yahoo Finance
     info = yf.Ticker(symbol).info or {}
-    cache_file.write_text(json.dumps(info))
+
+    # Cache the result in database
+    t212_codes = db_service.get_instruments_by_yahoo_symbols([symbol])
+    for t212_code in t212_codes:
+        db_service.update_instrument_yahoo_data(t212_code, info)
 
     return info
 
 
 def yahoo_profiles_batch(symbols: List[str]) -> Dict[str, dict]:
-    """Get Yahoo Finance profiles for multiple symbols efficiently."""
+    """Get Yahoo Finance profiles for multiple symbols efficiently using database cache."""
     profiles = {}
     symbols_to_fetch = []
 
-    # Check cache first
-    for symbol in symbols:
-        cache_file = CACHE_DIR / f"profile_{symbol}.json"
-        if cache_file.exists() and cache_file.stat().st_mtime > (
-            datetime.now().timestamp() - 86_400
-        ):
-            profiles[symbol] = json.loads(cache_file.read_text())
-        else:
-            symbols_to_fetch.append(symbol)
+    # Get instruments that have fresh Yahoo data (less than 24 hours old)
+    if symbols:
+        # Get T212 codes for these Yahoo symbols
+        t212_codes = set(db_service.get_instruments_by_yahoo_symbols(symbols))
+
+        # Get fresh data from database
+        fresh_instruments = db_service.get_instruments_with_fresh_yahoo_data(t212_codes, max_age_days=1)
+
+        # Map Yahoo symbols to their data
+        for t212_code, instrument_data in fresh_instruments.items():
+            if instrument_data.get('yahoo_symbol') in symbols:
+                profiles[instrument_data['yahoo_symbol']] = instrument_data.get('yahoo_data', {})
+
+    # Find symbols that need to be fetched
+    symbols_to_fetch = [symbol for symbol in symbols if symbol not in profiles]
 
     # Fetch missing symbols in batches
     if symbols_to_fetch:
@@ -297,9 +308,10 @@ def yahoo_profiles_batch(symbols: List[str]) -> Dict[str, dict]:
                     info = tickers.tickers[symbol].info or {}
                     profiles[symbol] = info
 
-                    # Cache the result
-                    cache_file = CACHE_DIR / f"profile_{symbol}.json"
-                    cache_file.write_text(json.dumps(info))
+                    # Cache the result in database
+                    t212_codes = db_service.get_instruments_by_yahoo_symbols([symbol])
+                    for t212_code in t212_codes:
+                        db_service.update_instrument_yahoo_data(t212_code, info)
 
             except Exception as e:
                 logging.warning(f"Failed to fetch batch {batch}: {e}")
@@ -308,8 +320,11 @@ def yahoo_profiles_batch(symbols: List[str]) -> Dict[str, dict]:
                     try:
                         info = yf.Ticker(symbol).info or {}
                         profiles[symbol] = info
-                        cache_file = CACHE_DIR / f"profile_{symbol}.json"
-                        cache_file.write_text(json.dumps(info))
+
+                        # Cache the result in database
+                        t212_codes = db_service.get_instruments_by_yahoo_symbols([symbol])
+                        for t212_code in t212_codes:
+                            db_service.update_instrument_yahoo_data(t212_code, info)
                     except Exception as e2:
                         logging.warning(f"Failed to fetch {symbol}: {e2}")
                         profiles[symbol] = {}
