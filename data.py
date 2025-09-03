@@ -27,6 +27,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "AHAC": "HUMA",
     "LSE": "LSEG",
     "IPOB": "OPEN",
+    "CCIR": "KYIV",
 }
 
 

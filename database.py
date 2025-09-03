@@ -84,7 +84,7 @@ class DatabaseService:
             query = session.query(
                 DailyPrice.symbol,
                 DailyPrice.date,
-                getattr(DailyPrice, price_field).label('px')
+                getattr(DailyPrice, price_field.lower().replace(" ", "_") + "_price").label('px')
             ).filter(
                 DailyPrice.symbol.in_(tickers),
                 DailyPrice.date.between(start.date(), end.date())
@@ -282,24 +282,6 @@ class DatabaseService:
                 session.flush()  # Get the ID
 
             return instrument
-
-    def update_instrument_metadata(
-        self,
-        t212_code: str,
-        sector: Optional[str] = None,
-        country: Optional[str] = None
-    ) -> None:
-        """Update instrument metadata."""
-        with self.get_session() as session:
-            instrument = session.query(Instrument).filter(
-                Instrument.t212_code == t212_code
-            ).first()
-
-            if instrument:
-                if sector is not None:
-                    instrument.sector = sector
-                if country is not None:
-                    instrument.country = country
 
     def update_instrument_yahoo_data(
         self,

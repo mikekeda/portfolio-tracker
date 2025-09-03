@@ -24,7 +24,7 @@ import sys
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from time import sleep
 from typing import Iterable, Mapping, Set, List, Dict, Optional
 
@@ -220,13 +220,6 @@ def fetch_portfolio() -> Iterable[Holding]:
         # Get Yahoo Finance data for additional metadata
         yahoo_info = yahoo_profile(holding.instr.yahoo) if holding.instr.yahoo else {}
 
-        if not holding.instr.sector or not holding.instr.country:
-            db_service.update_instrument_metadata(
-                t212_code=holding.instr.t212_code,
-                sector=yahoo_info.get("sector"),
-                country=yahoo_info.get("country")
-            )
-
         holdings_data.append({
             't212_code': holding.instr.t212_code,
             'name': holding.instr.name,
@@ -266,9 +259,8 @@ def yahoo_profile(symbol: str) -> dict:  # cached 24h
     info = yf.Ticker(symbol).info or {}
 
     # Cache the result in database
-    t212_codes = db_service.get_instruments_by_yahoo_symbols([symbol])
-    for t212_code in t212_codes:
-        db_service.update_instrument_yahoo_data(t212_code, info)
+    t212_code = db_service.get_instruments_by_yahoo_symbols([symbol])[0]
+    db_service.update_instrument_yahoo_data(t212_code, info)
 
     return info
 
@@ -276,20 +268,18 @@ def yahoo_profile(symbol: str) -> dict:  # cached 24h
 def yahoo_profiles_batch(symbols: List[str]) -> Dict[str, dict]:
     """Get Yahoo Finance profiles for multiple symbols efficiently using database cache."""
     profiles = {}
-    symbols_to_fetch = []
 
     # Get instruments that have fresh Yahoo data (less than 24 hours old)
-    if symbols:
-        # Get T212 codes for these Yahoo symbols
-        t212_codes = set(db_service.get_instruments_by_yahoo_symbols(symbols))
+    # Get T212 codes for these Yahoo symbols
+    t212_codes = set(db_service.get_instruments_by_yahoo_symbols(symbols))
 
-        # Get fresh data from database
-        fresh_instruments = db_service.get_instruments_with_fresh_yahoo_data(t212_codes, max_age_days=1)
+    # Get fresh data from database
+    fresh_instruments = db_service.get_instruments_with_fresh_yahoo_data(t212_codes, max_age_days=1)
 
-        # Map Yahoo symbols to their data
-        for t212_code, instrument_data in fresh_instruments.items():
-            if instrument_data.get('yahoo_symbol') in symbols:
-                profiles[instrument_data['yahoo_symbol']] = instrument_data.get('yahoo_data', {})
+    # Map Yahoo symbols to their data
+    for t212_code, instrument_data in fresh_instruments.items():
+        if instrument_data.get('yahoo_symbol') in symbols:
+            profiles[instrument_data['yahoo_symbol']] = instrument_data.get('yahoo_data', {})
 
     # Find symbols that need to be fetched
     symbols_to_fetch = [symbol for symbol in symbols if symbol not in profiles]
@@ -309,9 +299,8 @@ def yahoo_profiles_batch(symbols: List[str]) -> Dict[str, dict]:
                     profiles[symbol] = info
 
                     # Cache the result in database
-                    t212_codes = db_service.get_instruments_by_yahoo_symbols([symbol])
-                    for t212_code in t212_codes:
-                        db_service.update_instrument_yahoo_data(t212_code, info)
+                    t212_code = db_service.get_instruments_by_yahoo_symbols([symbol])[0]
+                    db_service.update_instrument_yahoo_data(t212_code, info)
 
             except Exception as e:
                 logging.warning(f"Failed to fetch batch {batch}: {e}")
@@ -322,9 +311,8 @@ def yahoo_profiles_batch(symbols: List[str]) -> Dict[str, dict]:
                         profiles[symbol] = info
 
                         # Cache the result in database
-                        t212_codes = db_service.get_instruments_by_yahoo_symbols([symbol])
-                        for t212_code in t212_codes:
-                            db_service.update_instrument_yahoo_data(t212_code, info)
+                        t212_code = db_service.get_instruments_by_yahoo_symbols([symbol])[0]
+                        db_service.update_instrument_yahoo_data(t212_code, info)
                     except Exception as e2:
                         logging.warning(f"Failed to fetch {symbol}: {e2}")
                         profiles[symbol] = {}
@@ -461,8 +449,8 @@ def daily_changes_from_holdings(holdings: Iterable["Holding"]) -> pd.Series:
         if not sym or h.prices is None or h.prices.empty:
             continue
         # first valid price in the stored window
-        first = h.prices.dropna().iloc[0]
-        if first and first > 0:
+        first = float(h.prices.dropna().iloc[0])
+        if first > 0:
             out[sym] = round(h.current_price / float(first) - 1, 4)
     return pd.Series(out)
 
