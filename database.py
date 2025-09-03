@@ -385,6 +385,7 @@ class DatabaseService:
                     existing_holding.market_cap = holding_data.get('market_cap')
                     existing_holding.pe_ratio = holding_data.get('pe_ratio')
                     existing_holding.beta = holding_data.get('beta')
+                    existing_holding.instit = holding_data.get('instit')
                 else:
                     # Create new holding record
                     holding = Holding(
@@ -396,6 +397,7 @@ class DatabaseService:
                         fx_ppl=holding_data.get('fx_ppl', 0.0),
                         market_cap=holding_data.get('market_cap'),
                         pe_ratio=holding_data.get('pe_ratio'),
+                        instit=holding_data.get('instit'),
                         beta=holding_data.get('beta'),
                         date=current_date
                     )
