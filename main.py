@@ -234,7 +234,7 @@ def fetch_portfolio() -> Iterable[Holding]:
             'sector': yahoo_info.get("sector", "Other"),
             'market_cap': yahoo_info.get("marketCap"),
             'pe_ratio': yahoo_info.get("trailingPE"),
-            'instit': yahoo_info.get("heldPercentInstitutions"),
+            'institutional': yahoo_info.get("heldPercentInstitutions"),
             'beta': yahoo_info.get("beta"),
         })
 

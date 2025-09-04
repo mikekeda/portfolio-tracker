@@ -107,6 +107,35 @@
   background-color: white;
 }
 
+/* Metric Selector */
+.metric-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.metric-selector label {
+  font-weight: 600;
+  color: #333;
+}
+
+.metric-selector select {
+  padding: 10px 12px;
+  border: 2px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  background: white;
+  cursor: pointer;
+  min-width: 180px;
+}
+
+.metric-selector select:focus {
+  border-color: #007bff;
+}
+
 /* Days Selector */
 .days-selector {
   display: flex;
@@ -246,6 +275,7 @@
     min-width: auto;
   }
 
+  .metric-selector,
   .days-selector {
     align-self: flex-start;
   }

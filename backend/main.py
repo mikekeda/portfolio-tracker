@@ -6,7 +6,7 @@ Serves portfolio data from PostgreSQL database.
 
 # Standard library imports
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 # Third-party imports
 import pandas as pd
@@ -322,6 +322,17 @@ async def get_instruments():
 @app.get("/api/chart/prices")
 async def get_chart_prices(symbols: str, days: int = 30):
     """Get daily price data for charting."""
+    return await get_chart_metric(symbols, days, "price")
+
+
+@app.get("/api/chart/metrics")
+async def get_chart_metrics(symbols: str, days: int = 30, metric: str = "price"):
+    """Get chart data for different metrics: price, pe_ratio, institutional, profit, profit_pct."""
+    return await get_chart_metric(symbols, days, metric)
+
+
+async def get_chart_metric(symbols: str, days: int, metric: str):
+    """Get chart data for a specific metric."""
     # Parse symbols from comma-separated string
     symbol_list = [s.strip().upper() for s in symbols.split(',') if s.strip()]
 
@@ -329,41 +340,89 @@ async def get_chart_prices(symbols: str, days: int = 30):
         raise HTTPException(status_code=400, detail="No symbols provided")
 
     # Calculate date range
-    end_date = datetime.now(timezone.utc)
+    end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
 
-    # Get price data from database service
-    price_data = db_service.get_price_history(
-        tickers=symbol_list,
-        start=start_date,
-        end=end_date,
-        price_field=PRICE_FIELD,
-    )
+    if metric == "price":
+        # Get price data from database service
+        price_data = db_service.get_price_history(
+            tickers=symbol_list,
+            start=start_date,
+            end=end_date,
+            price_field=PRICE_FIELD,
+        )
 
-    if price_data.empty:
-        return {"error": "No price data available"}
+        if price_data.empty:
+            return {"error": "No price data available"}
 
-    # Convert to chart format
-    chart_data = {}
-    for symbol in symbol_list:
-        if symbol in price_data.columns:
-            symbol_data = price_data[symbol].dropna()
-            chart_data[symbol] = [
-                {
-                    "date": date.isoformat(),
-                    "price": float(price)
-                }
-                for date, price in symbol_data.items()
-                if pd.notna(price) and price > 0
-            ]
-        else:
-            # Symbol not found in data
-            chart_data[symbol] = []
+        # Convert to chart format
+        chart_data = {}
+        for symbol in symbol_list:
+            if symbol in price_data.columns:
+                symbol_data = price_data[symbol].dropna()
+                chart_data[symbol] = [
+                    {
+                        "date": date.isoformat(),
+                        "value": float(price)
+                    }
+                    for date, price in symbol_data.items()
+                    if pd.notna(price) and price > 0
+                ]
+            else:
+                chart_data[symbol] = []
+    else:
+        # Get holdings data for other metrics
+        try:
+            with db_service.get_session() as session:
+                # Get holdings data for the date range
+                holdings_data = session.query(Holding).join(Instrument).filter(
+                    Instrument.yahoo_symbol.in_(symbol_list),
+                    Holding.date >= start_date,
+                    Holding.date <= end_date
+                ).order_by(Holding.date).all()
+
+                if not holdings_data:
+                    return {"error": "No holdings data available"}
+
+                # Group by date and symbol
+                chart_data = {}
+                for symbol in symbol_list:
+                    chart_data[symbol] = []
+
+                for holding in holdings_data:
+                    symbol = holding.instrument.yahoo_symbol
+                    if symbol in symbol_list:
+                        if metric == "pe_ratio":
+                            value = holding.pe_ratio
+                        elif metric == "institutional":
+                            value = holding.institutional * 100 if holding.institutional else None
+                        elif metric == "profit":
+                            value = holding.ppl
+                        elif metric == "profit_pct":
+                            market_value = holding.quantity * holding.current_price
+                            value = round((holding.ppl / (market_value - holding.ppl) * 100.0), 2) if (market_value - holding.ppl) > 0 else 0.0
+                        else:
+                            value = None
+
+                        if value is not None:
+                            chart_data[symbol].append({
+                                "date": holding.date.isoformat(),
+                                "value": float(value)
+                            })
+
+                # Sort data by date for each symbol
+                for symbol in chart_data:
+                    chart_data[symbol].sort(key=lambda x: x["date"])
+
+        except Exception as e:
+            logger.error(f"Error fetching holdings data for chart: {e}")
+            return {"error": f"Failed to fetch {metric} data"}
 
     return {
         "symbols": symbol_list,
         "data": chart_data,
-        "days": days
+        "days": days,
+        "metric": metric,
     }
 
 

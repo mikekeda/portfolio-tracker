@@ -13,6 +13,7 @@ const Chart = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showAutocomplete, setShowAutocomplete] = useState(false);
   const [days, setDays] = useState(30);
+  const [selectedMetric, setSelectedMetric] = useState('price');
   const autocompleteRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -47,7 +48,7 @@ const Chart = () => {
     };
   }, []);
 
-  // Load chart data when symbols or days change
+  // Load chart data when symbols, days, or metric change
   useEffect(() => {
     const loadChartData = async () => {
       if (selectedSymbols.length === 0) {
@@ -58,7 +59,13 @@ const Chart = () => {
       try {
         setLoading(true);
         setError(null);
-        const response = await portfolioAPI.getChartPrices(selectedSymbols, days);
+
+        let response;
+        if (selectedMetric === 'price') {
+          response = await portfolioAPI.getChartPrices(selectedSymbols, days);
+        } else {
+          response = await portfolioAPI.getChartMetrics(selectedSymbols, days, selectedMetric);
+        }
 
         if (response.error) {
           setError(response.error);
@@ -66,7 +73,7 @@ const Chart = () => {
         }
 
         if (!response.data || Object.keys(response.data).length === 0) {
-          setError('No price data available for the selected symbols');
+          setError(`No ${selectedMetric} data available for the selected symbols`);
           return;
         }
 
@@ -74,7 +81,7 @@ const Chart = () => {
         const transformedData = transformChartData(response.data);
         setChartData(transformedData);
       } catch (err) {
-        setError('Failed to load chart data');
+        setError(`Failed to load ${selectedMetric} data`);
         console.error('Error loading chart data:', err);
       } finally {
         setLoading(false);
@@ -82,7 +89,7 @@ const Chart = () => {
     };
 
     loadChartData();
-  }, [selectedSymbols, days]);
+  }, [selectedSymbols, days, selectedMetric]);
 
   // Transform API data to Recharts format
   const transformChartData = (apiData) => {
@@ -99,7 +106,7 @@ const Chart = () => {
     const allDates = new Set();
     validSymbols.forEach(symbol => {
       apiData[symbol].forEach(point => {
-        if (point.date && point.price) {
+        if (point.date && point.value !== undefined) {
           allDates.add(point.date);
         }
       });
@@ -113,8 +120,8 @@ const Chart = () => {
       const dataPoint = { date };
       validSymbols.forEach(symbol => {
         const symbolPoint = apiData[symbol].find(point => point.date === date);
-        if (symbolPoint && symbolPoint.price) {
-          dataPoint[symbol] = symbolPoint.price;
+        if (symbolPoint && symbolPoint.value !== undefined) {
+          dataPoint[symbol] = symbolPoint.value;
         }
       });
       return dataPoint;
@@ -147,12 +154,24 @@ const Chart = () => {
     setSelectedSymbols(selectedSymbols.filter(s => s !== symbol));
   };
 
+  // Get display name for metric
+  const getMetricDisplayName = (metric) => {
+    const metricNames = {
+      'price': 'Price',
+      'pe_ratio': 'P/E Ratio',
+      'institutional': 'Institutional Ownership',
+      'profit': 'Profit',
+      'profit_pct': 'Profit %'
+    };
+    return metricNames[metric] || 'Price';
+  };
+
   // Generate colors for chart lines
   const colors = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
 
   return (
     <div className="chart-container">
-      <h1>Stock Price Chart</h1>
+      <h1>Stock {getMetricDisplayName(selectedMetric)} Chart</h1>
 
       {/* Controls */}
       <div className="chart-controls">
@@ -190,6 +209,17 @@ const Chart = () => {
               )}
             </div>
           )}
+        </div>
+
+        <div className="metric-selector">
+          <label>Metric:</label>
+          <select value={selectedMetric} onChange={(e) => setSelectedMetric(e.target.value)}>
+            <option value="price">Price</option>
+            <option value="pe_ratio">P/E Ratio</option>
+            <option value="institutional">Institutional Ownership (%)</option>
+            <option value="profit">Profit (£)</option>
+            <option value="profit_pct">Profit (%)</option>
+          </select>
         </div>
 
         <div className="days-selector">
@@ -240,7 +270,20 @@ const Chart = () => {
               <YAxis />
               <Tooltip
                 labelFormatter={(date) => new Date(date).toLocaleDateString()}
-                formatter={(value, name) => [value.toFixed(2), name]}
+                formatter={(value, name) => {
+                  if (selectedMetric === 'price') {
+                    return [value.toFixed(2), name];
+                  } else if (selectedMetric === 'pe_ratio') {
+                    return [value.toFixed(1), name];
+                  } else if (selectedMetric === 'institutional') {
+                    return [`${value.toFixed(1)}%`, name];
+                  } else if (selectedMetric === 'profit') {
+                    return [`£${value.toFixed(2)}`, name];
+                  } else if (selectedMetric === 'profit_pct') {
+                    return [`${value.toFixed(1)}%`, name];
+                  }
+                  return [value.toFixed(2), name];
+                }}
               />
               <Legend />
               {selectedSymbols.map((symbol, index) => (

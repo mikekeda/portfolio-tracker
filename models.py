@@ -100,7 +100,7 @@ class Holding(Base):
     # Market data (changes daily)
     market_cap = Column(Float, nullable=True)
     pe_ratio = Column(Float, nullable=True)
-    instit = Column(Float, nullable=True)
+    institutional = Column(Float, nullable=True)
     beta = Column(Float, nullable=True)
 
     # Metadata

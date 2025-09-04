@@ -79,4 +79,11 @@ export const portfolioAPI = {
     const response = await apiClient.get(`/api/chart/prices?symbols=${symbolsParam}&days=${days}`);
     return response.data;
   },
+
+  // Get chart data for different metrics
+  getChartMetrics: async (symbols, days = 30, metric = 'price') => {
+    const symbolsParam = Array.isArray(symbols) ? symbols.join(',') : symbols;
+    const response = await apiClient.get(`/api/chart/metrics?symbols=${symbolsParam}&days=${days}&metric=${metric}`);
+    return response.data;
+  },
 };
