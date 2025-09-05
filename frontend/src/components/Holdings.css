@@ -305,7 +305,49 @@
   margin: 0;
 }
 
+/* Bar column styling - applies to multiple columns */
+.holdings-table .bar-column {
+  position: relative;
+  min-width: 0; /* Remove min-width constraint */
+  padding: 0; /* Remove padding to let table handle it */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
 
+.holdings-table .bar-column::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: var(--bar-width, 0%);
+  background: var(--bar-background, linear-gradient(90deg, #e8f5e8 0%, #c8e6c9 100%));
+  border-radius: 4px;
+  z-index: 1;
+  transition: all 0.3s ease;
+}
+
+/* Right-to-left bars for negative values */
+.holdings-table .bar-column.negative::before {
+  left: auto;
+  right: 0;
+}
+
+.holdings-table .bar-column span {
+  position: relative;
+  z-index: 2;
+  font-weight: 600;
+  /* Keep original text colors - don't override with bar colors */
+}
+
+/* Hover effects for bar columns */
+.holdings-table tbody tr:hover .bar-column::before {
+  background: var(--bar-hover-background, linear-gradient(90deg, #c8e6c9 0%, #a5d6a7 100%));
+  transform: scaleY(1.05);
+}
 
 /* Responsive design */
 @media (max-width: 768px) {
@@ -345,5 +387,9 @@
   .holdings-container h2 {
     font-size: 24px;
     margin-bottom: 20px;
+  }
+
+  .holdings-table .bar-column {
+    min-width: 0;
   }
 }

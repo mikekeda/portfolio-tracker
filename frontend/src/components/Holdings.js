@@ -9,6 +9,7 @@ import {
   createColumnHelper,
 } from '@tanstack/react-table';
 import { renderCountryWithFlag } from '../utils/countryUtils';
+import { calculateBarWidth, getBarColorScheme, calculateMinMax, getBarStyle, shouldBeNegativeBar } from '../utils/barUtils';
 import './Holdings.css';
 
 const Holdings = () => {
@@ -19,6 +20,19 @@ const Holdings = () => {
   const [sorting, setSorting] = useState([]);
 
   const columnHelper = createColumnHelper();
+
+  // Calculate min/max values for bar columns
+  const barRanges = useMemo(() => {
+    if (!holdings.length) return {};
+
+    return {
+      portfolioPct: calculateMinMax(holdings, 'portfolio_pct'),
+      marketValue: calculateMinMax(holdings, 'market_value'),
+      institutional: calculateMinMax(holdings, 'institutional_ownership'),
+      short: calculateMinMax(holdings, 'short_percent_of_float'),
+      weekChange: calculateMinMax(holdings, 'fifty_two_week_change')
+    };
+  }, [holdings]);
 
   const columns = useMemo(
     () => [
@@ -44,23 +58,41 @@ const Holdings = () => {
       }),
       columnHelper.accessor('portfolio_pct', {
         header: '%',
-        cell: (info) => (
-          <span className="portfolio-pct">{info.getValue()?.toFixed(2) || ''}</span>
-        ),
+        cell: (info) => {
+          const value = info.getValue();
+          const barWidth = calculateBarWidth(value, barRanges.portfolioPct?.min || 0, barRanges.portfolioPct?.max || 100);
+          const colorScheme = getBarColorScheme('percentage', value);
+          const barStyle = getBarStyle(barWidth, colorScheme);
+
+          return (
+            <span className="bar-column" style={barStyle}>
+              <span>{value?.toFixed(2) || ''}</span>
+            </span>
+          );
+        },
         enableSorting: true,
         enableGlobalFilter: false,
-        size: 60,
+        size: 40,
       }),
       columnHelper.accessor('market_value', {
         header: 'Value (£)',
-        cell: (info) => (
-          <span>
-            {info.getValue().toLocaleString(undefined, {
-              minimumFractionDigits: 0,
-              maximumFractionDigits: 0
-            })}
-          </span>
-        ),
+        cell: (info) => {
+          const value = info.getValue();
+          const barWidth = calculateBarWidth(value, barRanges.marketValue?.min || 0, barRanges.marketValue?.max || 100000);
+          const colorScheme = getBarColorScheme('value', value);
+          const barStyle = getBarStyle(barWidth, colorScheme);
+
+          return (
+            <span className="bar-column" style={barStyle}>
+              <span>
+                {value.toLocaleString(undefined, {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 0
+                })}
+              </span>
+            </span>
+          );
+        },
         enableSorting: true,
         enableGlobalFilter: false,
         size: 100,
@@ -116,14 +148,26 @@ const Holdings = () => {
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="institutional"></span>;
+
+          const barWidth = calculateBarWidth(value, barRanges.institutional?.min || 0, barRanges.institutional?.max || 100);
+          const colorScheme = getBarColorScheme('institutional', value);
+          const isNegative = shouldBeNegativeBar('institutional', value);
+          const barStyle = getBarStyle(barWidth, colorScheme);
+
+          // Apply original text color logic
           const isPositive = value > 80;
-          const isNegative = value < 40;
-          const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`institutional ${className}`}>{value}%</span>;
+          const isNegativeText = value < 40;
+          const textClassName = isPositive ? 'positive' : isNegativeText ? 'negative' : '';
+
+          return (
+            <span className={`bar-column ${isNegative ? 'negative' : ''}`} style={barStyle}>
+              <span className={`institutional ${textClassName}`}>{value}%</span>
+            </span>
+          );
         },
         enableSorting: true,
         enableGlobalFilter: false,
-        size: 60,
+        size: 40,
       }),
       columnHelper.accessor('market_cap', {
         header: 'Market Cap',
@@ -254,32 +298,54 @@ const Holdings = () => {
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="week-change"></span>;
+
+          const barWidth = calculateBarWidth(Math.abs(value), 0, Math.max(Math.abs(barRanges.weekChange?.min || 0), Math.abs(barRanges.weekChange?.max || 100)));
+          const colorScheme = getBarColorScheme('weekChange', value);
+          const isNegative = shouldBeNegativeBar('weekChange', value);
+          const barStyle = getBarStyle(barWidth, colorScheme);
+
+          // Apply original text color logic
           const isPositive = value > 0;
-          const isNegative = value < -20;
-          const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
+          const isNegativeText = value < -20;
+          const textClassName = isPositive ? 'positive' : isNegativeText ? 'negative' : '';
+
           return (
-            <span className={`week-change ${className}`}>
-              {value >= 0 ? '+' : ''}{value.toFixed(0)}%
+            <span className={`bar-column ${isNegative ? 'negative' : ''}`} style={barStyle}>
+              <span className={`week-change ${textClassName}`}>
+                {value >= 0 ? '+' : ''}{value.toFixed(0)}%
+              </span>
             </span>
           );
         },
         enableSorting: true,
         enableGlobalFilter: false,
-        size: 100,
+        size: 80,
       }),
       columnHelper.accessor('short_percent_of_float', {
         header: 'Short',
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="short"></span>;
+
+          const barWidth = calculateBarWidth(value, barRanges.short?.min || 0, barRanges.short?.max || 100);
+          const colorScheme = getBarColorScheme('short', value);
+          const isNegative = shouldBeNegativeBar('short', value);
+          const barStyle = getBarStyle(barWidth, colorScheme);
+
+          // Apply original text color logic
           const isPositive = value < 0;
-          const isNegative = value > 20;
-          const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`short ${className}`}>{value}%</span>;
+          const isNegativeText = value > 20;
+          const textClassName = isPositive ? 'positive' : isNegativeText ? 'negative' : '';
+
+          return (
+            <span className={`bar-column ${isNegative ? 'negative' : ''}`} style={barStyle}>
+              <span className={`short ${textClassName}`}>{value}%</span>
+            </span>
+          );
         },
         enableSorting: true,
         enableGlobalFilter: false,
-        size: 60,
+        size: 40,
       }),
       columnHelper.accessor('rsi', {
         header: 'RSI',
@@ -344,7 +410,7 @@ const Holdings = () => {
         size: 80,
       }),
     ],
-    [columnHelper]
+    [columnHelper, barRanges]
   );
 
   useEffect(() => {
