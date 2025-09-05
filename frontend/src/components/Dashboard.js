@@ -117,7 +117,9 @@ const Dashboard = () => {
                 .map(([sector, percentage]) => (
                   <tr key={sector}>
                     <td>{sector}</td>
-                    <td>{percentage.toFixed(2)}%</td>
+                    <td style={{ '--bar-width': `${Math.min(percentage, 100)}%` }}>
+                      <span>{percentage.toFixed(2)}%</span>
+                    </td>
                   </tr>
                 ))}
             </tbody>
@@ -141,7 +143,9 @@ const Dashboard = () => {
                     <td>
                       {renderCountryWithFlag(country)}
                     </td>
-                    <td>{percentage.toFixed(2)}%</td>
+                    <td style={{ '--bar-width': `${Math.min(percentage, 100)}%` }}>
+                      <span>{percentage.toFixed(2)}%</span>
+                    </td>
                   </tr>
                 ))}
             </tbody>

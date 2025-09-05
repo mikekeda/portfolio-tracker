@@ -101,8 +101,39 @@
   font-size: 14px;
 }
 
+/* Percentage bar styling */
+.allocation-table td:last-child {
+  position: relative;
+  min-width: 100px;
+}
+
+.allocation-table td:last-child::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: var(--bar-width, 0%);
+  background: linear-gradient(90deg, #e3f2fd 0%, #bbdefb 100%);
+  border-radius: 4px;
+  z-index: 1;
+  transition: width 0.3s ease;
+}
+
+.allocation-table td:last-child span {
+  position: relative;
+  z-index: 2;
+  font-weight: 600;
+  color: #1976d2;
+}
+
 .allocation-table tbody tr:hover {
   background-color: #f8f9fa;
+}
+
+.allocation-table tbody tr:hover td:last-child::before {
+  background: linear-gradient(90deg, #bbdefb 0%, #90caf9 100%);
+  transform: scaleY(1.1);
 }
 
 .allocation-table tbody tr:last-child td {
@@ -160,5 +191,9 @@
   .allocation-table td {
     padding: 10px 15px;
     font-size: 13px;
+  }
+
+  .allocation-table td:last-child {
+    min-width: 80px;
   }
 }
