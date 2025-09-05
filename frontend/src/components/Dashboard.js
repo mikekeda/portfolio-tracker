@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { portfolioAPI } from '../services/api';
+import { renderCountryWithFlag } from '../utils/countryUtils';
 import './Dashboard.css';
 
 const Dashboard = () => {
@@ -137,7 +138,9 @@ const Dashboard = () => {
                 .sort(([,a], [,b]) => b - a)
                 .map(([country, percentage]) => (
                   <tr key={country}>
-                    <td>{country}</td>
+                    <td>
+                      {renderCountryWithFlag(country)}
+                    </td>
                     <td>{percentage.toFixed(2)}%</td>
                   </tr>
                 ))}

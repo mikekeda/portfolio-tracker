@@ -8,6 +8,7 @@ import {
   flexRender,
   createColumnHelper,
 } from '@tanstack/react-table';
+import { renderCountryWithFlag } from '../utils/countryUtils';
 import './Holdings.css';
 
 const Holdings = () => {
@@ -291,11 +292,15 @@ const Holdings = () => {
       }),
       columnHelper.accessor('country', {
         header: 'Country',
-        cell: (info) => (
-          <span className="country" title={info.getValue() || ''}>
-            {info.getValue() || ''}
-          </span>
-        ),
+        cell: (info) => {
+          const countryName = info.getValue();
+
+          return (
+            <span className="country" title={countryName || ''}>
+              {renderCountryWithFlag(countryName)}
+            </span>
+          );
+        },
         enableSorting: true,
         enableGlobalFilter: true,
         size: 120,
@@ -339,7 +344,7 @@ const Holdings = () => {
         size: 80,
       }),
     ],
-    []
+    [columnHelper]
   );
 
   useEffect(() => {
