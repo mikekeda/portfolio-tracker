@@ -349,9 +349,19 @@ const Holdings = () => {
       }),
       columnHelper.accessor('rsi', {
         header: 'RSI',
-        cell: (info) => (
-          <span className="rsi">{info.getValue() || ''}</span>
-        ),
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="rsi"></span>;
+
+          // Apply text color logic for RSI
+          const isOverbought = value > 70;
+          const isOversold = value < 30;
+          const textClassName = isOverbought ? 'negative' : isOversold ? 'positive' : '';
+
+          return (
+            <span className={`rsi ${textClassName}`}>{value}</span>
+          );
+        },
         enableSorting: true,
         enableGlobalFilter: false,
         size: 50,

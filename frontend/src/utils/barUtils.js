@@ -70,6 +70,8 @@ export const shouldBeNegativeBar = (columnType, value) => {
       return value < 0; // Only truly negative values get red bars
     case 'short':
       return true; // Short interest is always a negative effect, so always red bars
+    case 'rsi':
+      return value > 70; // Overbought RSI (>70) is considered "negative" for investors
     case 'institutional':
     case 'percentage':
     case 'value':

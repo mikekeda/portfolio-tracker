@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 # Third-party imports
 import pandas as pd
+import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
@@ -50,6 +51,44 @@ def _weighted_add(target: dict[str, float], weights: dict[str, float], value: fl
         target[bucket] += value * pct / 100.0
 
 
+def calculate_rsi(prices: pd.Series, period: int = 14) -> float:
+    """
+    Calculate RSI (Relative Strength Index) for a series of prices.
+
+    Args:
+        prices: Series of closing prices
+        period: RSI period (default 14)
+
+    Returns:
+        RSI value between 0 and 100, or None if insufficient data
+    """
+    if len(prices) < period + 1:
+        return None
+
+    # Calculate price changes
+    delta = prices.diff()
+
+    # Separate gains and losses
+    gains = delta.where(delta > 0, 0)
+    losses = -delta.where(delta < 0, 0)
+
+    # Calculate initial average gain and loss
+    avg_gain = gains.rolling(window=period).mean()
+    avg_loss = losses.rolling(window=period).mean()
+
+    # Calculate subsequent average gain and loss using Wilder's smoothing
+    for i in range(period, len(prices)):
+        avg_gain.iloc[i] = (avg_gain.iloc[i-1] * (period - 1) + gains.iloc[i]) / period
+        avg_loss.iloc[i] = (avg_loss.iloc[i-1] * (period - 1) + losses.iloc[i]) / period
+
+    # Calculate RS and RSI
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+
+    # Return the most recent RSI value
+    return round(rsi.iloc[-1], 2) if not pd.isna(rsi.iloc[-1]) else None
+
+
 @app.get("/")
 async def root():
     """Health check endpoint."""
@@ -88,6 +127,28 @@ async def get_current_portfolio():
                     cached_data = db_service.get_yahoo_profile_from_cache(holding.instrument.yahoo_symbol)
                     if cached_data:
                         yahoo_profiles[holding.instrument.yahoo_symbol] = cached_data
+
+            # Get price history for RSI calculation (last 30 days should be enough for 14-day RSI)
+            rsi_data = {}
+            symbols_for_rsi = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
+            if symbols_for_rsi:
+                try:
+                    price_history = db_service.get_price_history(
+                        tickers=symbols_for_rsi,
+                        start=datetime.now() - timedelta(days=30),
+                        end=datetime.now(),
+                        price_field=PRICE_FIELD
+                    )
+
+                    # Calculate RSI for each symbol
+                    for symbol in symbols_for_rsi:
+                        if symbol in price_history.columns:
+                            symbol_prices = price_history[symbol].dropna()
+                            rsi_value = calculate_rsi(symbol_prices)
+                            rsi_data[symbol] = rsi_value
+                except Exception as e:
+                    logger.warning(f"Failed to calculate RSI: {e}")
+                    # Continue without RSI data
 
             # Calculate total portfolio value for percentage calculation
             total_portfolio_value = 0
@@ -136,7 +197,7 @@ async def get_current_portfolio():
                     "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
                     "fifty_two_week_change": round(info["fiftyTwoWeekHighChangePercent"] * 100) if info.get("fiftyTwoWeekHighChangePercent") else None,
                     "short_percent_of_float": round(info["shortPercentOfFloat"] * 100) if info.get("shortPercentOfFloat") else None,
-                    "rsi": None,  # RSI (not available in Yahoo data)
+                    "rsi": rsi_data.get(holding.instrument.yahoo_symbol),  # RSI calculated from price history
                     "quote_type": info.get("quoteType", "Unknown")
                 })
 

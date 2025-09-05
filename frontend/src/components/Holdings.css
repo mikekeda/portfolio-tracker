@@ -194,7 +194,8 @@
 .holdings-table .roa.positive,
 .holdings-table .fcf-yield.positive,
 .holdings-table .recommendation.positive,
-.holdings-table .short.positive {
+.holdings-table .short.positive,
+.holdings-table .rsi.positive {
   color: #28a745;
 }
 
@@ -208,7 +209,8 @@
 .holdings-table .roa.negative,
 .holdings-table .fcf-yield.negative,
 .holdings-table .recommendation.negative,
-.holdings-table .short.negative {
+.holdings-table .short.negative,
+.holdings-table .rsi.negative {
   color: #dc3545;
 }
 
