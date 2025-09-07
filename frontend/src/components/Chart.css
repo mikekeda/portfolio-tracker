@@ -216,6 +216,31 @@
   background-color: rgba(255, 255, 255, 0.2);
 }
 
+/* Custom Tooltip */
+.custom-tooltip {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-size: 14px;
+  max-width: 200px;
+}
+
+.tooltip-label {
+  margin: 0 0 8px 0;
+  font-weight: 600;
+  color: #333;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 4px;
+}
+
+.tooltip-item {
+  margin: 2px 0;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 /* Chart Wrapper */
 .chart-wrapper {
   background: white;

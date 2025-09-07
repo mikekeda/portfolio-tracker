@@ -197,6 +197,53 @@ const Chart = () => {
   // Generate colors for chart lines
   const colors = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
 
+  // Custom tooltip component that sorts entries by value
+  const CustomTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      // Sort payload by value (descending)
+      const sortedPayload = [...payload].sort((a, b) => {
+        const aValue = typeof a.value === 'number' ? a.value : parseFloat(a.value) || 0;
+        const bValue = typeof b.value === 'number' ? b.value : parseFloat(b.value) || 0;
+        return bValue - aValue;
+      });
+
+      return (
+        <div className="custom-tooltip">
+          <p className="tooltip-label">{new Date(label).toLocaleDateString()}</p>
+          {sortedPayload.map((entry, index) => {
+            const symbol = entry.dataKey;
+            const value = entry.value;
+            const color = entry.color;
+
+            let formattedValue;
+            if (selectedMetric === 'price') {
+              formattedValue = value.toFixed(2);
+            } else if (selectedMetric === 'price_pct_change') {
+              formattedValue = `${value.toFixed(2)}%`;
+            } else if (selectedMetric === 'pe_ratio') {
+              formattedValue = value.toFixed(1);
+            } else if (selectedMetric === 'institutional') {
+              formattedValue = `${value.toFixed(1)}%`;
+            } else if (selectedMetric === 'profit') {
+              formattedValue = `£${value.toFixed(2)}`;
+            } else if (selectedMetric === 'profit_pct') {
+              formattedValue = `${value.toFixed(1)}%`;
+            } else {
+              formattedValue = value.toFixed(2);
+            }
+
+            return (
+              <p key={symbol} className="tooltip-item" style={{ color }}>
+                {symbol}: {formattedValue}
+              </p>
+            );
+          })}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="chart-container">
       <h1>Stock {getMetricDisplayName(selectedMetric)} Chart</h1>
@@ -308,25 +355,7 @@ const Chart = () => {
                   return value;
                 }}
               />
-              <Tooltip
-                labelFormatter={(date) => new Date(date).toLocaleDateString()}
-                formatter={(value, name) => {
-                  if (selectedMetric === 'price') {
-                    return [value.toFixed(2), name];
-                  } else if (selectedMetric === 'price_pct_change') {
-                    return [`${value.toFixed(2)}%`, name];
-                  } else if (selectedMetric === 'pe_ratio') {
-                    return [value.toFixed(1), name];
-                  } else if (selectedMetric === 'institutional') {
-                    return [`${value.toFixed(1)}%`, name];
-                  } else if (selectedMetric === 'profit') {
-                    return [`£${value.toFixed(2)}`, name];
-                  } else if (selectedMetric === 'profit_pct') {
-                    return [`${value.toFixed(1)}%`, name];
-                  }
-                  return [value.toFixed(2), name];
-                }}
-              />
+              <Tooltip content={<CustomTooltip />} />
               <Legend />
               {selectedSymbols.map((symbol, index) => (
                 <Line
