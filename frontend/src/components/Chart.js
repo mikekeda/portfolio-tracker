@@ -61,7 +61,7 @@ const Chart = () => {
         setError(null);
 
         let response;
-        if (selectedMetric === 'price') {
+        if (selectedMetric === 'price' || selectedMetric === 'price_pct_change') {
           response = await portfolioAPI.getChartPrices(selectedSymbols, days);
         } else {
           response = await portfolioAPI.getChartMetrics(selectedSymbols, days, selectedMetric);
@@ -78,7 +78,7 @@ const Chart = () => {
         }
 
         // Transform data for Recharts
-        const transformedData = transformChartData(response.data);
+        const transformedData = transformChartData(response.data, selectedMetric);
         setChartData(transformedData);
       } catch (err) {
         setError(`Failed to load ${selectedMetric} data`);
@@ -92,7 +92,7 @@ const Chart = () => {
   }, [selectedSymbols, days, selectedMetric]);
 
   // Transform API data to Recharts format
-  const transformChartData = (apiData) => {
+  const transformChartData = (apiData, metric = 'price') => {
     if (!apiData || Object.keys(apiData).length === 0) return [];
 
     // Filter out symbols with no data
@@ -115,7 +115,35 @@ const Chart = () => {
     // Sort dates
     const sortedDates = Array.from(allDates).sort();
 
-    // Create data points for each date
+    // If metric is price_pct_change, calculate percentage changes
+    if (metric === 'price_pct_change') {
+      // Calculate percentage change for each symbol
+      const percentageData = {};
+      validSymbols.forEach(symbol => {
+        const symbolData = apiData[symbol].sort((a, b) => new Date(a.date) - new Date(b.date));
+        if (symbolData.length > 0) {
+          const firstPrice = symbolData[0].value;
+          percentageData[symbol] = symbolData.map(point => ({
+            date: point.date,
+            value: firstPrice > 0 ? ((point.value - firstPrice) / firstPrice) * 100 : 0
+          }));
+        }
+      });
+
+      // Create data points for each date with percentage values
+      return sortedDates.map(date => {
+        const dataPoint = { date };
+        validSymbols.forEach(symbol => {
+          const symbolPoint = percentageData[symbol]?.find(point => point.date === date);
+          if (symbolPoint && symbolPoint.value !== undefined) {
+            dataPoint[symbol] = symbolPoint.value;
+          }
+        });
+        return dataPoint;
+      });
+    }
+
+    // Default behavior for other metrics
     return sortedDates.map(date => {
       const dataPoint = { date };
       validSymbols.forEach(symbol => {
@@ -215,6 +243,7 @@ const Chart = () => {
           <label>Metric:</label>
           <select value={selectedMetric} onChange={(e) => setSelectedMetric(e.target.value)}>
             <option value="price">Price</option>
+            <option value="price_pct_change">Price % Change</option>
             <option value="pe_ratio">P/E Ratio</option>
             <option value="institutional">Institutional Ownership (%)</option>
             <option value="profit">Profit (£)</option>
@@ -240,7 +269,11 @@ const Chart = () => {
           <h3>Selected Stocks:</h3>
           <div className="symbol-tags">
             {selectedSymbols.map((symbol, index) => (
-              <span key={symbol} className="symbol-tag">
+              <span
+                key={symbol}
+                className="symbol-tag"
+                style={{ backgroundColor: colors[index % colors.length] }}
+              >
                 {symbol}
                 <button
                   onClick={() => removeSymbol(symbol)}
@@ -267,12 +300,21 @@ const Chart = () => {
                 dataKey="date"
                 tickFormatter={(date) => new Date(date).toLocaleDateString()}
               />
-              <YAxis />
+              <YAxis
+                tickFormatter={(value) => {
+                  if (selectedMetric === 'price_pct_change') {
+                    return `${value.toFixed(1)}%`;
+                  }
+                  return value;
+                }}
+              />
               <Tooltip
                 labelFormatter={(date) => new Date(date).toLocaleDateString()}
                 formatter={(value, name) => {
                   if (selectedMetric === 'price') {
                     return [value.toFixed(2), name];
+                  } else if (selectedMetric === 'price_pct_change') {
+                    return [`${value.toFixed(2)}%`, name];
                   } else if (selectedMetric === 'pe_ratio') {
                     return [value.toFixed(1), name];
                   } else if (selectedMetric === 'institutional') {
