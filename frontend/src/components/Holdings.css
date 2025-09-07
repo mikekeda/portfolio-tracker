@@ -110,6 +110,80 @@
   border-color: #0056b3;
 }
 
+/* Category-specific colors for screener badges */
+.screener-badges-section .screener-badge.category-fundamentals {
+  background: #e3f2fd;
+  color: #1565c0;
+  border-color: #bbdefb;
+}
+
+.screener-badges-section .screener-badge.category-technical {
+  background: #f3e5f5;
+  color: #7b1fa2;
+  border-color: #ce93d8;
+}
+
+.screener-badges-section .screener-badge.category-momentum {
+  background: #fff3e0;
+  color: #ef6c00;
+  border-color: #ffcc02;
+}
+
+.screener-badges-section .screener-badge.category-value {
+  background: #e8f5e8;
+  color: #2e7d32;
+  border-color: #a5d6a7;
+}
+
+.screener-badges-section .screener-badge.category-quality {
+  background: #fce4ec;
+  color: #c2185b;
+  border-color: #f8bbd9;
+}
+
+.screener-badges-section .screener-badge.category-growth {
+  background: #e0f2f1;
+  color: #00695c;
+  border-color: #80cbc4;
+}
+
+/* Active state overrides for category colors */
+.screener-badges-section .screener-badge.category-fundamentals.active {
+  background: #1565c0;
+  color: white;
+  border-color: #1565c0;
+}
+
+.screener-badges-section .screener-badge.category-technical.active {
+  background: #7b1fa2;
+  color: white;
+  border-color: #7b1fa2;
+}
+
+.screener-badges-section .screener-badge.category-momentum.active {
+  background: #ef6c00;
+  color: white;
+  border-color: #ef6c00;
+}
+
+.screener-badges-section .screener-badge.category-value.active {
+  background: #2e7d32;
+  color: white;
+  border-color: #2e7d32;
+}
+
+.screener-badges-section .screener-badge.category-quality.active {
+  background: #c2185b;
+  color: white;
+  border-color: #c2185b;
+}
+
+.screener-badges-section .screener-badge.category-growth.active {
+  background: #00695c;
+  color: white;
+  border-color: #00695c;
+}
+
 .screener-badges-section .screener-name {
   font-size: 11px;
   line-height: 1.2;
@@ -264,6 +338,80 @@
 .screener-badge.clickable.active:hover {
   background: #1565c0;
   border-color: #1565c0;
+}
+
+/* Category-specific colors for table screener badges */
+.screener-badge.clickable.category-fundamentals {
+  background: #e3f2fd;
+  color: #1565c0;
+  border-color: #bbdefb;
+}
+
+.screener-badge.clickable.category-technical {
+  background: #f3e5f5;
+  color: #7b1fa2;
+  border-color: #ce93d8;
+}
+
+.screener-badge.clickable.category-momentum {
+  background: #fff3e0;
+  color: #ef6c00;
+  border-color: #ffcc02;
+}
+
+.screener-badge.clickable.category-value {
+  background: #e8f5e8;
+  color: #2e7d32;
+  border-color: #a5d6a7;
+}
+
+.screener-badge.clickable.category-quality {
+  background: #fce4ec;
+  color: #c2185b;
+  border-color: #f8bbd9;
+}
+
+.screener-badge.clickable.category-growth {
+  background: #e0f2f1;
+  color: #00695c;
+  border-color: #80cbc4;
+}
+
+/* Active state overrides for table screener badge category colors */
+.screener-badge.clickable.category-fundamentals.active {
+  background: #1565c0;
+  color: white;
+  border-color: #1565c0;
+}
+
+.screener-badge.clickable.category-technical.active {
+  background: #7b1fa2;
+  color: white;
+  border-color: #7b1fa2;
+}
+
+.screener-badge.clickable.category-momentum.active {
+  background: #ef6c00;
+  color: white;
+  border-color: #ef6c00;
+}
+
+.screener-badge.clickable.category-value.active {
+  background: #2e7d32;
+  color: white;
+  border-color: #2e7d32;
+}
+
+.screener-badge.clickable.category-quality.active {
+  background: #c2185b;
+  color: white;
+  border-color: #c2185b;
+}
+
+.screener-badge.clickable.category-growth.active {
+  background: #00695c;
+  color: white;
+  border-color: #00695c;
 }
 
 .no-screeners {

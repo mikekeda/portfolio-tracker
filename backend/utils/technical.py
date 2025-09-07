@@ -179,21 +179,16 @@ def calculate_volume_ratio_from_db(symbol: str, db_service) -> Optional[float]:
     try:
         # Get recent volume data
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=30)  # Get 30 days to ensure we have 20 days
 
         # Query volume data directly from database
         from models import DailyPrice
-        session = db_service.db_manager.SessionLocal()
-
-        volumes = session.query(DailyPrice.volume).filter(
-            DailyPrice.symbol == symbol,
-            DailyPrice.date >= start_date.date(),
-            DailyPrice.date <= end_date.date(),
-            DailyPrice.volume.isnot(None),
-            DailyPrice.volume > 0
-        ).order_by(DailyPrice.date.desc()).limit(21).all()
-
-        session.close()
+        with db_service.db_manager.SessionLocal() as session:
+            volumes = session.query(DailyPrice.volume).filter(
+                DailyPrice.symbol == symbol,
+                DailyPrice.date <= end_date.date(),
+                DailyPrice.volume.isnot(None),
+                DailyPrice.volume > 0
+            ).order_by(DailyPrice.date.desc()).limit(21).all()
 
         if len(volumes) < 21:  # Need at least 21 days (today + 20 days)
             return None

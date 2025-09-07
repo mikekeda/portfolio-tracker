@@ -53,7 +53,7 @@ This ensures consistency and eliminates the need for complex field mapping.
 """
 
 from typing import Dict, List, Any, Union, Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import math
 
@@ -134,6 +134,8 @@ class ScreenerDefinition:
     requires_historical_data: bool = False
     requires_yahoo_data: bool = True
     available: bool = True
+    weight: int = 5  # 0..10, usefulness for LT growth/high-risk
+    combine_with: List[str] = field(default_factory=list)  # list of screener IDs
 
 
 class ScreenerConfig:
@@ -162,7 +164,9 @@ class ScreenerConfig:
                 ],
                 requires_historical_data=False,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=7,
+                combine_with=['r40_momentum', 'momentum_pullback', 'oversold_uptrend', 'quality_growth_pullback'],
             ),
 
             # Value + Quality
@@ -180,7 +184,9 @@ class ScreenerConfig:
                 ],
                 requires_historical_data=False,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=5,
+                combine_with=['golden_cross', 'oversold_uptrend', 'momentum_pullback'],
             ),
             # Growth at Reasonable Price
             'growth_at_reasonable_price': ScreenerDefinition(
@@ -192,11 +198,14 @@ class ScreenerConfig:
                     ScreenerCriteria('revenue_growth', '>=', 10, 'Revenue Growth >= 10%'),
                     ScreenerCriteria('peg_ratio', '<=', 1.5, 'PEG Ratio <= 1.5'),
                     ScreenerCriteria('peg_ratio', '>', 0.0, 'PEG Ratio > 0'),
+                    ScreenerCriteria('pe_ratio', '>', 0, 'Positive PE (hygiene)'),
                     ScreenerCriteria('profit_margins', '>', 5, 'Profit Margins > 5%'),
                 ],
                 requires_historical_data=False,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=7,
+                combine_with=['r40_momentum', 'momentum_pullback', 'breakout_quiet_base'],
             ),
 
             # Oversold in Uptrend
@@ -212,7 +221,9 @@ class ScreenerConfig:
                 ],
                 requires_historical_data=True,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=7,
+                combine_with=['r40_momentum', 'qarp', 'growth_at_reasonable_price', 'quality_growth_pullback'],
             ),
 
             # High Short Interest
@@ -224,11 +235,14 @@ class ScreenerConfig:
                 criteria=[
                     ScreenerCriteria('short_percent_of_float', '>=', 10, 'High short interest'),
                     ScreenerCriteria('current_price', '>', FieldRef('sma_50'), 'Reclaiming SMA50'),
-                    # ScreenerCriteria('volume_ratio', '>=', 1.5, 'Accumulation'),
+                    ScreenerCriteria('current_price', '>', FieldRef('sma_200'), 'Primary uptrend'),
+                    ScreenerCriteria('volume_ratio', '>=', 1.5, 'Accumulation'),
                 ],
                 requires_historical_data=True,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=4,
+                combine_with=['golden_cross', 'breakout_quiet_base', 'momentum_pullback'],
             ),
 
             # Momentum Pullback
@@ -239,13 +253,16 @@ class ScreenerConfig:
                 category=ScreenerCategory.MOMENTUM,
                 criteria=[
                     ScreenerCriteria('rs_6m_vs_spy', '>=', 10, 'RS >= +10pp over 6m'),
+                    ScreenerCriteria('current_price', '>', FieldRef('sma_200'), 'Primary uptrend'),
                     ScreenerCriteria('current_price', '<=', FieldRef('sma_20'), 'Pullback to SMA20'),
                     ScreenerCriteria('rsi', '>=', 35, 'RSI >= 35'),
                     ScreenerCriteria('rsi', '<=', 50, 'RSI <= 50'),
                 ],
                 requires_historical_data=True,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=8,
+                combine_with=['r40_momentum', 'qarp', 'growth_at_reasonable_price'],
             ),
 
             # Golden Cross + First Pullback
@@ -258,11 +275,13 @@ class ScreenerConfig:
                     ScreenerCriteria('gc_days_since', '<=', 60, 'SMA50>200 crossed within 60d'),
                     ScreenerCriteria('gc_days_since', '>=', 0, 'Cross exists'),
                     ScreenerCriteria('gc_within_sma50_frac', '>=', -0.02, 'Close not > SMA50 by more than 0%'),
-                    ScreenerCriteria('gc_within_sma50_frac', '<=', 0.00, 'Close within pullback window'),
+                    ScreenerCriteria('gc_within_sma50_frac', '<=', 0.01, 'Close within pullback window'),
                 ],
                 requires_historical_data=True,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=6,
+                combine_with=['momentum_pullback', 'r40_momentum', 'quality_growth_pullback'],
             ),
 
             # Volatility Contraction Pattern
@@ -274,24 +293,75 @@ class ScreenerConfig:
                 criteria=[
                     ScreenerCriteria('bb_width_20', '<=', FieldRef('bb_width_20_p30_6m'), 'Tight vs 6m history'),
                     ScreenerCriteria('vol20_lt_vol60', '==', True, 'Volume contraction'),
+                    ScreenerCriteria('rs_6m_vs_spy', '>=', 0, 'Not lagging the market'),
                 ],
                 requires_historical_data=True,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=6,
+                combine_with=['breakout_quiet_base', 'r40_momentum'],
             ),
 
-            # Rule of 40
-            'rule_of_40': ScreenerDefinition(
-                id='rule_of_40',
-                name='Rule of 40',
-                description='Revenue Growth + Profit Margin >= 40%',
+            # Rule-of-40 + Momentum
+            # Quality growth (Rev+Margin) with trend confirmation; great core list to buy on dips.
+            'r40_momentum': ScreenerDefinition(
+                id='r40_momentum',
+                name='Rule of 40 + Momentum',
+                description='Growth quality with trend confirmation',
                 category=ScreenerCategory.GROWTH,
                 criteria=[
-                    ScreenerCriteria('rule_of_40_score', '>=', 40, 'Revenue Growth + Profit Margin >= 40%'),
+                    ScreenerCriteria('rule_of_40_score', '>=', 40, 'Rule of 40'),
+                    ScreenerCriteria('current_price', '>=', FieldRef('sma_50'), 'Above 50DMA'),
+                    ScreenerCriteria('rs_6m_vs_spy', '>=', 10, 'Leader'),
                 ],
-                requires_historical_data=False,
+                requires_historical_data=True,
                 requires_yahoo_data=True,
-                available=True
+                available=True,
+                weight=9,
+                combine_with=['qarp', 'growth_at_reasonable_price', 'oversold_uptrend', 'momentum_pullback',
+                              'quality_growth_pullback', 'breakout_quiet_base'],
+            ),
+
+            # 52-Week Breakout (Quiet Base + Volume)
+            # Captures leaders launching from tight bases; works great after your VCP-lite flags “tightness,” this adds the trigger.
+            'breakout_quiet_base': ScreenerDefinition(
+                id='breakout_quiet_base',
+                name='52W Breakout (Quiet Base + Volume)',
+                description='Near 52W high with tightness and confirming volume',
+                category=ScreenerCategory.MOMENTUM,
+                criteria=[
+                    ScreenerCriteria('fifty_two_week_high_distance', '>=', -1.5, 'Within 1.5% below 52W high'),
+                    ScreenerCriteria('fifty_two_week_high_distance', '<=', 2.5, 'No more than 2.5% above high'),
+                    ScreenerCriteria('bb_width_20', '<=', FieldRef('bb_width_20_p30_6m'), 'Tight vs 6m'),
+                    ScreenerCriteria('volume_ratio', '>=', 1.3, 'Volume confirmation'),
+                    ScreenerCriteria('rs_6m_vs_spy', '>=', 10, 'Leader'),
+                ],
+                requires_historical_data=True,
+                requires_yahoo_data=True,
+                available=True,
+                weight=8,
+                combine_with=['volatility_contraction', 'r40_momentum', 'growth_at_reasonable_price'],
+            ),
+
+            # Quality Growth Pullback
+            # “buy the dip” on profitable high-quality growers; tends to have better follow-through than buying pure momentum.
+            'quality_growth_pullback': ScreenerDefinition(
+                id='quality_growth_pullback',
+                name='Quality Growth Pullback',
+                description='Quality/profitability with controlled dip to 50DMA',
+                category=ScreenerCategory.QUALITY,
+                criteria=[
+                    ScreenerCriteria('return_on_equity', '>=', 15, 'Quality ROE'),
+                    ScreenerCriteria('profit_margins', '>=', 10, 'Profitability'),
+                    ScreenerCriteria('current_price', '<=', FieldRef('sma_50'), 'At/below 50DMA'),
+                    ScreenerCriteria('current_price', '>=', FieldRef('sma_200'), 'Primary uptrend'),
+                    ScreenerCriteria('rsi', '<=', 55, 'Not overheated'),
+                ],
+                requires_historical_data=True,
+                requires_yahoo_data=True,
+                available=True,
+                weight=8,
+                combine_with=['r40_momentum', 'qarp', 'golden_cross'],
             ),
         }
 
@@ -312,7 +382,7 @@ class ScreenerConfig:
             'institutional_ownership', 'current_price', 'rule_of_40_score',
             'sma_20', 'sma_50', 'sma_200', 'volume_ratio', 'bb_width_20',
             'bb_width_20_p30_6m', 'gc_days_since', 'gc_within_sma50_frac',
-            'vol20_lt_vol60', 'rs_6m_vs_spy'
+            'vol20_lt_vol60', 'rs_6m_vs_spy', 'fifty_two_week_high_distance',
         ]
 
     def validate(self) -> None:
@@ -395,7 +465,9 @@ class ScreenerConfig:
                     ],
                     'requires_historical_data': screener.requires_historical_data,
                     'requires_yahoo_data': screener.requires_yahoo_data,
-                    'available': screener.available
+                    'available': screener.available,
+                    'weight': screener.weight,
+                    'combine_with': screener.combine_with,
                 }
                 for screener in self._screeners.values() if screener.available
             ]

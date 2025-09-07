@@ -395,15 +395,23 @@ const Holdings = () => {
                   return `${c.field.replace(/_/g, ' ')} ${c.operator} ${value}`;
                 }).join(' & ');
 
+                // Create combine with text
+                const combineWithText = screener.combine_with && screener.combine_with.length > 0
+                  ? `\n\nRecommended to combine with: ${screener.combine_with.map(id => {
+                      const combinedScreener = availableScreeners.find(s => s.id === id);
+                      return combinedScreener ? combinedScreener.name : id;
+                    }).join(', ')}`
+                  : '';
+
                 return (
                   <button
                     key={screenerId}
-                    className={`screener-badge clickable ${isActive ? 'active' : ''}`}
+                    className={`screener-badge clickable category-${screener.category} ${isActive ? 'active' : ''}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleScreenerChange(screenerId);
                     }}
-                    title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\n\nClick to ${isActive ? 'remove' : 'add'} this screener`}
+                    title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\nWeight: ${screener.weight || 5}/10${combineWithText}\n\nClick to ${isActive ? 'remove' : 'add'} this screener`}
                   >
                     {screener.name}
                   </button>
@@ -639,7 +647,9 @@ const Holdings = () => {
                   <span className="screener-name">All Holdings</span>
                   <span className="screener-count">({holdingsWithScreeners.length})</span>
                 </button>
-                {availableScreeners.map((screener) => {
+                {availableScreeners
+                  .sort((a, b) => (b.weight || 0) - (a.weight || 0)) // Sort by weight (higher first)
+                  .map((screener) => {
                   const count = screenerCounts[screener.id] || 0;
                   const isActive = selectedScreeners.includes(screener.id);
                   const criteriaText = screener.criteria.map(c => {
@@ -647,12 +657,20 @@ const Holdings = () => {
                     return `${c.field.replace(/_/g, ' ')} ${c.operator} ${value}`;
                   }).join(' & ');
 
+                  // Create combine with text
+                  const combineWithText = screener.combine_with && screener.combine_with.length > 0
+                    ? `\n\nRecommended to combine with: ${screener.combine_with.map(id => {
+                        const combinedScreener = availableScreeners.find(s => s.id === id);
+                        return combinedScreener ? combinedScreener.name : id;
+                      }).join(', ')}`
+                    : '';
+
                   return (
                     <button
                       key={screener.id}
-                      className={`screener-badge ${isActive ? 'active' : ''}`}
+                      className={`screener-badge category-${screener.category} ${isActive ? 'active' : ''}`}
                       onClick={() => handleScreenerChange(screener.id)}
-                      title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\n\nClick to ${isActive ? 'remove' : 'add'} this screener`}
+                      title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\nWeight: ${screener.weight || 5}/10${combineWithText}\n\nClick to ${isActive ? 'remove' : 'add'} this screener`}
                     >
                       <span className="screener-name">{screener.name}</span>
                       <span className="screener-count">({count})</span>
