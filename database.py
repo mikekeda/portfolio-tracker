@@ -246,7 +246,11 @@ class DatabaseService:
                     Instrument.t212_code == instrument_data['t212_code']
                 ).first()
 
-                if not existing:
+                if existing:
+                    existing.name = instrument_data['name']
+                    existing.currency = instrument_data['currency']
+                    existing.yahoo_symbol = instrument_data['yahoo_symbol']
+                else:
                     # Create new instrument only
                     instrument = Instrument(
                         t212_code=instrument_data['t212_code'],
@@ -309,7 +313,7 @@ class DatabaseService:
 
             return instrument.yahoo_data if instrument else None
 
-    def get_instruments_by_yahoo_symbols(self, yahoo_symbols: List[str]) -> List[str]:
+    def get_instruments_by_yahoo_symbols(self, yahoo_symbols: List[str]) -> List[Instrument.t212_code]:
         """Get T212 codes for given Yahoo symbols."""
         with self.get_session() as session:
             instruments = session.query(Instrument).filter(
