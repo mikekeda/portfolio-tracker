@@ -18,7 +18,7 @@ from config import PRICE_FIELD
 from currency import get_currency_service
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from database import get_db_service
-from models import Holding, Instrument, PortfolioSnapshot
+from models import HoldingDaily, Instrument, PortfolioDaily
 from utils.screener import calculate_screener_results
 from utils.technical import calculate_technical_indicators_for_symbols
 from utils.portfolio import weighted_add
@@ -58,7 +58,7 @@ async def get_current_portfolio():
     try:
         with db_service.get_session() as session:
             # Get the latest snapshot date
-            latest_date = session.query(func.max(Holding.date)).scalar()
+            latest_date = session.query(func.max(HoldingDaily.date)).scalar()
 
             if not latest_date:
                 return {
@@ -68,8 +68,8 @@ async def get_current_portfolio():
                 }
 
             # Query holdings with instrument data in the same session
-            holdings = session.query(Holding).join(Instrument).filter(
-                Holding.date == latest_date
+            holdings = session.query(HoldingDaily).join(Instrument).filter(
+                HoldingDaily.date == latest_date
             ).order_by(Instrument.name).all()
 
             # Get currency rates using the centralized service
@@ -181,16 +181,16 @@ async def get_portfolio_summary():
     try:
         with db_service.get_session() as session:
             # Get the latest portfolio snapshot
-            latest_snapshot = session.query(PortfolioSnapshot).order_by(
-                PortfolioSnapshot.date.desc()
+            latest_snapshot = session.query(PortfolioDaily).order_by(
+                PortfolioDaily.date.desc()
             ).first()
 
             if not latest_snapshot:
                 return {"error": "No portfolio data available"}
 
             # Get holdings for the same date to calculate win rate
-            holdings = session.query(Holding).filter(
-                Holding.date == latest_snapshot.date
+            holdings = session.query(HoldingDaily).filter(
+                HoldingDaily.date == latest_snapshot.date
             ).all()
 
             profitable_count = 0
@@ -226,8 +226,8 @@ async def get_portfolio_allocations():
     try:
         with db_service.get_session() as session:
             # Get the latest portfolio snapshot
-            latest_snapshot = session.query(PortfolioSnapshot).order_by(
-                PortfolioSnapshot.date.desc()
+            latest_snapshot = session.query(PortfolioDaily).order_by(
+                PortfolioDaily.date.desc()
             ).first()
 
             if not latest_snapshot:
@@ -242,8 +242,8 @@ async def get_portfolio_allocations():
                 }
 
             # Fallback: calculate from holdings (same logic as terminal)
-            holdings = session.query(Holding).join(Instrument).filter(
-                Holding.date == latest_snapshot.date
+            holdings = session.query(HoldingDaily).join(Instrument).filter(
+                HoldingDaily.date == latest_snapshot.date
             ).all()
 
             if not holdings:
@@ -412,11 +412,11 @@ async def get_chart_metric(symbols: str, days: int, metric: str):
         try:
             with db_service.get_session() as session:
                 # Get holdings data for the date range
-                holdings_data = session.query(Holding).join(Instrument).filter(
+                holdings_data = session.query(HoldingDaily).join(Instrument).filter(
                     Instrument.yahoo_symbol.in_(symbol_list),
-                    Holding.date >= start_date,
-                    Holding.date <= end_date
-                ).order_by(Holding.date).all()
+                    HoldingDaily.date >= start_date,
+                    HoldingDaily.date <= end_date
+                ).order_by(HoldingDaily.date).all()
 
                 if not holdings_data:
                     return {"error": "No holdings data available"}

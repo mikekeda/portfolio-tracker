@@ -23,9 +23,9 @@ Base = declarative_base()
 metadata = MetaData()
 
 
-class DailyPrice(Base):
+class PricesDaily(Base):
     """Daily stock price data from Yahoo Finance."""
-    __tablename__ = 'daily_prices'
+    __tablename__ = 'prices_daily'
 
     id = Column(Integer, primary_key=True)
     symbol = Column(String(20), nullable=False)
@@ -74,15 +74,15 @@ class Instrument(Base):
     updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     # Relationships
-    holdings = relationship("Holding", back_populates="instrument")
+    holdings = relationship("HoldingDaily", back_populates="instrument")
 
     def __repr__(self):
         return f"<Instrument(t212_code='{self.t212_code}', name='{self.name}')>"
 
 
-class Holding(Base):
+class HoldingDaily(Base):
     """Portfolio holdings from Trading212."""
-    __tablename__ = 'holdings'
+    __tablename__ = 'holdings_daily'
 
     id = Column(Integer, primary_key=True)
     instrument_id = Column(Integer, ForeignKey('instruments.id'), nullable=False)
@@ -113,9 +113,9 @@ class Holding(Base):
         return f"<Holding(instrument='{self.instrument.t212_code}', quantity={self.quantity})>"
 
 
-class CurrencyRate(Base):
+class CurrencyRateDaily(Base):
     """Currency exchange rates cache."""
-    __tablename__ = 'currency_rates'
+    __tablename__ = 'currency_rates_daily'
 
     id = Column(Integer, primary_key=True)
     date = Column(Date, nullable=False, index=True)
@@ -135,9 +135,9 @@ class CurrencyRate(Base):
         return f"<CurrencyRate({self.from_currency}->{self.to_currency}={self.rate})>"
 
 
-class PortfolioSnapshot(Base):
+class PortfolioDaily(Base):
     """Portfolio snapshots for historical tracking."""
-    __tablename__ = 'portfolio_snapshots'
+    __tablename__ = 'portfolio_daily'
 
     id = Column(Integer, primary_key=True)
     date = Column(Date, nullable=False, unique=True, index=True)

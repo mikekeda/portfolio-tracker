@@ -14,7 +14,7 @@ import pandas as pd
 import yfinance as yf
 
 from models import (
-    DailyPrice, Instrument, Holding, CurrencyRate, PortfolioSnapshot,
+    PricesDaily, Instrument, HoldingDaily, CurrencyRateDaily, PortfolioDaily,
     get_db_manager
 )
 
@@ -81,12 +81,12 @@ class DatabaseService:
         """Query cached price data from database."""
         with self.get_session() as session:
             query = session.query(
-                DailyPrice.symbol,
-                DailyPrice.date,
-                getattr(DailyPrice, price_field.lower().replace(" ", "_") + "_price").label('px')
+                PricesDaily.symbol,
+                PricesDaily.date,
+                getattr(PricesDaily, price_field.lower().replace(" ", "_") + "_price").label('px')
             ).filter(
-                DailyPrice.symbol.in_(tickers),
-                DailyPrice.date.between(start.date(), end.date())
+                PricesDaily.symbol.in_(tickers),
+                PricesDaily.date.between(start.date(), end.date())
             )
 
             rows = query.all()
@@ -200,9 +200,9 @@ class DatabaseService:
         # Bulk upsert
         with self.get_session() as session:
             for record in records:
-                existing = session.query(DailyPrice).filter(
-                    DailyPrice.symbol == record['symbol'],
-                    DailyPrice.date == record['date']
+                existing = session.query(PricesDaily).filter(
+                    PricesDaily.symbol == record['symbol'],
+                    PricesDaily.date == record['date']
                 ).first()
 
                 if existing:
@@ -212,7 +212,7 @@ class DatabaseService:
                             setattr(existing, key, value)
                 else:
                     # Insert new record
-                    session.add(DailyPrice(**record))
+                    session.add(PricesDaily(**record))
 
     # Instrument Operations
     def get_instruments_by_codes(self, t212_codes: Set[str]) -> Dict[str, dict]:
@@ -343,9 +343,9 @@ class DatabaseService:
                     session.flush()  # Get the ID
 
                 # Check if holding already exists for this instrument and date
-                existing_holding = session.query(Holding).filter(
-                    Holding.instrument_id == instrument.id,
-                    Holding.date == current_date
+                existing_holding = session.query(HoldingDaily).filter(
+                    HoldingDaily.instrument_id == instrument.id,
+                    HoldingDaily.date == current_date
                 ).first()
 
                 if existing_holding:
@@ -361,7 +361,7 @@ class DatabaseService:
                     existing_holding.institutional = holding_data.get('institutional')
                 else:
                     # Create new holding record
-                    holding = Holding(
+                    holding = HoldingDaily(
                         instrument_id=instrument.id,
                         quantity=holding_data['quantity'],
                         avg_price=holding_data['avg_price'],
@@ -385,10 +385,10 @@ class DatabaseService:
     ) -> Optional[float]:
         """Get cached currency rate."""
         with self.get_session() as session:
-            rate = session.query(CurrencyRate).filter(
-                CurrencyRate.from_currency == from_currency,
-                CurrencyRate.to_currency == to_currency,
-                CurrencyRate.date == rate_date
+            rate = session.query(CurrencyRateDaily).filter(
+                CurrencyRateDaily.from_currency == from_currency,
+                CurrencyRateDaily.to_currency == to_currency,
+                CurrencyRateDaily.date == rate_date
             ).first()
 
             return rate.rate if rate else None
@@ -402,16 +402,16 @@ class DatabaseService:
     ) -> None:
         """Save currency rate to cache."""
         with self.get_session() as session:
-            existing = session.query(CurrencyRate).filter(
-                CurrencyRate.from_currency == from_currency,
-                CurrencyRate.to_currency == to_currency,
-                CurrencyRate.date == rate_date
+            existing = session.query(CurrencyRateDaily).filter(
+                CurrencyRateDaily.from_currency == from_currency,
+                CurrencyRateDaily.to_currency == to_currency,
+                CurrencyRateDaily.date == rate_date
             ).first()
 
             if existing:
                 existing.rate = rate
             else:
-                currency_rate = CurrencyRate(
+                currency_rate = CurrencyRateDaily(
                     from_currency=from_currency,
                     to_currency=to_currency,
                     rate=rate,
@@ -424,8 +424,8 @@ class DatabaseService:
         """Save portfolio snapshot."""
         with self.get_session() as session:
             # Check if snapshot already exists for this date
-            existing_snapshot = session.query(PortfolioSnapshot).filter(
-                PortfolioSnapshot.date == snapshot_data['snapshot_date']
+            existing_snapshot = session.query(PortfolioDaily).filter(
+                PortfolioDaily.date == snapshot_data['snapshot_date']
             ).first()
 
             if existing_snapshot:
@@ -438,7 +438,7 @@ class DatabaseService:
                 existing_snapshot.etf_equity_split = snapshot_data.get('etf_equity_split')
             else:
                 # Create new snapshot
-                snapshot = PortfolioSnapshot(
+                snapshot = PortfolioDaily(
                     date=snapshot_data['snapshot_date'],
                     total_value_gbp=snapshot_data['total_value'],
                     total_profit_gbp=snapshot_data['total_profit'],
@@ -452,13 +452,13 @@ class DatabaseService:
     def get_portfolio_history(
         self,
         days: int = 30
-    ) -> List[PortfolioSnapshot]:
+    ) -> List[PortfolioDaily]:
         """Get portfolio snapshots for the last N days."""
         with self.get_session() as session:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-            return session.query(PortfolioSnapshot).filter(
-                PortfolioSnapshot.date >= cutoff_date
-            ).order_by(PortfolioSnapshot.date.desc()).all()
+            return session.query(PortfolioDaily).filter(
+                PortfolioDaily.date >= cutoff_date
+            ).order_by(PortfolioDaily.date.desc()).all()
 
 
 # Global database service instance
