@@ -40,7 +40,7 @@ class PricesDaily(Base):
     volume = Column(Integer, nullable=False)
 
     # Metadata
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Constraints
     __table_args__ = (
@@ -70,8 +70,8 @@ class Instrument(Base):
     yahoo_data = Column(JSONB, nullable=True)  # Stores Yahoo Finance profile data
 
     # Metadata
-    created_at = Column(DateTime, default=datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     holdings = relationship("HoldingDaily", back_populates="instrument")
@@ -104,7 +104,7 @@ class HoldingDaily(Base):
     beta = Column(Float, nullable=True)
 
     # Metadata
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     instrument = relationship("Instrument", back_populates="holdings")
@@ -124,7 +124,7 @@ class CurrencyRateDaily(Base):
     rate = Column(Float, nullable=False)
 
     # Metadata
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Constraints
     __table_args__ = (
@@ -153,7 +153,7 @@ class PortfolioDaily(Base):
     etf_equity_split = Column(JSONB, nullable=True)
 
     # Metadata
-    updated_at = Column(DateTime, default=datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     def __repr__(self):
         return f"<PortfolioSnapshot(date='{self.date}', value={self.total_value_gbp})>"

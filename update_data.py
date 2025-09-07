@@ -99,6 +99,10 @@ def fetch_instruments(tickers: set) -> dict:
             'sector': instrument_data.get('sector'),
             'country': instrument_data.get('country'),
             'yahoo_symbol': instrument_data.get('yahoo_symbol'),
+            'market_cap': instrument_data["yahoo_data"].get("marketCap"),
+            'pe_ratio': instrument_data["yahoo_data"].get("trailingPE"),
+            'institutional': instrument_data["yahoo_data"].get("heldPercentInstitutions"),
+            'beta': instrument_data["yahoo_data"].get("beta"),
         }
 
     # Fetch missing instruments from API
@@ -131,6 +135,7 @@ def fetch_instruments(tickers: set) -> dict:
                     'name': item["name"],
                     'currency': item["currencyCode"],
                     'yahoo_symbol': convert_ticker(item["ticker"]),
+                    # TODO: Set the rest fields
                 }
     else:
         logging.info("All instruments found in database, no API call needed")
@@ -160,6 +165,12 @@ def fetch_portfolio() -> List[dict]:
             'current_price': h["currentPrice"],
             'ppl': h["ppl"],
             'fx_ppl': h["fxPpl"] or 0.0,
+            'country': instrument["country"],
+            'sector': instrument["sector"],
+            'market_cap': instrument["market_cap"],
+            'pe_ratio': instrument["pe_ratio"],
+            'institutional': instrument["institutional"],
+            'beta': instrument["beta"],
         })
 
     return holdings
@@ -291,15 +302,15 @@ def build_snapshot(holdings: List[dict]) -> pd.DataFrame:
         info = yahoo_profiles.get(h.get('yahoo_symbol'), {}) if h.get('yahoo_symbol') else {}
 
         # Calculate return percentage safely
-        cost_basis = gbp_value - h['ppl'] * rate
-        return_pct = round(h['ppl'] * rate / cost_basis * 100.0, 2) if cost_basis > 0 else 0.0
+        cost_basis = gbp_value - h['ppl']
+        return_pct = round(h['ppl'] / cost_basis * 100.0, 2) if cost_basis > 0 else 0.0
 
         records.append({
             "ticker": h.get('yahoo_symbol'),
             "name": h['name'],
             "%": 0.0,
             "value_gbp": gbp_value,
-            "profit": h['ppl'] * rate,
+            "profit": h['ppl'],
             "return": return_pct,
             "prediction": round((info["targetMedianPrice"] / h['current_price'] - 1) * 100.0) if info.get("targetMedianPrice") else "",
             "instit": round(info["heldPercentInstitutions"] * 100.0) if info.get("heldPercentInstitutions") else "",
@@ -369,6 +380,7 @@ def update_portfolio_snapshot(holdings: List[dict]) -> None:
 
 
 if __name__ == "__main__":
+    logging.getLogger().setLevel(logging.INFO)
     logging.info("Starting data update process")
 
     # Step 1: Fetch portfolio holdings

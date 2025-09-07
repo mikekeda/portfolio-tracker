@@ -12,6 +12,7 @@ from contextlib import contextmanager
 
 import pandas as pd
 import yfinance as yf
+from sqlalchemy.sql import func
 
 from models import (
     PricesDaily, Instrument, HoldingDaily, CurrencyRateDaily, PortfolioDaily,
@@ -210,6 +211,7 @@ class DatabaseService:
                     for key, value in record.items():
                         if key not in ['symbol', 'date']:
                             setattr(existing, key, value)
+                    existing.updated_at = datetime.now(timezone.utc)
                 else:
                     # Insert new record
                     session.add(PricesDaily(**record))
@@ -220,7 +222,7 @@ class DatabaseService:
         with self.get_session() as session:
             instruments = session.query(Instrument).filter(
                 Instrument.t212_code.in_(t212_codes),
-                Instrument.created_at > datetime.now(timezone.utc) - timedelta(days=30),
+                Instrument.updated_at > datetime.now(timezone.utc) - timedelta(days=30),
             ).all()
 
             # Return dictionary data instead of ORM objects to avoid session issues
@@ -250,6 +252,7 @@ class DatabaseService:
                     existing.name = instrument_data['name']
                     existing.currency = instrument_data['currency']
                     existing.yahoo_symbol = instrument_data['yahoo_symbol']
+                    existing.updated_at = func.now()
                 else:
                     # Create new instrument only
                     instrument = Instrument(
@@ -267,13 +270,9 @@ class DatabaseService:
     ) -> None:
         """Update instrument with Yahoo Finance data."""
         with self.get_session() as session:
-            instrument = session.query(Instrument).filter(
+            session.query(Instrument).filter(
                 Instrument.t212_code == t212_code
-            ).first()
-
-            if instrument:
-                instrument.yahoo_data = yahoo_data
-                # updated_at will be automatically set by SQLAlchemy
+            ).update({"yahoo_data": yahoo_data})
 
     def get_instruments_with_fresh_yahoo_data(self, t212_codes: Set[str], max_age_days: int = 1) -> Dict[str, dict]:
         """Get instruments that have fresh Yahoo Finance data (less than max_age_seconds old)."""
@@ -358,11 +357,12 @@ class DatabaseService:
                     existing_holding.avg_price = holding_data['avg_price']
                     existing_holding.current_price = holding_data['current_price']
                     existing_holding.ppl = holding_data['ppl']
-                    existing_holding.fx_ppl = holding_data.get('fx_ppl', 0.0)
-                    existing_holding.market_cap = holding_data.get('market_cap')
-                    existing_holding.pe_ratio = holding_data.get('pe_ratio')
-                    existing_holding.beta = holding_data.get('beta')
-                    existing_holding.institutional = holding_data.get('institutional')
+                    existing_holding.fx_ppl = holding_data["fx_ppl"]
+                    existing_holding.market_cap = holding_data["market_cap"]
+                    existing_holding.pe_ratio = holding_data["pe_ratio"]
+                    existing_holding.beta = holding_data["beta"]
+                    existing_holding.institutional = holding_data["institutional"]
+                    existing_holding.updated_at = datetime.now(timezone.utc)
                 else:
                     # Create new holding record
                     holding = HoldingDaily(
@@ -440,6 +440,7 @@ class DatabaseService:
                 existing_snapshot.country_allocation = snapshot_data.get('country_allocation')
                 existing_snapshot.sector_allocation = snapshot_data.get('sector_allocation')
                 existing_snapshot.etf_equity_split = snapshot_data.get('etf_equity_split')
+                existing_snapshot.updated_at = datetime.now(timezone.utc)
             else:
                 # Create new snapshot
                 snapshot = PortfolioDaily(
