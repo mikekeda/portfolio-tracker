@@ -55,16 +55,16 @@ def convert_ticker(t212: str) -> str:
     """Convert Trading212 code to Yahoo symbol."""
     from data import STOCKS_ALIASES, STOCKS_SUFFIX
     import re
-    
+
     if t212 in STOCKS_DELISTED:
         raise ValueError(f"{t212} is delisted")
-    
+
     if not t212.endswith("_EQ"):
         raise ValueError(f"Unknown format: {t212}")
-    
+
     core = t212[:-3]  # strip _EQ
     PATTERN_MULTI = re.compile(r"^(?P<sym>.+?)_(?P<tag>[A-Z]{2,3})$")
-    
+
     m = PATTERN_MULTI.match(core)
     if m:
         sym, tag = m.group("sym"), m.group("tag")
@@ -72,13 +72,13 @@ def convert_ticker(t212: str) -> str:
         sym, tag = core[:-1], core[-1]
     else:
         raise ValueError(f"Cannot parse: {t212}")
-    
+
     sym = sym.rstrip("_")
     sym = STOCKS_ALIASES.get(sym, sym)
     suffix = STOCKS_SUFFIX.get(tag)
     if suffix is None:
         raise ValueError(f"No Yahoo suffix for tag {tag} in {t212}")
-    
+
     return sym + suffix
 
 
@@ -87,9 +87,9 @@ def fetch_instruments(tickers: set) -> dict:
     # Check what we have in database
     existing_instruments = db_service.get_instruments_by_codes(tickers)
     missing_tickers = tickers - set(existing_instruments.keys())
-    
+
     instruments_map = {}
-    
+
     # Use existing instruments from database
     for t212_code, instrument_data in existing_instruments.items():
         instruments_map[t212_code] = {
@@ -100,13 +100,13 @@ def fetch_instruments(tickers: set) -> dict:
             'country': instrument_data.get('country'),
             'yahoo_symbol': instrument_data.get('yahoo_symbol'),
         }
-    
+
     # Fetch missing instruments from API
     if missing_tickers:
         logging.info(f"Fetching {len(missing_tickers)} missing instruments from API")
         url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
         raw = request_json(url, {"Authorization": TRADING212_API_KEY})
-        
+
         # Store new instruments in database
         instruments_data = []
         for item in raw:
@@ -117,12 +117,12 @@ def fetch_instruments(tickers: set) -> dict:
                     'currency': item["currencyCode"],
                     'yahoo_symbol': convert_ticker(item["ticker"])
                 })
-        
+
         # Save to database
         if instruments_data:
             db_service.save_instruments(instruments_data)
             logging.info(f"Saved {len(instruments_data)} new instruments to database")
-        
+
         # Add new instruments to map
         for item in raw:
             if item["ticker"] in missing_tickers:
@@ -134,7 +134,7 @@ def fetch_instruments(tickers: set) -> dict:
                 }
     else:
         logging.info("All instruments found in database, no API call needed")
-    
+
     return instruments_map
 
 
@@ -144,9 +144,9 @@ def fetch_portfolio() -> List[dict]:
     url = "https://live.trading212.com/api/v0/equity/portfolio"
     raw = request_json(url, {"Authorization": TRADING212_API_KEY})
     raw = [h for h in raw if h["ticker"] not in STOCKS_DELISTED]
-    
+
     instr_map = fetch_instruments({h["ticker"] for h in raw})
-    
+
     holdings = []
     for h in raw:
         instrument = instr_map.get(h["ticker"], {})
@@ -161,37 +161,37 @@ def fetch_portfolio() -> List[dict]:
             'ppl': h["ppl"],
             'fx_ppl': h["fxPpl"] or 0.0,
         })
-    
+
     return holdings
 
 
 def update_yahoo_data(holdings: List[dict]) -> None:
     """Update Yahoo Finance data for all holdings."""
     logging.info("Updating Yahoo Finance data")
-    
+
     # Get symbols that need Yahoo data
     symbols = [h['yahoo_symbol'] for h in holdings if h.get('yahoo_symbol')]
     if not symbols:
         logging.info("No Yahoo symbols to update")
         return
-    
+
     # Get instruments that have fresh Yahoo data (less than 24 hours old)
     t212_codes = set(db_service.get_instruments_by_yahoo_symbols(symbols))
     fresh_instruments = db_service.get_instruments_with_fresh_yahoo_data(t212_codes, max_age_days=1)
-    
+
     # Find symbols that need to be fetched
     symbols_to_fetch = []
     for symbol in symbols:
         t212_code = db_service.get_instruments_by_yahoo_symbols([symbol])[0] if symbol else None
         if t212_code and t212_code not in fresh_instruments:
             symbols_to_fetch.append(symbol)
-    
+
     if not symbols_to_fetch:
         logging.info("All Yahoo data is fresh, no updates needed")
         return
-    
+
     logging.info(f"Fetching {len(symbols_to_fetch)} Yahoo Finance profiles")
-    
+
     # Fetch in batches
     batch_size = 10
     for i in range(0, len(symbols_to_fetch), batch_size):
@@ -202,14 +202,14 @@ def update_yahoo_data(holdings: List[dict]) -> None:
             for symbol in batch:
                 try:
                     info = tickers.tickers[symbol].info or {}
-                    
+
                     # Cache the result in database
                     t212_code = db_service.get_instruments_by_yahoo_symbols([symbol])[0]
                     db_service.update_instrument_yahoo_data(t212_code, info)
-                    
+
                 except Exception as e:
                     logging.warning(f"Failed to fetch {symbol}: {e}")
-                    
+
         except Exception as e:
             logging.warning(f"Failed to fetch batch {batch}: {e}")
             # Fallback to individual requests
@@ -335,21 +335,21 @@ def build_snapshot(holdings: List[dict]) -> pd.DataFrame:
 def update_portfolio_snapshot(holdings: List[dict]) -> None:
     """Update portfolio snapshot in database."""
     logging.info("Updating portfolio snapshot")
-    
+
     try:
         # Build snapshot
         snapshot = build_snapshot(holdings)
-        
+
         # Calculate portfolio metrics
         total_value = float(snapshot["value_gbp"].sum())
         total_profit = float(snapshot["profit"].sum())
         total_return_pct = (total_profit / (total_value - total_profit) * 100) if (total_value - total_profit) > 0 else 0
-        
+
         # Calculate allocations
         country_alloc = country_allocation(snapshot)
         sector_alloc = sector_allocation(snapshot)
         etf_equity = etf_equity_allocation(snapshot)
-        
+
         # Create snapshot data
         snapshot_data = {
             'total_value': total_value,
@@ -360,10 +360,10 @@ def update_portfolio_snapshot(holdings: List[dict]) -> None:
             'sector_allocation': sector_alloc.to_dict(),
             'etf_equity_split': etf_equity.to_dict(),
         }
-        
+
         db_service.save_portfolio_snapshot(snapshot_data)
         logging.info("Saved portfolio snapshot to database")
-        
+
     except Exception as e:
         logging.error(f"Failed to update portfolio snapshot: {e}")
 
