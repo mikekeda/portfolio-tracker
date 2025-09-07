@@ -12,7 +12,6 @@ from contextlib import contextmanager
 
 import pandas as pd
 import yfinance as yf
-from sqlalchemy import func
 
 from models import (
     DailyPrice, Instrument, Holding, CurrencyRate, PortfolioSnapshot,
@@ -257,32 +256,6 @@ class DatabaseService:
                     )
                     session.add(instrument)
 
-    def get_or_create_instrument(
-        self,
-        t212_code: str,
-        name: str,
-        currency: str,
-        yahoo_symbol: Optional[str] = None
-    ) -> Instrument:
-        """Get existing instrument or create new one."""
-        with self.get_session() as session:
-            instrument = session.query(Instrument).filter(
-                Instrument.t212_code == t212_code
-            ).first()
-
-            if not instrument:
-                # Create new instrument
-                instrument = Instrument(
-                    t212_code=t212_code,
-                    name=name,
-                    currency=currency,
-                    yahoo_symbol=yahoo_symbol
-                )
-                session.add(instrument)
-                session.flush()  # Get the ID
-
-            return instrument
-
     def update_instrument_yahoo_data(
         self,
         t212_code: str,
@@ -402,20 +375,6 @@ class DatabaseService:
                         date=current_date
                     )
                     session.add(holding)
-
-    def get_latest_holdings(self) -> List[Holding]:
-        """Get the most recent holdings snapshot."""
-        with self.get_session() as session:
-            # Get the latest snapshot date
-            latest_date = session.query(func.max(Holding.date)).scalar()
-
-            if not latest_date:
-                return []
-
-            # Join with instrument to get all the data we need
-            return session.query(Holding).join(Instrument).filter(
-                Holding.date == latest_date
-            ).all()
 
     # Currency Rate Operations
     def get_currency_rate(

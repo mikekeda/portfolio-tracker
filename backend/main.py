@@ -9,8 +9,6 @@ import logging
 from datetime import datetime, timedelta
 
 # Third-party imports
-import pandas as pd
-import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
@@ -21,6 +19,9 @@ from currency import get_currency_service
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from database import get_db_service
 from models import Holding, Instrument, PortfolioSnapshot
+from utils.screener import calculate_screener_results
+from utils.technical import calculate_technical_indicators_for_symbols
+from utils.portfolio import weighted_add
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,50 +44,6 @@ app.add_middleware(
 
 # Get database service
 db_service = get_db_service()
-
-
-def _weighted_add(target: dict[str, float], weights: dict[str, float], value: float):
-    """Add *value* into target buckets using percentage weights."""
-    for bucket, pct in weights.items():
-        target[bucket] += value * pct / 100.0
-
-
-def calculate_rsi(prices: pd.Series, period: int = 14) -> float:
-    """
-    Calculate RSI (Relative Strength Index) for a series of prices.
-
-    Args:
-        prices: Series of closing prices
-        period: RSI period (default 14)
-
-    Returns:
-        RSI value between 0 and 100, or None if insufficient data
-    """
-    if len(prices) < period + 1:
-        return None
-
-    # Calculate price changes
-    delta = prices.diff()
-
-    # Separate gains and losses
-    gains = delta.where(delta > 0, 0)
-    losses = -delta.where(delta < 0, 0)
-
-    # Calculate initial average gain and loss
-    avg_gain = gains.rolling(window=period).mean()
-    avg_loss = losses.rolling(window=period).mean()
-
-    # Calculate subsequent average gain and loss using Wilder's smoothing
-    for i in range(period, len(prices)):
-        avg_gain.iloc[i] = (avg_gain.iloc[i-1] * (period - 1) + gains.iloc[i]) / period
-        avg_loss.iloc[i] = (avg_loss.iloc[i-1] * (period - 1) + losses.iloc[i]) / period
-
-    # Calculate RS and RSI
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-
-    # Return the most recent RSI value
-    return round(rsi.iloc[-1], 2) if not pd.isna(rsi.iloc[-1]) else None
 
 
 @app.get("/")
@@ -119,36 +76,24 @@ async def get_current_portfolio():
             currency_service = get_currency_service()
             currency_rates = currency_service.get_currency_table()
 
-                        # Get Yahoo Finance data from database cache
+            # Get Yahoo Finance data from database cache (optimized batch fetch)
             yahoo_profiles = {}
-            for holding in holdings:
-                if holding.instrument.yahoo_symbol:
-                    # Get cached Yahoo data from database
-                    cached_data = db_service.get_yahoo_profile_from_cache(holding.instrument.yahoo_symbol)
-                    if cached_data:
-                        yahoo_profiles[holding.instrument.yahoo_symbol] = cached_data
+            yahoo_symbols = [holding.instrument.yahoo_symbol for holding in holdings
+                           if holding.instrument.yahoo_symbol and holding.instrument.yahoo_data]
 
-            # Get price history for RSI calculation (last 30 days should be enough for 14-day RSI)
-            rsi_data = {}
-            symbols_for_rsi = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
-            if symbols_for_rsi:
-                try:
-                    price_history = db_service.get_price_history(
-                        tickers=symbols_for_rsi,
-                        start=datetime.now() - timedelta(days=30),
-                        end=datetime.now(),
-                        price_field=PRICE_FIELD
-                    )
+            # Fetch all Yahoo Finance data at once from the database
+            with db_service.get_session() as session:
+                instruments = session.query(Instrument).filter(
+                    Instrument.yahoo_symbol.in_(yahoo_symbols),
+                    Instrument.yahoo_data.isnot(None)
+                ).all()
 
-                    # Calculate RSI for each symbol
-                    for symbol in symbols_for_rsi:
-                        if symbol in price_history.columns:
-                            symbol_prices = price_history[symbol].dropna()
-                            rsi_value = calculate_rsi(symbol_prices)
-                            rsi_data[symbol] = rsi_value
-                except Exception as e:
-                    logger.warning(f"Failed to calculate RSI: {e}")
-                    # Continue without RSI data
+                for instrument in instruments:
+                    yahoo_profiles[instrument.yahoo_symbol] = instrument.yahoo_data
+
+            # Calculate technical indicators using centralized function
+            symbols_for_technical = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
+            rsi_data, technical_data = calculate_technical_indicators_for_symbols(symbols_for_technical, db_service)
 
             # Calculate total portfolio value for percentage calculation
             total_portfolio_value = 0
@@ -189,17 +134,35 @@ async def get_current_portfolio():
                     # Additional fields from Yahoo Finance (same as terminal)
                     "prediction": round((info["targetMedianPrice"] / holding.current_price - 1) * 100.0) if info.get("targetMedianPrice") else None,
                     "institutional_ownership": round(info["heldPercentInstitutions"] * 100.0) if info.get("heldPercentInstitutions") else None,
-                    "peg_ratio": round(info["trailingPegRatio"], 2) if info.get("trailingPegRatio") else None,
-                    "profit_margins": round(info["profitMargins"] * 100.0) if info.get("profitMargins") else None,
-                    "revenue_growth": round(info["revenueGrowth"] * 100.0) if info.get("revenueGrowth") else None,
-                    "return_on_assets": round(info["returnOnAssets"] * 100.0) if info.get("returnOnAssets") else None,
-                    "free_cashflow_yield": round(info["freeCashflow"] / info["enterpriseValue"] * 100, 2) if (info.get("freeCashflow") and info.get("enterpriseValue")) else None,
+                    "peg_ratio": info["trailingPegRatio"] if info.get("trailingPegRatio") else None,  # Keep full precision for screener evaluation
+                    "profit_margins": info["profitMargins"] * 100.0 if info.get("profitMargins") else None,  # Keep full precision for screener evaluation
+                    "revenue_growth": info["revenueGrowth"] * 100.0 if info.get("revenueGrowth") else None,  # Keep full precision for screener evaluation
+                    "return_on_assets": info["returnOnAssets"] * 100.0 if info.get("returnOnAssets") else None,  # Keep full precision for screener evaluation
+                    "return_on_equity": info["returnOnEquity"] * 100.0 if info.get("returnOnEquity") else None,  # Keep full precision for screener evaluation
+                    "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100 if (info.get("freeCashflow") and info.get("marketCap") and info.get("marketCap") > 0) else None,  # FCF / Market Cap (owner's yield)
                     "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
-                    "fifty_two_week_change": round(info["fiftyTwoWeekHighChangePercent"] * 100) if info.get("fiftyTwoWeekHighChangePercent") else None,
-                    "short_percent_of_float": round(info["shortPercentOfFloat"] * 100) if info.get("shortPercentOfFloat") else None,
+                    "fifty_two_week_high_distance": round(info["fiftyTwoWeekHighChangePercent"] * 100) if info.get("fiftyTwoWeekHighChangePercent") else None,  # Distance from 52-week high (negative = below high)
+                    "fifty_two_week_change": round(info.get("52WeekChange", 0) * 100) if info.get("52WeekChange") is not None else None,  # True YoY change vs 52 weeks ago (positive = up from 52w ago)
+                    "short_percent_of_float": info["shortPercentOfFloat"] * 100 if info.get("shortPercentOfFloat") else None,  # Keep full precision for screener evaluation
                     "rsi": rsi_data.get(holding.instrument.yahoo_symbol),  # RSI calculated from price history
-                    "quote_type": info.get("quoteType", "Unknown")
+                    "rule_of_40_score": (info.get("revenueGrowth", 0) * 100) + (info.get("profitMargins", 0) * 100) if (info.get("revenueGrowth") is not None and info.get("profitMargins") is not None) else None,  # Keep full precision
+                    # Technical indicators calculated from price history
+                    "sma_20": technical_data.get(holding.instrument.yahoo_symbol, {}).get('sma_20'),
+                    "sma_50": technical_data.get(holding.instrument.yahoo_symbol, {}).get('sma_50'),
+                    "sma_200": technical_data.get(holding.instrument.yahoo_symbol, {}).get('sma_200'),
+                    "rs_6m_vs_spy": technical_data.get(holding.instrument.yahoo_symbol, {}).get('rs_6m_vs_spy'),
+                    "gc_days_since": technical_data.get(holding.instrument.yahoo_symbol, {}).get('gc_days_since'),
+                    "gc_within_sma50_frac": technical_data.get(holding.instrument.yahoo_symbol, {}).get('gc_within_sma50_frac'),
+                    "bb_width_20": technical_data.get(holding.instrument.yahoo_symbol, {}).get('bb_width_20'),
+                    "bb_width_20_p30_6m": technical_data.get(holding.instrument.yahoo_symbol, {}).get('bb_width_20_p30_6m'),
+                    "vol20_lt_vol60": technical_data.get(holding.instrument.yahoo_symbol, {}).get('vol20_lt_vol60'),
+                    "volume_ratio": technical_data.get(holding.instrument.yahoo_symbol, {}).get('volume_ratio'),
+                    "quote_type": info.get("quoteType", "Unknown"),
+                    "passedScreeners": []  # Will be populated below
                 })
+
+            # Calculate screener results for each holding
+            calculate_screener_results(portfolio_data)
 
             return {
                 "holdings": portfolio_data,
@@ -302,13 +265,13 @@ async def get_portfolio_allocations():
 
                 # Apply ETF allocation logic (same as terminal)
                 if symbol in ETF_SECTOR_ALLOCATION:
-                    _weighted_add(sector_allocation, ETF_SECTOR_ALLOCATION[symbol], market_value_gbp)
+                    weighted_add(sector_allocation, ETF_SECTOR_ALLOCATION[symbol], market_value_gbp)
                 else:
                     sector = holding.instrument.sector or "Other"
                     sector_allocation[sector] = sector_allocation.get(sector, 0) + market_value_gbp
 
                 if symbol in ETF_COUNTRY_ALLOCATION:
-                    _weighted_add(country_allocation, ETF_COUNTRY_ALLOCATION[symbol], market_value_gbp)
+                    weighted_add(country_allocation, ETF_COUNTRY_ALLOCATION[symbol], market_value_gbp)
                 else:
                     country = holding.instrument.country or "Other"
                     country_allocation[country] = country_allocation.get(country, 0) + market_value_gbp
@@ -392,6 +355,18 @@ async def get_chart_metrics(symbols: str, days: int = 30, metric: str = "price")
     return await get_chart_metric(symbols, days, metric)
 
 
+@app.get("/api/screeners")
+async def get_available_screeners():
+    """Get list of all available screeners with their configurations."""
+    try:
+        from screener_config import get_screener_config
+        screener_config = get_screener_config()
+        return screener_config.to_dict()
+    except Exception as e:
+        logger.error(f"Error getting available screeners: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def get_chart_metric(symbols: str, days: int, metric: str):
     """Get chart data for a specific metric."""
     # Parse symbols from comma-separated string
@@ -427,7 +402,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str):
                         "value": float(price)
                     }
                     for date, price in symbol_data.items()
-                    if pd.notna(price) and price > 0
+                    if price is not None and price > 0
                 ]
             else:
                 chart_data[symbol] = []
@@ -456,7 +431,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str):
                         if metric == "pe_ratio":
                             value = holding.pe_ratio
                         elif metric == "institutional":
-                            value = holding.institutional * 100 if holding.institutional else None
+                            value = holding.institutional * 100 if holding.institutional is not None else None
                         elif metric == "profit":
                             value = holding.ppl
                         elif metric == "profit_pct":

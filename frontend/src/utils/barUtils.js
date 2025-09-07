@@ -18,7 +18,7 @@ export const calculateBarWidth = (value, min, max, maxBarWidth = 100) => {
 
 /**
  * Get color scheme for different column types
- * @param {string} columnType - Type of column (percentage, value, institutional, short, weekChange)
+ * @param {string} columnType - Type of column (percentage, value, institutional, short, weekChange, weekHighChange)
  * @param {number} value - The value to determine color
  * @returns {object} - Color scheme object
  */
@@ -67,6 +67,7 @@ export const calculateMinMax = (data, accessor = null) => {
 export const shouldBeNegativeBar = (columnType, value) => {
   switch (columnType) {
     case 'weekChange':
+    case 'weekHighChange':
       return value < 0; // Only truly negative values get red bars
     case 'short':
       return true; // Short interest is always a negative effect, so always red bars

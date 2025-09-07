@@ -24,7 +24,7 @@ REQUEST_SLEEP = 1.0  # polite pause between Yahoo calls
 HISTORY_YEARS = 10
 
 # Portfolio Configuration
-BENCH = "SPY"  # or VUAG.L to keep GBP base
+BENCH = "VUAG.L"  # S&P500
 RISK_FREE = 0.045  # annual risk-free guess (4.5 %); replace with 3-month T-bill
 
 # Display Configuration

@@ -116,46 +116,6 @@ class CurrencyService:
 
         return amount * rate
 
-    def get_rate(self, from_currency: str, to_currency: str = "GBP") -> Optional[float]:
-        """Get conversion rate between currencies."""
-        if from_currency == to_currency:
-            return 1.0
-
-        if to_currency != "GBP":
-            logger.warning("Only GBP conversion is currently supported")
-            return None
-
-        rates = self.get_currency_table()
-        return rates.get(from_currency)
-
-    def refresh_rates(self) -> Dict[str, float]:
-        """Force refresh of all currency rates from API."""
-        today = date.today()
-        table = {"GBX": 0.01, "GBP": 1.0}
-
-        currencies = ["USD", "EUR", "CAD"]
-        try:
-            rates = self._fetch_rates_batch(currencies)
-            for currency in currencies:
-                rate = rates.get(currency)
-                if rate:
-                    self.db_service.save_currency_rate(currency, "GBP", rate, today)
-                    table[currency] = rate
-                    logger.info("Refreshed rate for %s/GBP: %f", currency, rate)
-                else:
-                    fallback_rate = self.fallback_rates.get(currency)
-                    if fallback_rate:
-                        table[currency] = fallback_rate
-                        logger.warning("Failed to refresh %s rate, using fallback", currency)
-                    else:
-                        logger.error("No fallback rate for %s", currency)
-        except Exception as exc:
-            logger.warning("Failed to refresh rates, using fallbacks: %s", exc)
-            for currency in currencies:
-                table[currency] = self.fallback_rates.get(currency, 1.0)
-
-        return table
-
 
 # Global currency service instance
 _currency_service: Optional[CurrencyService] = None
@@ -167,8 +127,3 @@ def get_currency_service() -> CurrencyService:
     if _currency_service is None:
         _currency_service = CurrencyService()
     return _currency_service
-
-
-def currency_table() -> Dict[str, float]:
-    """Legacy function for backward compatibility."""
-    return get_currency_service().get_currency_table()

@@ -12,11 +12,11 @@ function App() {
       <div className="App">
         <Navigation />
         <main className="main-content">
-                  <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/holdings" element={<Holdings />} />
-          <Route path="/chart" element={<Chart />} />
-        </Routes>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/holdings" element={<Holdings />} />
+            <Route path="/chart" element={<Chart />} />
+          </Routes>
         </main>
       </div>
     </Router>
