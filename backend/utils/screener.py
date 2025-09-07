@@ -4,6 +4,7 @@ Screener Utilities
 Helper functions for screener evaluation and calculation.
 """
 
+from itertools import combinations
 import logging
 from typing import Dict, List, Optional, Any
 
@@ -87,8 +88,17 @@ def calculate_screener_results(portfolio_data: List[Dict]) -> None:
                 result = screener_config.eval_screener(holding_data, screener_def)
                 if result['passed']:
                     passed_screeners.append(screener_def.id)
+                    holding_data['screener_score'] += screener_def.weight
 
             holding_data['passedScreeners'] = passed_screeners
+            # Bonus for combinations of screeners
+            screener_pairs = {
+                tuple(sorted((a, b))) for a, b in combinations(set(passed_screeners), 2)
+                if (b in screener_config.screeners[a].combine_with
+                    or a in screener_config.screeners[b].combine_with)
+                   and screener_config.screeners[a].category != screener_config.screeners[b].category  # optional
+            }
+            holding_data['screener_score'] += min(5, 2 * len(screener_pairs))
 
         # Log summary for debugging
         total_matches = sum(len(h.get('passedScreeners', [])) for h in portfolio_data)

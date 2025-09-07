@@ -158,7 +158,8 @@ async def get_current_portfolio():
                     "vol20_lt_vol60": technical_data.get(holding.instrument.yahoo_symbol, {}).get('vol20_lt_vol60'),
                     "volume_ratio": technical_data.get(holding.instrument.yahoo_symbol, {}).get('volume_ratio'),
                     "quote_type": info.get("quoteType", "Unknown"),
-                    "passedScreeners": []  # Will be populated below
+                    "passedScreeners": [],  # will be populated below
+                    "screener_score": 0,  # will be populated below
                 })
 
             # Calculate screener results for each holding

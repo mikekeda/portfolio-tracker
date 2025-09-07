@@ -142,7 +142,7 @@ class ScreenerConfig:
     """Centralized configuration for all screeners."""
 
     def __init__(self):
-        self._screeners = self._initialize_screeners()
+        self.screeners = self._initialize_screeners()
         # Validate configuration on initialization
         self.validate()
 
@@ -367,7 +367,7 @@ class ScreenerConfig:
 
     def get_available_screeners(self) -> List[ScreenerDefinition]:
         """Get only available screeners."""
-        return [s for s in self._screeners.values() if s.available]
+        return [s for s in self.screeners.values() if s.available]
 
     def get_available_operators(self) -> List[str]:
         """Get list of available operators."""
@@ -390,7 +390,7 @@ class ScreenerConfig:
         available_fields = set(self.get_available_fields())
         available_operators = set(self.get_available_operators())
 
-        for screener_id, screener_def in self._screeners.items():
+        for screener_id, screener_def in self.screeners.items():
             for criteria in screener_def.criteria:
                 # Validate field name
                 if criteria.field not in available_fields:
@@ -469,7 +469,7 @@ class ScreenerConfig:
                     'weight': screener.weight,
                     'combine_with': screener.combine_with,
                 }
-                for screener in self._screeners.values() if screener.available
+                for screener in self.screeners.values() if screener.available
             ]
         }
 

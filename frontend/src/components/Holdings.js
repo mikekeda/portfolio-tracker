@@ -375,6 +375,30 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 50,
       }),
+      columnHelper.accessor('screener_score', {
+        header: 'Score',
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="screener-score"></span>;
+
+          // Color coding based on score ranges
+          let className = '';
+          if (value >= 8) className = 'excellent';
+          else if (value >= 6) className = 'good';
+          else if (value >= 4) className = 'average';
+          else if (value >= 2) className = 'poor';
+          else className = 'very-poor';
+
+          return (
+            <span className={`screener-score ${className}`}>
+              {value.toFixed(1)}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 60,
+      }),
       columnHelper.accessor('passedScreeners', {
         header: 'Screeners',
         cell: (info) => {
