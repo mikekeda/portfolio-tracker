@@ -64,7 +64,7 @@ class DatabaseService:
         need, start_needed = self._discover_price_gaps(tickers, have, start, end)
 
         # Download missing data
-        if need:
+        if need and (start_needed.weekday() <= 4 or start_needed - datetime.today() > timedelta(days=4)):  # we don't have data for weekends
             df_yf = self._download_prices(need, start_needed, end.date())
             if not df_yf.empty:
                 self._bulk_upsert_prices(df_yf)
