@@ -1,0 +1,273 @@
+.top-movers-container {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.top-movers-header {
+  background: #f8f9fa;
+  padding: 15px 20px;
+  border-bottom: 1px solid #dee2e6;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 15px;
+}
+
+.top-movers-header h3 {
+  color: #495057;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.period-selector {
+  display: flex;
+  gap: 5px;
+}
+
+.period-btn {
+  padding: 6px 12px;
+  border: 1px solid #dee2e6;
+  background: white;
+  color: #6c757d;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.period-btn:hover {
+  background: #f8f9fa;
+  border-color: #adb5bd;
+}
+
+.period-btn.active {
+  background: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
+.movers-tables {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.movers-table {
+  padding: 20px;
+}
+
+.movers-table:first-child {
+  border-right: 1px solid #e9ecef;
+}
+
+.movers-table h4 {
+  margin: 0 0 15px 0;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.gainers-title {
+  color: #28a745;
+}
+
+.losers-title {
+  color: #dc3545;
+}
+
+.movers-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.movers-table th {
+  background: #f8f9fa;
+  color: #495057;
+  font-weight: 600;
+  padding: 8px 6px;
+  text-align: left;
+  border-bottom: 1px solid #dee2e6;
+  font-size: 12px;
+}
+
+.movers-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid #e9ecef;
+  font-size: 12px;
+}
+
+.movers-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+.movers-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.movers-table .symbol {
+  font-weight: 600;
+  color: #333;
+  min-width: 60px;
+}
+
+.movers-table .name {
+  color: #6c757d;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.movers-table .price {
+  font-weight: 500;
+  color: #333;
+  text-align: right;
+  min-width: 70px;
+}
+
+.movers-table .change {
+  font-weight: 600;
+  text-align: right;
+  min-width: 70px;
+}
+
+/* Allocation-style background bars for Change column */
+.movers-table .change-cell {
+  position: relative;
+  min-width: 100px;
+  text-align: right;
+}
+
+.movers-table .change-cell::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: var(--bar-width, 0%);
+  background: linear-gradient(90deg, #e8f5e8 0%, #c8e6c9 100%);
+  border-radius: 4px;
+  z-index: 1;
+  transition: width 0.3s ease;
+}
+
+.movers-table .change-cell.neg::before {
+  left: auto;
+  right: 0;
+  background: linear-gradient(90deg, #ffebee 0%, #ffcdd2 100%);
+}
+
+.movers-table .change-cell span {
+  position: relative;
+  z-index: 2;
+}
+
+.change.positive {
+  color: #28a745;
+}
+
+.change.negative {
+  color: #dc3545;
+}
+
+.no-data {
+  text-align: center;
+  color: #6c757d;
+  font-style: italic;
+  padding: 20px !important;
+}
+
+.movers-footer {
+  background: #f8f9fa;
+  padding: 10px 20px;
+  border-top: 1px solid #dee2e6;
+  text-align: center;
+}
+
+.movers-footer small {
+  color: #6c757d;
+  font-size: 11px;
+}
+
+.loading, .error {
+  padding: 40px 20px;
+  text-align: center;
+  color: #6c757d;
+}
+
+.error {
+  color: #dc3545;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .top-movers-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .period-selector {
+    justify-content: center;
+  }
+
+  .movers-tables {
+    grid-template-columns: 1fr;
+  }
+
+  .movers-table:first-child {
+    border-right: none;
+    border-bottom: 1px solid #e9ecef;
+  }
+
+  .movers-table {
+    padding: 15px;
+  }
+
+  .movers-table th,
+  .movers-table td {
+    padding: 6px 4px;
+    font-size: 11px;
+  }
+
+  .movers-table .name {
+    max-width: 100px;
+  }
+
+  .movers-table .price,
+  .movers-table .change {
+    min-width: 60px;
+  }
+}
+
+@media (max-width: 480px) {
+  .period-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .movers-table th,
+  .movers-table td {
+    padding: 4px 2px;
+    font-size: 10px;
+  }
+
+  .movers-table .symbol {
+    min-width: 50px;
+  }
+
+  .movers-table .name {
+    max-width: 80px;
+  }
+
+  .movers-table .price,
+  .movers-table .change {
+    min-width: 50px;
+  }
+}

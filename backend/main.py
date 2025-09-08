@@ -5,6 +5,7 @@ Serves portfolio data from PostgreSQL database.
 """
 
 # Standard library imports
+from collections import defaultdict
 import logging
 from datetime import datetime, timedelta
 
@@ -18,7 +19,7 @@ from config import PRICE_FIELD
 from currency import get_currency_service
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from database import get_db_service
-from models import HoldingDaily, Instrument, PortfolioDaily
+from models import HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 from utils.screener import calculate_screener_results
 from utils.technical import calculate_technical_indicators_for_symbols
 from utils.portfolio import weighted_add
@@ -461,6 +462,79 @@ async def get_chart_metric(symbols: str, days: int, metric: str):
         "days": days,
         "metric": metric,
     }
+
+
+@app.get("/api/market/top-movers")
+async def get_top_movers(period: str = "1d", limit: int = 10):
+    """Get top movers (gainers and losers) for a given period."""
+    try:
+        # Validate period parameter
+        valid_periods = {"1d": 1, "1w": 7, "1m": 30, "90d": 90}
+        if period not in valid_periods:
+            raise HTTPException(status_code=400, detail="Invalid period. Use: 1d, 1w, 1m, 90d")
+
+        days = valid_periods[period]
+
+        # Get price data for all symbols
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        with db_service.get_session() as session:
+
+            instruments = session.query(
+                Instrument.yahoo_symbol,
+                Instrument.name,
+                Instrument.t212_code,
+                PricesDaily.symbol,
+                PricesDaily.date,
+                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('px'),
+            ).join(
+                PricesDaily, PricesDaily.symbol == Instrument.yahoo_symbol
+            ).filter(
+                PricesDaily.date.between(start_date, end_date)
+            ).order_by(Instrument.yahoo_symbol, PricesDaily.date).all()
+
+            prices_data = defaultdict(list)
+
+            for price in instruments:
+                prices_data[price.symbol].append(price)
+
+            # Calculate percentage changes
+            movers = []
+            for symbol, symbol_data in prices_data.items():
+
+                if len(symbol_data) >= 2:
+                    # Get first and last prices
+                    first_price = symbol_data[0].px
+                    last_price = symbol_data[-1].px
+
+                    if first_price > 0:
+                        change_pct = ((last_price - first_price) / first_price) * 100
+                        movers.append({
+                            "symbol": symbol,
+                            "name": symbol_data[0].name,
+                            "change_pct": round(change_pct, 2),
+                            "current_price": round(last_price, 2),
+                            "t212_code": symbol_data[0].t212_code,
+                        })
+
+        # Sort by percentage change
+        movers.sort(key=lambda x: x["change_pct"], reverse=True)
+
+        # Get top gainers and losers
+        gainers = movers[:limit]
+        losers = movers[-limit:][::-1]  # Reverse to show biggest losers first
+
+        return {
+            "period": period,
+            "gainers": gainers,
+            "losers": losers,
+            "total_symbols": len(movers)
+        }
+
+    except Exception as e:
+        logger.error(f"Error fetching top movers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

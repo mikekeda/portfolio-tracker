@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { portfolioAPI } from '../services/api';
 import { renderCountryWithFlag } from '../utils/countryUtils';
+import TopMovers from './TopMovers';
 import './Dashboard.css';
 
 const Dashboard = () => {
@@ -98,6 +99,11 @@ const Dashboard = () => {
           <h3>Last Updated</h3>
           <p className="value">{summary.last_updated ? new Date(summary.last_updated).toLocaleDateString() : 'N/A'}</p>
         </div>
+      </div>
+
+      {/* Top Movers Section */}
+      <div className="top-movers-section">
+        <TopMovers />
       </div>
 
       {/* Allocations */}

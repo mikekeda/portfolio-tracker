@@ -86,4 +86,10 @@ export const portfolioAPI = {
     const response = await apiClient.get(`/api/chart/metrics?symbols=${symbolsParam}&days=${days}&metric=${metric}`);
     return response.data;
   },
+
+  // Get top movers (gainers and losers)
+  getTopMovers: async (period = '1d', limit = 10) => {
+    const response = await apiClient.get(`/api/market/top-movers?period=${period}&limit=${limit}`);
+    return response.data;
+  },
 };
