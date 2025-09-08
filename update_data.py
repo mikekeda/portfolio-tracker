@@ -16,7 +16,7 @@ export DB_PASSWORD="your_database_password"
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 from collections import defaultdict
 
@@ -27,7 +27,7 @@ import yfinance as yf
 from data import STOCKS_DELISTED, ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from database import get_db_service
 from currency import get_currency_service
-from config import TRADING212_API_KEY, REQUEST_RETRY
+from config import TRADING212_API_KEY, REQUEST_RETRY, PRICE_FIELD
 
 
 # Initialize services
@@ -383,15 +383,23 @@ if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
     logging.info("Starting data update process")
 
-    # Step 1: Fetch portfolio holdings
+    # Step 1: Fetch portfolio holdings (update currency_rates_daily, instruments, holdings_daily tables)
     holdings = fetch_portfolio()
     db_service.save_holdings(holdings)
     logging.info(f"Fetched {len(holdings)} holdings")
 
-    # Step 2: Update Yahoo Finance data
+    # Step 2: Update Yahoo Finance data (update instruments table, specifically yahoo_data column)
     update_yahoo_data(holdings)
 
-    # Step 3: Update portfolio snapshot
+    # Step 3: Download prices (update prices_daily table)
+    price_data = db_service.get_price_history(
+        tickers=[h["yahoo_symbol"] for h in holdings],
+        start=datetime.now() - timedelta(days=420),  # we need 1y of data for new holdings
+        end=datetime.now() - timedelta(days=1),  # most likely yfinance will not have data for today
+        price_field=PRICE_FIELD,
+    )
+
+    # Step 4: Update portfolio snapshot (update portfolio_daily table)
     update_portfolio_snapshot(holdings)
 
     logging.info("Data update process completed successfully")
