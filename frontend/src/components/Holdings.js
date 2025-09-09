@@ -56,11 +56,16 @@ const Holdings = () => {
       }),
       columnHelper.accessor('name', {
         header: 'Name',
-        cell: (info) => (
-          <span className="name" title={info.getValue()}>
-            {info.getValue()}
-          </span>
-        ),
+        cell: (info) => {
+          const row = info.row.original || {};
+          const businessSummary = row.business_summary;
+          const tooltip = businessSummary ? businessSummary : info.getValue();
+          return (
+            <span className="name" title={tooltip}>
+              {info.getValue()}
+            </span>
+          );
+        },
         enableSorting: true,
         enableGlobalFilter: true,
         size: 200,
@@ -137,6 +142,20 @@ const Holdings = () => {
         enableSorting: true,
         enableGlobalFilter: false,
         size: 80,
+      }),
+      // Dividend yield column (from backend field dividend_yield)
+      columnHelper.accessor('dividend_yield', {
+        header: 'Dividend',
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="dividend"></span>;
+          return (
+            <span className="dividend">{value.toFixed(2)}%</span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 70,
       }),
       columnHelper.accessor('prediction', {
         header: 'Prediction',
@@ -293,10 +312,26 @@ const Holdings = () => {
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="recommendation"></span>;
+
+          // Read extra fields from the row for tooltip
+          const row = info.row.original || {};
+          const key = row.recommendation_key; // e.g., buy/hold/sell
+          const opinions = row.number_of_analyst_opinions; // count
+
           const isPositive = value < 1.5;
           const isNegative = value > 2.5;
           const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`recommendation ${className}`}>{value}</span>;
+
+          const tooltip = [
+            key ? `Recommendation: ${key}` : null,
+            opinions !== undefined && opinions !== null ? `Analyst opinions: ${opinions}` : null,
+          ].filter(Boolean).join('\n');
+
+          return (
+            <span className={`recommendation ${className}`} title={tooltip}>
+              {value}
+            </span>
+          );
         },
         enableSorting: true,
         enableGlobalFilter: false,
@@ -435,7 +470,7 @@ const Holdings = () => {
                       e.stopPropagation();
                       handleScreenerChange(screenerId);
                     }}
-                    title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\nWeight: ${screener.weight || 5}/10${combineWithText}\n\nClick to ${isActive ? 'remove' : 'add'} this screener`}
+                    title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\nWeight: ${screener.weight || 5}/10${combineWithText}`}
                   >
                     {screener.name}
                   </button>
@@ -499,9 +534,17 @@ const Holdings = () => {
       }),
       columnHelper.accessor('current_price', {
         header: 'Price (£)',
-        cell: (info) => (
-          <span>{info.getValue().toFixed(2)}</span>
-        ),
+        cell: (info) => {
+          const row = info.row.original || {};
+          const tooltip = [
+            row.sma_20 !== undefined && row.sma_20 !== null ? `SMA20: ${Number(row.sma_20).toFixed(2)}` : null,
+            row.sma_50 !== undefined && row.sma_50 !== null ? `SMA50: ${Number(row.sma_50).toFixed(2)}` : null,
+            row.sma_200 !== undefined && row.sma_200 !== null ? `SMA200: ${Number(row.sma_200).toFixed(2)}` : null,
+          ].filter(Boolean).join('\n');
+          return (
+            <span title={tooltip || undefined}>{info.getValue().toFixed(2)}</span>
+          );
+        },
         enableSorting: true,
         enableGlobalFilter: false,
         size: 80,
@@ -694,7 +737,7 @@ const Holdings = () => {
                       key={screener.id}
                       className={`screener-badge category-${screener.category} ${isActive ? 'active' : ''}`}
                       onClick={() => handleScreenerChange(screener.id)}
-                      title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\nWeight: ${screener.weight || 5}/10${combineWithText}\n\nClick to ${isActive ? 'remove' : 'add'} this screener`}
+                      title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\nWeight: ${screener.weight || 5}/10${combineWithText}`}
                     >
                       <span className="screener-name">{screener.name}</span>
                       <span className="screener-count">({count})</span>

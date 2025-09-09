@@ -133,6 +133,8 @@ async def get_current_portfolio():
                     "return_pct": round((holding.ppl / (market_value_gbp - holding.ppl) * 100.0), 2) if (market_value_gbp - holding.ppl) > 0 else 0.0,  # Same formula as terminal
                     "portfolio_pct": portfolio_pct,
                     # Additional fields from Yahoo Finance (same as terminal)
+                    "dividend_yield": info.get("dividendYield"),
+                    "business_summary": info.get("longBusinessSummary"),
                     "prediction": round((info["targetMedianPrice"] / holding.current_price - 1) * 100.0) if info.get("targetMedianPrice") else None,
                     "institutional_ownership": round(info["heldPercentInstitutions"] * 100.0) if info.get("heldPercentInstitutions") else None,
                     "peg_ratio": info["trailingPegRatio"] if info.get("trailingPegRatio") else None,  # Keep full precision for screener evaluation
@@ -142,6 +144,8 @@ async def get_current_portfolio():
                     "return_on_equity": info["returnOnEquity"] * 100.0 if info.get("returnOnEquity") else None,  # Keep full precision for screener evaluation
                     "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100 if (info.get("freeCashflow") and info.get("marketCap") and info.get("marketCap") > 0) else None,  # FCF / Market Cap (owner's yield)
                     "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
+                    "recommendation_key": info.get("recommendationKey"),
+                    "number_of_analyst_opinions": info.get("numberOfAnalystOpinions"),
                     "fifty_two_week_high_distance": round(info["fiftyTwoWeekHighChangePercent"] * 100) if info.get("fiftyTwoWeekHighChangePercent") else None,  # Distance from 52-week high (negative = below high)
                     "fifty_two_week_change": round(info.get("52WeekChange", 0) * 100) if info.get("52WeekChange") is not None else None,  # True YoY change vs 52 weeks ago (positive = up from 52w ago)
                     "short_percent_of_float": info["shortPercentOfFloat"] * 100 if info.get("shortPercentOfFloat") else None,  # Keep full precision for screener evaluation
