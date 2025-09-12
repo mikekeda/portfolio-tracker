@@ -1,61 +1,55 @@
-"""Trading212 Data Update Script
-================================
-A streamlined script that updates all data in the database without displaying it.
-This script is designed to be run as a scheduled job (cron, GitHub Actions, etc.)
-
-Key features:
-- Updates portfolio holdings from Trading212 API
-- Fetches and caches Yahoo Finance data
-- Updates portfolio snapshots
-- Minimal logging and no terminal output
-
-You **must** set environment variables:
-export TRADING212_API_KEY="live‑api‑key‑goes‑here"
-export DB_NAME="your_database_name"
-export DB_PASSWORD="your_database_password"
-"""
-
 import logging
-from datetime import datetime, timedelta
-from typing import List
-from collections import defaultdict
-
-import pandas as pd
+import os
 import requests
+import time
+
+from collections import defaultdict
+from datetime import date, datetime, timezone, timedelta
+from functools import lru_cache
+from typing import Dict
+
+from contextlib import contextmanager
+
+from sqlalchemy import create_engine, update
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.sql import func
+import pandas as pd
 import yfinance as yf
 
-from data import STOCKS_DELISTED, ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
-from database import get_db_service
-from currency import get_currency_service
-from config import TRADING212_API_KEY, REQUEST_RETRY, PRICE_FIELD
+from config import TRADING212_API_KEY, REQUEST_RETRY, PATTERN_MULTI
+from data import STOCKS_SUFFIX, STOCKS_ALIASES, STOCKS_DELISTED, ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
+from models import CurrencyRateDaily, Instrument, PricesDaily, HoldingDaily, PortfolioDaily
 
 
-# Initialize services
-db_service = get_db_service()
-currency_service = get_currency_service()
+@lru_cache(maxsize=1)
+def _engine_and_factory():
+    db_name = os.getenv("DB_NAME", "trading212_portfolio")
+    db_password = os.getenv("DB_PASSWORD")
+    db_user = os.getenv("DB_USER", "postgres")
+    db_host = os.getenv("DB_HOST", "localhost")
+    db_port = os.getenv("DB_PORT", "5432")
+    db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+    engine = create_engine(db_url, echo=False, pool_pre_ping=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+    return engine, SessionLocal
 
 
-def request_json(url: str, headers: dict, retries: int = REQUEST_RETRY):
-    """Make HTTP request with retries."""
-    for attempt in range(retries):
-        try:
-            r = requests.get(url, headers=headers, timeout=10)
-            if r.status_code == 200:
-                return r.json()
-            logging.warning(f"HTTP {r.status_code} for {url}")
-        except requests.RequestException as exc:
-            logging.warning(f"Request error for {url}: {exc}")
-        if attempt < retries - 1:
-            import time
-            time.sleep(2 ** attempt)
-    raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
+@contextmanager
+def get_session():
+    _, SessionLocal = _engine_and_factory()
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def convert_ticker(t212: str) -> str:
-    """Convert Trading212 code to Yahoo symbol."""
-    from data import STOCKS_ALIASES, STOCKS_SUFFIX
-    import re
-
+    """Convert a Trading 212 code like 'BARCl_EQ' to a Yahoo symbol 'BARC.L'."""
     if t212 in STOCKS_DELISTED:
         raise ValueError(f"{t212} is delisted")
 
@@ -63,7 +57,6 @@ def convert_ticker(t212: str) -> str:
         raise ValueError(f"Unknown format: {t212}")
 
     core = t212[:-3]  # strip _EQ
-    PATTERN_MULTI = re.compile(r"^(?P<sym>.+?)_(?P<tag>[A-Z]{2,3})$")
 
     m = PATTERN_MULTI.match(core)
     if m:
@@ -82,324 +75,401 @@ def convert_ticker(t212: str) -> str:
     return sym + suffix
 
 
-def fetch_instruments(tickers: set) -> dict:
-    """Fetch instruments from database first, then API if needed."""
-    # Check what we have in database
-    existing_instruments = db_service.get_instruments_by_codes(tickers)
-    missing_tickers = tickers - set(existing_instruments.keys())
+def _fetch_rates_batch(currencies: list) -> Dict[str, float]:
+    """Fetch currency rates from a reliable API in batch."""
+    rates = {}
 
-    instruments_map = {}
+    # Use exchangerate-api.com (free tier available)
+    try:
+        url = "https://api.exchangerate-api.com/v4/latest/GBP"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
 
-    # Use existing instruments from database
-    for t212_code, instrument_data in existing_instruments.items():
-        instruments_map[t212_code] = {
-            't212_code': instrument_data['t212_code'],
-            'name': instrument_data['name'],
-            'currency': instrument_data['currency'],
-            'sector': instrument_data.get('sector'),
-            'country': instrument_data.get('country'),
-            'yahoo_symbol': instrument_data.get('yahoo_symbol'),
-            'market_cap': instrument_data["yahoo_data"].get("marketCap"),
-            'pe_ratio': instrument_data["yahoo_data"].get("trailingPE"),
-            'institutional': instrument_data["yahoo_data"].get("heldPercentInstitutions"),
-            'beta': instrument_data["yahoo_data"].get("beta"),
-        }
+        # Convert from GBP to other currencies (invert the rates)
+        for currency in currencies:
+            if currency in data['rates']:
+                # Invert the rate since we want TO GBP, not FROM GBP
+                rates[currency] = 1.0 / data['rates'][currency]
+            else:
+                rates[currency] = None
 
-    # Fetch missing instruments from API
-    if missing_tickers:
-        logging.info(f"Fetching {len(missing_tickers)} missing instruments from API")
-        url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
-        raw = request_json(url, {"Authorization": TRADING212_API_KEY})
+    except Exception as e:
+        logging.warning("exchangerate-api.com failed: %s", e)
 
-        # Store new instruments in database
-        instruments_data = []
-        for item in raw:
-            if item["ticker"] in missing_tickers:
-                instruments_data.append({
-                    't212_code': item["ticker"],
-                    'name': item["name"],
-                    'currency': item["currencyCode"],
-                    'yahoo_symbol': convert_ticker(item["ticker"])
-                })
+        # Fallback to a simpler API
+        try:
+            for currency in currencies:
+                url = f"https://api.exchangerate.host/latest?base={currency}&symbols=GBP"
+                response = requests.get(url, timeout=5)
+                response.raise_for_status()
+                data = response.json()
 
-        # Save to database
-        if instruments_data:
-            db_service.save_instruments(instruments_data)
-            logging.info(f"Saved {len(instruments_data)} new instruments to database")
+                if 'rates' in data and 'GBP' in data['rates']:
+                    rates[currency] = data['rates']['GBP']
+                else:
+                    rates[currency] = None
 
-        # Add new instruments to map
-        for item in raw:
-            if item["ticker"] in missing_tickers:
-                instruments_map[item["ticker"]] = {
-                    't212_code': item["ticker"],
-                    'name': item["name"],
-                    'currency': item["currencyCode"],
-                    'yahoo_symbol': convert_ticker(item["ticker"]),
-                    # TODO: Set the rest fields
-                }
-    else:
-        logging.info("All instruments found in database, no API call needed")
+        except Exception as e2:
+            logging.warning("exchangerate.host also failed: %s", e2)
+            for currency in currencies:
+                rates[currency] = None
 
-    return instruments_map
+    return rates
 
 
-def fetch_portfolio() -> List[dict]:
+def get_currency_table(currencies: list) -> Dict[str, float]:
+    today = date.today()
+
+    rates = _fetch_rates_batch(currencies)
+
+    with get_session() as session:
+        for currency in currencies:
+            existing = session.query(CurrencyRateDaily).filter(
+                CurrencyRateDaily.from_currency == currency,
+                CurrencyRateDaily.to_currency == "GBP",
+                CurrencyRateDaily.date == today
+            ).first()
+
+            if existing:
+                logging.info(f"Updated rate {currency}: {rates[currency]}")
+                existing.rate = rates[currency]
+                existing.updated_at = func.now()
+            else:
+                currency_rate = CurrencyRateDaily(
+                    from_currency=currency,
+                    to_currency="GBP",
+                    rate=rates[currency],
+                    date=today
+                )
+                session.add(currency_rate)
+
+    rates.update({"GBX": 0.01, "GBP": 1.0})
+
+    return rates
+
+
+# Holdings and Instruments
+
+
+def request_json(url: str, headers: dict, retries: int = REQUEST_RETRY):
+    """Make HTTP request with retries."""
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                return r.json()
+            logging.warning(f"HTTP {r.status_code} for {url}")
+        except requests.RequestException as exc:
+            logging.warning(f"Request error for {url}: {exc}")
+        if attempt < retries - 1:
+            time.sleep(2 ** attempt)
+    raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
+
+
+def fetch_holdings():
     """Fetch portfolio holdings from Trading212 API."""
     logging.info("Fetching portfolio from Trading212 API")
     url = "https://live.trading212.com/api/v0/equity/portfolio"
     raw = request_json(url, {"Authorization": TRADING212_API_KEY})
-    raw = [h for h in raw if h["ticker"] not in STOCKS_DELISTED]
-
-    instr_map = fetch_instruments({h["ticker"] for h in raw})
-
-    holdings = []
-    for h in raw:
-        instrument = instr_map.get(h["ticker"], {})
-        holdings.append({
-            't212_code': h["ticker"],
-            'name': instrument.get('name', ''),
-            'currency': instrument.get('currency', ''),
-            'yahoo_symbol': instrument.get('yahoo_symbol'),
-            'quantity': h["quantity"],
-            'avg_price': h["averagePrice"],
-            'current_price': h["currentPrice"],
-            'ppl': h["ppl"],
-            'fx_ppl': h["fxPpl"] or 0.0,
-            'country': instrument["country"],
-            'sector': instrument["sector"],
-            'market_cap': instrument["market_cap"],
-            'pe_ratio': instrument["pe_ratio"],
-            'institutional': instrument["institutional"],
-            'beta': instrument["beta"],
-        })
+    holdings = [h for h in raw if h["ticker"] not in STOCKS_DELISTED]
 
     return holdings
 
 
-def update_yahoo_data(holdings: List[dict]) -> None:
+def update_holdings(holdings, instruments: list, yahoo_datas):
+    created = 0
+    updated = 0
+    result = []
+    current_date = datetime.now(timezone.utc).date()
+    instruments = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
+
+    with get_session() as session:
+        for holding in holdings:
+            yahoo_symbol = instruments[holding["ticker"]].yahoo_symbol
+            yahoo_data = yahoo_datas[yahoo_symbol]
+
+            stmt = (
+                update(Instrument)
+                .where(Instrument.t212_code == holding["ticker"])
+                .values(
+                    sector=yahoo_data.get("sector"),
+                    country=yahoo_data.get("country"),
+                    yahoo_data=yahoo_data,
+                    updated_at=datetime.now(timezone.utc),
+                )
+                .returning(Instrument.id)
+            )
+            instrument_id = session.execute(stmt).scalar_one()
+
+            existing_holding = session.query(HoldingDaily).filter(
+                HoldingDaily.instrument_id == instrument_id,
+                HoldingDaily.date == current_date
+            ).first()
+
+            if existing_holding:
+                # Update existing holding
+                existing_holding.quantity = holding['quantity']
+                existing_holding.avg_price = holding['averagePrice']
+                existing_holding.current_price = holding['currentPrice']
+                existing_holding.ppl = holding['ppl']
+                existing_holding.fx_ppl = holding['fxPpl'] or 0
+                existing_holding.market_cap = yahoo_data.get("marketCap")
+                existing_holding.pe_ratio = yahoo_data.get("trailingPE")
+                existing_holding.beta = yahoo_data.get("beta")
+                existing_holding.institutional = yahoo_data.get("heldPercentInstitutions")
+                existing_holding.updated_at = func.now()
+                result.append(existing_holding)
+                updated += 1
+            else:
+                # Create new holding record
+                new_holding = HoldingDaily(
+                    instrument_id=instrument_id,
+                    quantity=holding['quantity'],
+                    avg_price=holding['averagePrice'],
+                    current_price=holding['currentPrice'],
+                    ppl=holding['ppl'],
+                    fx_ppl=holding['fxPpl'] or 0,
+                    market_cap=yahoo_data.get("marketCap"),
+                    pe_ratio=yahoo_data.get("trailingPE"),
+                    institutional=yahoo_data.get("heldPercentInstitutions"),
+                    beta=yahoo_data.get("beta"),
+                    date=current_date
+                )
+                session.add(new_holding)
+                result.append(new_holding)
+                created += 1
+
+    logging.info(f"Created {created} holdings, updated {updated} holdings")
+
+    return result
+
+
+def update_instruments(tickers: set[str]):
+    logging.info(f"Fetching instruments from Trading212 API")
+    instruments = []
+    url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
+    instruments_from_api = request_json(url, {"Authorization": TRADING212_API_KEY})
+
+    with get_session() as session:
+        created = 0
+        updated = 0
+        for instrument in instruments_from_api:
+            if instrument["ticker"] in tickers:
+                existing = session.query(Instrument).filter(
+                    Instrument.t212_code == instrument["ticker"]
+                ).first()
+
+                if existing:
+                    existing.name = instrument['name']
+                    existing.currency = instrument['currencyCode']
+                    existing.yahoo_symbol = convert_ticker(instrument["ticker"])
+                    existing.updated_at = func.now()
+                    instruments.append(existing)
+                    updated += 1
+                else:
+                    # Create new instrument only
+                    instrument = Instrument(
+                        t212_code=instrument["ticker"],
+                        name=instrument['name'],
+                        currency=instrument['currencyCode'],
+                        yahoo_symbol=convert_ticker(instrument["ticker"]),
+                    )
+                    session.add(instrument)
+                    instruments.append(instrument)
+                    created += 1
+
+    logging.info(f"Created {created} instruments, updated {updated} instruments")
+
+    return instruments
+
+
+def update_prices(session, tickers: list[str], start, end):
+    for i in range(0, len(tickers), 25):
+        sub = tickers[i:i + 25]
+        logging.info("Downloading prices (%s -> %s) for %s", start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), sub)
+
+        df = yf.download(
+            tickers=sub,
+            start=start.strftime("%Y-%m-%d"),
+            end=end.strftime("%Y-%m-%d"),
+            interval="1d",
+            group_by="ticker",
+            auto_adjust=False,
+            progress=False,
+            threads=False,
+        ).rename(columns={"Adj Close": "Adj_Close"})
+
+        # Bulk upsert
+        for ticker in df.columns.get_level_values(0).unique():
+            tdf = df[ticker].dropna(how="all")  # Open/High/Low/Close/Adj Close/Volume
+            for dt, row in tdf.iterrows():
+                existing = session.query(PricesDaily).filter(
+                    PricesDaily.symbol == ticker,
+                    PricesDaily.date == dt.date()
+                ).first()
+
+                if existing:
+                    # Update existing record
+                    existing.open_price = float(row['Open'])
+                    existing.high_price = float(row['High'])
+                    existing.low_price = float(row['Low'])
+                    existing.close_price = float(row['Close'])
+                    existing.adj_close_price = float(row['Adj_Close'])
+                    existing.volume = int(row['Volume']) if not pd.isna(row['Volume']) else 0
+                    existing.updated_at = func.now()
+                else:
+                    # Insert new record
+                    prices = PricesDaily(
+                        symbol=ticker,
+                        date=dt.date(),
+                        open_price=float(row['Open']),
+                        high_price=float(row['High']),
+                        low_price=float(row['Low']),
+                        close_price=float(row['Close']),
+                        adj_close_price=float(row['Adj_Close']),
+                        volume=int(row['Volume']) if not pd.isna(row['Volume']) else 0,
+                    )
+                    session.add(prices)
+
+
+def get_and_update_prices(tickers: set[str]):
+    end = datetime.now().date() - timedelta(days=1)
+
+    with get_session() as session:
+        existing_prices = session.query(
+            PricesDaily.symbol,
+            func.max(PricesDaily.date).label("max_date"),
+        ).group_by(PricesDaily.symbol).all()
+
+        existing_tickers = set(row.symbol for row in existing_prices)
+        if existing_tickers:
+            latest_date = min([row.max_date for row in existing_prices])
+            start = latest_date + timedelta(days=1)
+
+            # Get prices for existing tickers
+            if end > start:
+                update_prices(session, list(existing_tickers), start, end)
+
+        # Get prices for new tickers
+        new_tickers = list(tickers - existing_tickers)
+        if new_tickers:
+            start = datetime.now().date() - timedelta(days=5 * 366)  # 5 years of data
+            update_prices(session, new_tickers, start, end)
+
+
+def get_yahoo_ticker_data(symbols: list[str]):
     """Update Yahoo Finance data for all holdings."""
-    logging.info("Updating Yahoo Finance data")
-
-    # Get symbols that need Yahoo data
-    symbols = [h['yahoo_symbol'] for h in holdings if h.get('yahoo_symbol')]
-    if not symbols:
-        logging.info("No Yahoo symbols to update")
-        return
-
-    # Get instruments that have fresh Yahoo data (less than 24 hours old)
-    t212_codes = set(db_service.get_instruments_by_yahoo_symbols(symbols))
-    fresh_instruments = db_service.get_instruments_with_fresh_yahoo_data(t212_codes, max_age_days=1)
-
-    # Find symbols that need to be fetched
-    symbols_to_fetch = []
-    for symbol in symbols:
-        t212_code = db_service.get_instruments_by_yahoo_symbols([symbol])[0] if symbol else None
-        if t212_code and t212_code not in fresh_instruments:
-            symbols_to_fetch.append(symbol)
-
-    if not symbols_to_fetch:
-        logging.info("All Yahoo data is fresh, no updates needed")
-        return
-
-    logging.info(f"Fetching {len(symbols_to_fetch)} Yahoo Finance profiles")
+    logging.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
+    yahoo_data = {}
 
     # Fetch in batches
     batch_size = 10
-    for i in range(0, len(symbols_to_fetch), batch_size):
-        batch = symbols_to_fetch[i:i + batch_size]
-        try:
-            # Use yfinance's batch download capability
-            tickers = yf.Tickers(' '.join(batch))
-            for symbol in batch:
-                try:
-                    info = tickers.tickers[symbol].info or {}
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
 
-                    # Cache the result in database
-                    t212_code = db_service.get_instruments_by_yahoo_symbols([symbol])[0]
-                    db_service.update_instrument_yahoo_data(t212_code, info)
+        # Use yfinance's batch download capability
+        tickers = yf.Tickers(' '.join(batch))
+        for symbol in batch:
+            info = tickers.tickers[symbol].info
+            yahoo_data[symbol] = info
 
-                except Exception as e:
-                    logging.warning(f"Failed to fetch {symbol}: {e}")
-
-        except Exception as e:
-            logging.warning(f"Failed to fetch batch {batch}: {e}")
-            # Fallback to individual requests
-            for symbol in batch:
-                try:
-                    info = yf.Ticker(symbol).info or {}
-                    t212_code = db_service.get_instruments_by_yahoo_symbols([symbol])[0]
-                    db_service.update_instrument_yahoo_data(t212_code, info)
-                except Exception as e2:
-                    logging.warning(f"Failed to fetch {symbol}: {e2}")
+    return yahoo_data
 
 
-def _weighted_add(target: dict[str, float], weights: dict[str, float], value: float):
-    """Add *value* into target buckets using percentage weights."""
-    for bucket, pct in weights.items():
-        target[bucket] += value * pct / 100.0
+def save_portfolio_snapshots(holdings, instruments, rates, yahoo_data) -> None:
+    """Save portfolio snapshot."""
+    snapshot_date = datetime.now().date()
+    total_value = 0
+    total_profit = 0
+    country_allocation = defaultdict(float)
+    sector_allocation = defaultdict(float)
+    etf_equity_allocation = defaultdict(float)
 
+    instruments = {i.id: i for i in instruments}
 
-def country_allocation(df: pd.DataFrame) -> pd.Series:
-    """% NAV by country, treating ETFs via ETF_COUNTRY_ALLOCATION map."""
-    buckets: defaultdict[str, float] = defaultdict(float)
-    for sym, row in df.iterrows():
-        val = row["value_gbp"]
-        if sym in ETF_COUNTRY_ALLOCATION:
-            _weighted_add(buckets, ETF_COUNTRY_ALLOCATION[sym], val)
-        else:
-            buckets[row["country"]] += val
-    total = sum(buckets.values())
-    return pd.Series({k: round(v / total * 100, 2) for k, v in sorted(buckets.items(), key=lambda kv: kv[1], reverse=True)})
-
-
-def sector_allocation(df: pd.DataFrame) -> pd.Series:
-    """% NAV by sector, treating ETFs via ETF_SECTOR_ALLOCATION map."""
-    buckets: defaultdict[str, float] = defaultdict(float)
-    for sym, row in df.iterrows():
-        val = row["value_gbp"]
-        if sym in ETF_SECTOR_ALLOCATION:
-            _weighted_add(buckets, ETF_SECTOR_ALLOCATION[sym], val)
-        else:
-            buckets[row["sector"]] += val
-    total = sum(buckets.values())
-    return pd.Series({k: round(v / total * 100, 2) for k, v in sorted(buckets.items(), key=lambda kv: kv[1], reverse=True)})
-
-
-def etf_equity_allocation(df: pd.DataFrame) -> pd.Series:
-    """Return % of portfolio in ETFs vs direct equities."""
-    kind = df["quoteType"].fillna("EQUITY").where(df["quoteType"] == "ETF", "EQUITY")
-    value_by_kind = df.groupby(kind)["value_gbp"].sum()
-    pct = (value_by_kind / value_by_kind.sum() * 100).round(2)
-    pct = pct.rename_axis(None)
-    return pct
-
-
-def build_snapshot(holdings: List[dict]) -> pd.DataFrame:
-    """Build portfolio snapshot from holdings data."""
-    # Get currency rates once for all conversions
-    rates = currency_service.get_currency_table()
-
-    # Get all Yahoo symbols for batch processing
-    yahoo_symbols = [h['yahoo_symbol'] for h in holdings if h.get('yahoo_symbol')]
-
-    # Fetch all Yahoo profiles in batch
-    yahoo_profiles = {}
-    if yahoo_symbols:
-        # Get instruments that have fresh Yahoo data
-        t212_codes = set(db_service.get_instruments_by_yahoo_symbols(yahoo_symbols))
-        fresh_instruments = db_service.get_instruments_with_fresh_yahoo_data(t212_codes, max_age_days=1)
-
-        # Map Yahoo symbols to their data
-        for t212_code, instrument_data in fresh_instruments.items():
-            if instrument_data.get('yahoo_symbol') in yahoo_symbols:
-                yahoo_profiles[instrument_data['yahoo_symbol']] = instrument_data.get('yahoo_data', {})
-
-    records: list[dict] = []
     for h in holdings:
-        currency = h.get('currency', 'GBP')
-        rate = rates.get(currency, 1.0)
-        gbp_value = h['quantity'] * h['current_price'] * rate
-        info = yahoo_profiles.get(h.get('yahoo_symbol'), {}) if h.get('yahoo_symbol') else {}
+        instrument = instruments[h.instrument_id]
+        yahoo_symbol = instrument.yahoo_symbol
+        info = yahoo_data[yahoo_symbol]
 
-        # Calculate return percentage safely
-        cost_basis = gbp_value - h['ppl']
-        return_pct = round(h['ppl'] / cost_basis * 100.0, 2) if cost_basis > 0 else 0.0
+        gbp_value = h.quantity * h.current_price * rates[instrument.currency]
+        total_value += gbp_value
+        total_profit += h.ppl
+        etf_equity_allocation[info["quoteType"]] += gbp_value
 
-        records.append({
-            "ticker": h.get('yahoo_symbol'),
-            "name": h['name'],
-            "%": 0.0,
-            "value_gbp": gbp_value,
-            "profit": h['ppl'],
-            "return": return_pct,
-            "prediction": round((info["targetMedianPrice"] / h['current_price'] - 1) * 100.0) if info.get("targetMedianPrice") else "",
-            "instit": round(info["heldPercentInstitutions"] * 100.0) if info.get("heldPercentInstitutions") else "",
-            "marketCap": round(info["marketCap"] / 1_000_000_000.0) if info.get("marketCap") else "",
-            "peg": round(info["trailingPegRatio"], 2) if info.get("trailingPegRatio") else "",
-            "PE": round(info["trailingPE"]) if info.get("trailingPE") else "",
-            "beta": round(info["beta"], 2) if info.get("beta") else "",
-            "margins": round(info["profitMargins"] * 100.0) if info.get("profitMargins") else "",
-            "grow": round(info["revenueGrowth"] * 100.0) if info.get("revenueGrowth") else "",
-            "roa": round(info["returnOnAssets"] * 100.0) if info.get("returnOnAssets") else "",
-            "fcf_yld": round(info["freeCashflow"] / info["enterpriseValue"] * 100, 2) if (info.get("freeCashflow") and info.get("enterpriseValue")) else "",
-            "recommendation": round(info["recommendationMean"], 2) if info.get("recommendationMean") else "",
-            "52WeekHighChange": round(info["fiftyTwoWeekHighChangePercent"] * 100) if info.get("fiftyTwoWeekHighChangePercent") else "",
-            "short": round(info["shortPercentOfFloat"] * 100) if info.get("shortPercentOfFloat") else "",
-            "RSI": "",
-            "country": info.get("country", "Other"),
-            "sector": info.get("sector", "Other"),
-            "quoteType": info.get("quoteType", "Unknown"),
-            "currency": currency,
-            "current_price": h['current_price'],
-        })
+        if info["quoteType"] == "EQUITY":
+            country_allocation[info.get("country") or "Other"] += gbp_value
+            sector_allocation[info.get("sector") or "Other"] += gbp_value
+        elif info["quoteType"] == "ETF":
+            for country, percent in ETF_COUNTRY_ALLOCATION[yahoo_symbol].items():
+                country_allocation[country] += gbp_value * percent / 100
+            for sector, percent in ETF_SECTOR_ALLOCATION[yahoo_symbol].items():
+                sector_allocation[sector] += gbp_value * percent / 100
+        else:
+            raise ValueError("Unknown quoteType '%s' for %s", info["quoteType"], yahoo_symbol)
 
-    df = (
-        pd.DataFrame(records)
-        .set_index("ticker")
-        .sort_values("value_gbp", ascending=False)
-    )
-    df["%"] = (df["value_gbp"] / df["value_gbp"].sum() * 100).round(2)
+    return_pct = total_profit / (total_value - total_profit) * 100.0 if total_value != total_profit else 0.0
+    for country in country_allocation:
+        country_allocation[country] =  round(100 * country_allocation[country] / total_value, 2)
+    for sector in sector_allocation:
+        sector_allocation[sector] = round(100 * sector_allocation[sector] / total_value, 2)
+    for quote_type in etf_equity_allocation:
+        etf_equity_allocation[quote_type] = round(100 * etf_equity_allocation[quote_type] / total_value, 2)
 
-    return df
+    with get_session() as session:
+        # Check if snapshot already exists for this date
+        existing_snapshot = session.query(PortfolioDaily).filter(
+            PortfolioDaily.date == snapshot_date
+        ).first()
+
+        if existing_snapshot:
+            # Update existing snapshot
+            existing_snapshot.total_value_gbp = total_value
+            existing_snapshot.total_profit_gbp = total_profit
+            existing_snapshot.total_return_pct = return_pct
+            existing_snapshot.country_allocation = country_allocation
+            existing_snapshot.sector_allocation = sector_allocation
+            existing_snapshot.etf_equity_split = etf_equity_allocation
+            existing_snapshot.updated_at = datetime.now(timezone.utc)
+        else:
+            # Create new snapshot
+            snapshot = PortfolioDaily(
+                date=snapshot_date,
+                total_value_gbp=total_value,
+                total_profit_gbp=total_profit,
+                total_return_pct=return_pct,
+                country_allocation=country_allocation,
+                sector_allocation=sector_allocation,
+                etf_equity_split=etf_equity_allocation
+            )
+            session.add(snapshot)
 
 
-def update_portfolio_snapshot(holdings: List[dict]) -> None:
-    """Update portfolio snapshot in database."""
-    logging.info("Updating portfolio snapshot")
+def update_holdings_and_instruments(rates):
 
-    try:
-        # Build snapshot
-        snapshot = build_snapshot(holdings)
+    holdings = fetch_holdings()
+    t212_codes = set(h["ticker"] for h in holdings)
 
-        # Calculate portfolio metrics
-        total_value = float(snapshot["value_gbp"].sum())
-        total_profit = float(snapshot["profit"].sum())
-        total_return_pct = (total_profit / (total_value - total_profit) * 100) if (total_value - total_profit) > 0 else 0
+    # Update instruments
+    instruments = update_instruments(t212_codes)
+    yahoo_symbols = set(i.yahoo_symbol for i in instruments)
 
-        # Calculate allocations
-        country_alloc = country_allocation(snapshot)
-        sector_alloc = sector_allocation(snapshot)
-        etf_equity = etf_equity_allocation(snapshot)
+    # Update prices
+    get_and_update_prices(yahoo_symbols)
 
-        # Create snapshot data
-        snapshot_data = {
-            'total_value': total_value,
-            'total_profit': total_profit,
-            'total_return_pct': total_return_pct,
-            'snapshot_date': datetime.now().date(),
-            'country_allocation': country_alloc.to_dict(),
-            'sector_allocation': sector_alloc.to_dict(),
-            'etf_equity_split': etf_equity.to_dict(),
-        }
+    yahoo_data = get_yahoo_ticker_data(list(yahoo_symbols))
+    holdings = update_holdings(holdings, instruments, yahoo_data)
 
-        db_service.save_portfolio_snapshot(snapshot_data)
-        logging.info("Saved portfolio snapshot to database")
-
-    except Exception as e:
-        logging.error(f"Failed to update portfolio snapshot: {e}")
+    save_portfolio_snapshots(holdings, instruments, rates, yahoo_data)
 
 
 if __name__ == "__main__":
     logging.getLogger().setLevel(logging.INFO)
     logging.info("Starting data update process")
 
-    # Step 1: Fetch portfolio holdings (update currency_rates_daily, instruments, holdings_daily tables)
-    holdings = fetch_portfolio()
-    db_service.save_holdings(holdings)
-    logging.info(f"Fetched {len(holdings)} holdings")
+    # 1. Update rates
+    rates = get_currency_table(["USD", "EUR", "CAD"])
 
-    # Step 2: Update Yahoo Finance data (update instruments table, specifically yahoo_data column)
-    update_yahoo_data(holdings)
-
-    # Step 3: Download prices (update prices_daily table)
-    price_data = db_service.get_price_history(
-        tickers=[h["yahoo_symbol"] for h in holdings],
-        start=datetime.now() - timedelta(days=420),  # we need 1y of data for new holdings
-        end=datetime.now() - timedelta(days=1),  # most likely yfinance will not have data for today
-        price_field=PRICE_FIELD,
-    )
-
-    # Step 4: Update portfolio snapshot (update portfolio_daily table)
-    update_portfolio_snapshot(holdings)
-
-    logging.info("Data update process completed successfully")
+    # 2. Update holdings and instruments
+    update_holdings_and_instruments(rates)
