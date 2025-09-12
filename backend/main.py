@@ -480,8 +480,7 @@ async def get_top_movers(period: str = "1d", limit: int = 10):
         days = valid_periods[period]
 
         # Get price data for all symbols
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
+        start_date = (datetime.now() - timedelta(days=days)).date()
 
         with db_service.get_session() as session:
 
@@ -495,7 +494,7 @@ async def get_top_movers(period: str = "1d", limit: int = 10):
             ).join(
                 PricesDaily, PricesDaily.symbol == Instrument.yahoo_symbol
             ).filter(
-                PricesDaily.date.between(start_date, end_date)
+                PricesDaily.date >= start_date
             ).order_by(Instrument.yahoo_symbol, PricesDaily.date).all()
 
             prices_data = defaultdict(list)
@@ -506,7 +505,6 @@ async def get_top_movers(period: str = "1d", limit: int = 10):
             # Calculate percentage changes
             movers = []
             for symbol, symbol_data in prices_data.items():
-
                 if len(symbol_data) >= 2:
                     # Get first and last prices
                     first_price = symbol_data[0].px

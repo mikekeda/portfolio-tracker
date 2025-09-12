@@ -148,7 +148,7 @@ class DatabaseService:
         if start < end:
             for i in range(0, len(tickers), self.batch_size_yf):
                 sub = tickers[i:i + self.batch_size_yf]
-                logger.info("Downloading prices for %s", sub)
+                logger.info("Downloading prices (%s -> %s) for %s", start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), sub)
 
                 try:
                     df = yf.download(

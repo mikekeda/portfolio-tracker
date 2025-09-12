@@ -5,6 +5,7 @@ Centralized configuration settings.
 """
 
 import os
+import re
 
 # API Configuration
 TRADING212_API_KEY = os.environ["TRADING212_API_KEY"]
@@ -24,6 +25,7 @@ REQUEST_SLEEP = 1.0  # polite pause between Yahoo calls
 HISTORY_YEARS = 10
 
 # Portfolio Configuration
+PATTERN_MULTI = re.compile(r"^(?P<sym>.+?)_(?P<tag>[A-Z]{2,3})$")
 BENCH = "VUAG.L"  # S&P500
 RISK_FREE = 0.045  # annual risk-free guess (4.5 %); replace with 3-month T-bill
 
