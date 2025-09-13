@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
 from config import BENCH, PRICE_FIELD
+from models import PricesDaily
 
 logger = logging.getLogger(__name__)
 
@@ -174,21 +175,19 @@ def calculate_bb_width_percentile(prices: List[float], period: int, lookback: in
     return bb_widths[percentile_index]
 
 
-def calculate_volume_ratio_from_db(symbol: str, db_service) -> Optional[float]:
+def calculate_volume_ratio_from_db(symbol: str, session) -> Optional[float]:
     """Calculate volume ratio (today / 20-day average) from database."""
     try:
         # Get recent volume data
         end_date = datetime.now()
 
         # Query volume data directly from database
-        from models import PricesDaily
-        with db_service.db_manager.SessionLocal() as session:
-            volumes = session.query(PricesDaily.volume).filter(
-                PricesDaily.symbol == symbol,
-                PricesDaily.date <= end_date.date(),
-                PricesDaily.volume.isnot(None),
-                PricesDaily.volume > 0
-            ).order_by(PricesDaily.date.desc()).limit(21).all()
+        volumes = session.query(PricesDaily.volume).filter(
+            PricesDaily.symbol == symbol,
+            PricesDaily.date <= end_date.date(),
+            PricesDaily.volume.isnot(None),
+            PricesDaily.volume > 0
+        ).order_by(PricesDaily.date.desc()).limit(21).all()
 
         if len(volumes) < 21:  # Need at least 21 days (today + 20 days)
             return None
@@ -207,7 +206,7 @@ def calculate_volume_ratio_from_db(symbol: str, db_service) -> Optional[float]:
         return None
 
 
-def calculate_volume_contraction_from_db(symbol: str, db_service) -> Optional[bool]:
+def calculate_volume_contraction_from_db(symbol: str, session) -> Optional[bool]:
     """Calculate if 20-day volume is less than 60-day volume from database."""
     try:
         # Get recent volume data - need at least 60 days for proper calculation
@@ -215,9 +214,6 @@ def calculate_volume_contraction_from_db(symbol: str, db_service) -> Optional[bo
         start_date = end_date - timedelta(days=120)  # Get 120 days to ensure we have 60 trading days
 
         # Query volume data directly from database
-        from models import PricesDaily
-        session = db_service.db_manager.SessionLocal()
-
         volumes = session.query(PricesDaily.volume).filter(
             PricesDaily.symbol == symbol,
             PricesDaily.date >= start_date.date(),
@@ -277,13 +273,13 @@ def calculate_relative_strength_vs_spy(symbol_prices: List[float], spy_prices: L
         return None
 
 
-def calculate_technical_indicators_for_symbols(symbols: List[str], db_service) -> tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
+def calculate_technical_indicators_for_symbols(symbols: List[str], session) -> tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
     """
     Calculate technical indicators for a list of symbols using available database data.
 
     Args:
         symbols: List of symbols to calculate indicators for
-        db_service: Database service instance
+        session: Database session instance
 
     Returns:
         Tuple of (rsi_data, technical_data) dictionaries
@@ -296,58 +292,57 @@ def calculate_technical_indicators_for_symbols(symbols: List[str], db_service) -
 
     try:
         # Get price history for all symbols
-        price_history = db_service.get_price_history(
-            tickers=symbols,
-            start=datetime.now() - timedelta(days=420),  # Need 420 days for 260+ trading days
-            end=datetime.now(),
-            price_field=PRICE_FIELD
-        )
+        price_data = session.query(
+            PricesDaily.symbol,
+            getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
+        ).filter(
+            PricesDaily.symbol.in_(symbols),
+            PricesDaily.date >= datetime.now().date() - timedelta(days=420)
+        ).order_by(PricesDaily.date).all()
+
+        # Convert to chart format
+        price_history = {}
+        for row in price_data:
+            price_history.setdefault(row.symbol, []).append(row.price)
 
         # Get SPY data for relative strength calculation
-        spy_prices = None
-        try:
-            spy_history = db_service.get_price_history(
-                tickers=[BENCH],  # SPY equivalent
-                start=datetime.now() - timedelta(days=420),
-                end=datetime.now(),
-                price_field=PRICE_FIELD
-            )
-            if BENCH in spy_history.columns:
-                spy_prices = spy_history[BENCH].dropna().tolist()
-        except Exception as e:
-            logger.warning(f"Failed to get SPY data: {e}")
+        spy_data = session.query(
+            getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
+        ).filter(
+            PricesDaily.symbol == BENCH,
+            PricesDaily.date >= datetime.now().date() - timedelta(days=420)
+        ).order_by(PricesDaily.date).all()
+
+        spy_prices = [row.price for row in spy_data]
 
         # Calculate technical indicators for each symbol
-        for symbol in symbols:
-            if symbol in price_history.columns:
-                symbol_prices = price_history[symbol].dropna().tolist()
+        for symbol, symbol_prices in price_history.items():
+            # Calculate RSI
+            if len(symbol_prices) >= 14:
+                rsi_value = calculate_rsi(symbol_prices)
+                rsi_data[symbol] = rsi_value
 
-                # Calculate RSI
-                if len(symbol_prices) >= 14:
-                    rsi_value = calculate_rsi(symbol_prices)
-                    rsi_data[symbol] = rsi_value
+            # Calculate other technical indicators
+            if len(symbol_prices) >= 20:  # Minimum for SMA20
+                # Calculate volume-based indicators
+                volume_ratio = calculate_volume_ratio_from_db(symbol, session)
+                vol20_lt_vol60 = calculate_volume_contraction_from_db(symbol, session)
 
-                # Calculate other technical indicators
-                if len(symbol_prices) >= 20:  # Minimum for SMA20
-                    # Calculate volume-based indicators
-                    volume_ratio = calculate_volume_ratio_from_db(symbol, db_service)
-                    vol20_lt_vol60 = calculate_volume_contraction_from_db(symbol, db_service)
+                # Calculate relative strength vs SPY
+                rs_6m_vs_spy = calculate_relative_strength_vs_spy(symbol_prices, spy_prices)
 
-                    # Calculate relative strength vs SPY
-                    rs_6m_vs_spy = calculate_relative_strength_vs_spy(symbol_prices, spy_prices)
-
-                    technical_data[symbol] = {
-                        'sma_20': calculate_sma(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
-                        'sma_50': calculate_sma(symbol_prices, 50) if len(symbol_prices) >= 50 else None,
-                        'sma_200': calculate_sma(symbol_prices, 200) if len(symbol_prices) >= 200 else None,
-                        'rs_6m_vs_spy': rs_6m_vs_spy,
-                        'gc_days_since': calculate_golden_cross_days(symbol_prices) if len(symbol_prices) >= 260 else None,
-                        'gc_within_sma50_frac': calculate_gc_within_sma50(symbol_prices) if len(symbol_prices) >= 50 else None,
-                        'bb_width_20': calculate_bb_width(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
-                        'bb_width_20_p30_6m': calculate_bb_width_percentile(symbol_prices, 20, 126, 0.30) if len(symbol_prices) >= 126 else None,
-                        'vol20_lt_vol60': vol20_lt_vol60,
-                        'volume_ratio': volume_ratio
-                    }
+                technical_data[symbol] = {
+                    'sma_20': calculate_sma(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
+                    'sma_50': calculate_sma(symbol_prices, 50) if len(symbol_prices) >= 50 else None,
+                    'sma_200': calculate_sma(symbol_prices, 200) if len(symbol_prices) >= 200 else None,
+                    'rs_6m_vs_spy': rs_6m_vs_spy,
+                    'gc_days_since': calculate_golden_cross_days(symbol_prices) if len(symbol_prices) >= 260 else None,
+                    'gc_within_sma50_frac': calculate_gc_within_sma50(symbol_prices) if len(symbol_prices) >= 50 else None,
+                    'bb_width_20': calculate_bb_width(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
+                    'bb_width_20_p30_6m': calculate_bb_width_percentile(symbol_prices, 20, 126, 0.30) if len(symbol_prices) >= 126 else None,
+                    'vol20_lt_vol60': vol20_lt_vol60,
+                    'volume_ratio': volume_ratio
+                }
     except Exception as e:
         logger.warning(f"Failed to calculate technical indicators: {e}")
 

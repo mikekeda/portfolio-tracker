@@ -408,10 +408,10 @@ class ScreenerConfig:
     def eval_criterion(self, fields: Dict[str, Any], criteria: ScreenerCriteria) -> tuple[bool, str]:
         """Evaluate a single criterion."""
         if criteria.operator not in OP_FUNCS:
-            return False, f"unknown operator {criteria.operator}"
+            raise ValueError(f"unknown operator {criteria.operator}")
 
         if criteria.field not in fields:
-            return False, f"missing field {criteria.field}"
+            raise ValueError(f"missing field {criteria.field}")
 
         lhs = fields[criteria.field]
         rhs = fields[criteria.value.name] if isinstance(criteria.value, FieldRef) else criteria.value
@@ -421,12 +421,9 @@ class ScreenerConfig:
             return False, f"field {criteria.field} is None or non-finite"
 
         if isinstance(criteria.value, FieldRef) and (rhs is None or not _is_finite_value(rhs)):
-            return False, f"field {criteria.value.name} is None or non-finite"
+            raise ValueError(f"field {criteria.value.name} is None or non-finite")
 
-        try:
-            ok = OP_FUNCS[criteria.operator](lhs, rhs)
-        except Exception as e:
-            return False, f"error evaluating {criteria.field} {criteria.operator} {criteria.value}: {e}"
+        ok = OP_FUNCS[criteria.operator](lhs, rhs)
 
         return ok, (criteria.description or f"{criteria.field} {criteria.operator} {criteria.value}")
 

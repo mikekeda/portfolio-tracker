@@ -6,7 +6,7 @@ Helper functions for screener evaluation and calculation.
 
 from itertools import combinations
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List
 
 import sys
 import os
@@ -50,21 +50,12 @@ def calculate_screener_results(portfolio_data: List[Dict]) -> None:
         # Calculate technical indicators for first holding to get complete field set
         if portfolio_data:
             first_holding = portfolio_data[0]
-            technical_data = calculate_technical_indicators(first_holding)
-            if technical_data:
-                first_holding.update(technical_data)
 
             # Validate field consistency after technical indicators are added
             validate_screener_fields(available_screeners, first_holding)
 
         for holding_data in portfolio_data:
             passed_screeners = []
-
-            # Calculate technical indicators once per holding (if not already done for first holding)
-            if holding_data is not portfolio_data[0]:  # Skip if already calculated above
-                technical_data = calculate_technical_indicators(holding_data)
-                if technical_data:
-                    holding_data.update(technical_data)
 
             # Check each available screener
             for screener_def in available_screeners:
@@ -142,32 +133,3 @@ def validate_screener_fields(available_screeners: List, sample_holding: Dict) ->
     unexpected_fields = set(sample_holding.keys()) - EXPECTED_FIELDS - {'name', 'symbol', 'quantity', 'current_price', 'market_value', 'profit', 'return_pct', 'portfolio_pct', 'date', 'passedScreeners'}
     if unexpected_fields:
         logger.debug(f"Unexpected fields in portfolio data: {unexpected_fields}")
-
-
-def calculate_technical_indicators(holding_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Calculate technical indicators for a holding using price history data.
-
-    Args:
-        holding_data: Dictionary containing holding data including price history
-
-    Returns:
-        Dictionary with technical indicators or None if calculation fails
-    """
-    try:
-        # Get current price and RSI from holding data
-        current_price = holding_data.get('current_price')
-        rsi = holding_data.get('rsi')
-
-        if current_price is None:
-            logger.debug(f"No current price available for {holding_data.get('name', 'unknown')}")
-            return None
-
-        # Technical indicators are now calculated in main.py from price history data
-        # This function is no longer needed for technical indicators calculation
-        # Return None to indicate no additional technical indicators to calculate
-        return None
-
-    except Exception as e:
-        logger.error(f"Failed to calculate technical indicators: {e}")
-        return None

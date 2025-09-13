@@ -284,15 +284,14 @@ def update_instruments(tickers: set[str]):
     return instruments
 
 
-def update_prices(session, tickers: list[str], start, end):
+def update_prices(session, tickers: list[str], start):
     for i in range(0, len(tickers), 25):
         sub = tickers[i:i + 25]
-        logging.info("Downloading prices (%s -> %s) for %s", start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"), sub)
+        logging.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), sub)
 
         df = yf.download(
             tickers=sub,
             start=start.strftime("%Y-%m-%d"),
-            end=end.strftime("%Y-%m-%d"),
             interval="1d",
             group_by="ticker",
             auto_adjust=False,
@@ -334,8 +333,6 @@ def update_prices(session, tickers: list[str], start, end):
 
 
 def get_and_update_prices(tickers: set[str]):
-    end = datetime.now().date() - timedelta(days=1)
-
     with get_session() as session:
         existing_prices = session.query(
             PricesDaily.symbol,
@@ -348,14 +345,14 @@ def get_and_update_prices(tickers: set[str]):
             start = latest_date + timedelta(days=1)
 
             # Get prices for existing tickers
-            if end > start:
-                update_prices(session, list(existing_tickers), start, end)
+            if start < datetime.now().date():
+                update_prices(session, list(existing_tickers), start)
 
         # Get prices for new tickers
         new_tickers = list(tickers - existing_tickers)
         if new_tickers:
             start = datetime.now().date() - timedelta(days=5 * 366)  # 5 years of data
-            update_prices(session, new_tickers, start, end)
+            update_prices(session, new_tickers, start)
 
 
 def get_yahoo_ticker_data(symbols: list[str]):
@@ -407,7 +404,7 @@ def save_portfolio_snapshots(holdings, instruments, rates, yahoo_data) -> None:
             for sector, percent in ETF_SECTOR_ALLOCATION[yahoo_symbol].items():
                 sector_allocation[sector] += gbp_value * percent / 100
         else:
-            raise ValueError("Unknown quoteType '%s' for %s", info["quoteType"], yahoo_symbol)
+            raise ValueError(f"Unknown quoteType '{info['quoteType']}' for {yahoo_symbol}")
 
     return_pct = total_profit / (total_value - total_profit) * 100.0 if total_value != total_profit else 0.0
     for country in country_allocation:
