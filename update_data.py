@@ -6,24 +6,27 @@ Updates all database tables with fresh data from Trading212 API and Yahoo Financ
 
 import logging
 import os
-import requests
 import time
-
 from collections import defaultdict
-from datetime import date, datetime, timezone, timedelta
-from functools import lru_cache
-from typing import cast, Dict, List, Set, Any, Generator, Union, Tuple, TypeAlias, TypedDict, Literal
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
+from typing import (Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias,
+                    TypedDict, Union, cast)
 
-from sqlalchemy import create_engine, update
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.sql import func
 import pandas as pd
+import requests
 import yfinance as yf  # type: ignore[import-untyped]
+from sqlalchemy import create_engine, update
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.sql import func
 
-from config import TRADING212_API_KEY, REQUEST_RETRY, PATTERN_MULTI, BATCH_SIZE_YF, HISTORY_YEARS, CURRENCIES
-from data import STOCKS_SUFFIX, STOCKS_ALIASES, STOCKS_DELISTED, ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
-from models import CurrencyRateDaily, Instrument, PricesDaily, HoldingDaily, PortfolioDaily
+from config import (BATCH_SIZE_YF, CURRENCIES, HISTORY_YEARS, PATTERN_MULTI,
+                    REQUEST_RETRY, TRADING212_API_KEY)
+from data import (ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION,
+                  STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX)
+from models import (CurrencyRateDaily, HoldingDaily, Instrument,
+                    PortfolioDaily, PricesDaily)
 
 
 # GET /api/v0/equity/metadata/instruments

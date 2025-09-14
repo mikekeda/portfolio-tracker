@@ -4,31 +4,33 @@ FastAPI backend for Trading212 Portfolio Manager
 Serves portfolio data from PostgreSQL database.
 """
 
-# Standard library imports
-from collections import defaultdict
 import logging
 import os
-from datetime import datetime, timedelta, date, timezone
-from functools import lru_cache
-from contextlib import asynccontextmanager
-from typing import Dict, Any, List, AsyncGenerator
 
+# Standard library imports
+from collections import defaultdict
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
+from typing import Any, AsyncGenerator, Dict, List
 
 # Third-party imports
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
-# Local imports
-from config import PRICE_FIELD, CURRENCIES
-from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
-from models import HoldingDaily, Instrument, PortfolioDaily, PricesDaily, CurrencyRateDaily
 from backend.screener_config import get_screener_config
+from backend.utils.portfolio import weighted_add
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
-from backend.utils.portfolio import weighted_add
+
+# Local imports
+from config import CURRENCIES, PRICE_FIELD
+from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
+from models import (CurrencyRateDaily, HoldingDaily, Instrument,
+                    PortfolioDaily, PricesDaily)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

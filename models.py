@@ -4,15 +4,13 @@ SQLAlchemy models for Trading212 Portfolio Manager
 Defines the database schema using SQLAlchemy ORM.
 """
 
-from datetime import datetime, timezone, date
-from typing import Dict, List, Any
+from datetime import date, datetime, timezone
+from typing import Any, Dict, List
 
-from sqlalchemy import (
-    Integer, BigInteger, String, Float, DateTime, Date,
-    Index, UniqueConstraint, ForeignKey
-)
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy import (BigInteger, Date, DateTime, Float, ForeignKey, Index,
+                        Integer, String, UniqueConstraint)
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):

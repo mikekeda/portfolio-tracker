@@ -4,11 +4,12 @@ Screener Utilities
 Helper functions for screener evaluation and calculation.
 """
 
-from itertools import combinations
 import logging
+from itertools import combinations
 from typing import Dict, List
 
-from backend.screener_config import get_screener_config, FieldRef, _is_finite_value
+from backend.screener_config import (FieldRef, _is_finite_value,
+                                     get_screener_config)
 
 logger = logging.getLogger(__name__)
 

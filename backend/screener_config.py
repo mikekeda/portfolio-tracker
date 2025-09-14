@@ -52,10 +52,10 @@ The configuration uses field names that match the portfolio API response:
 This ensures consistency and eliminates the need for complex field mapping.
 """
 
-from typing import Dict, List, Any, Union, Callable, Iterable
+import math
 from dataclasses import dataclass, field
 from enum import Enum
-import math
+from typing import Any, Callable, Dict, Iterable, List, Union
 
 
 def _is_finite_value(value: Any) -> bool:

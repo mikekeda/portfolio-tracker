@@ -6,7 +6,7 @@ Helper functions for technical analysis calculations.
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
