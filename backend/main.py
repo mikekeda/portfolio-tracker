@@ -574,8 +574,10 @@ async def get_top_movers(
 
         days = valid_periods[period]
 
-        # Get price data for all symbols
-        start_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
+        # Get the latest available trading day
+        latest_date_result = await session.execute(select(func.max(PricesDaily.date)))
+        latest_trading_date = latest_date_result.scalar()
+        start_date = latest_trading_date - timedelta(days=days)
 
         result = await session.execute(
             select(
@@ -624,7 +626,14 @@ async def get_top_movers(
         gainers = movers[:limit]
         losers = movers[-limit:][::-1]  # Reverse to show biggest losers first
 
-        return {"period": period, "gainers": gainers, "losers": losers, "total_symbols": len(movers)}
+        return {
+            "period": period,
+            "gainers": gainers,
+            "losers": losers,
+            "total_symbols": len(movers),
+            "latest_trading_date": latest_trading_date.isoformat(),
+            "start_date": start_date.isoformat(),
+        }
 
     except Exception as e:
         logger.error(f"Error fetching top movers: {e}")
