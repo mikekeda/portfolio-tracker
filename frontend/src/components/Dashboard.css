@@ -166,6 +166,13 @@
   justify-content: center;
 }
 
+/* Currency code styling */
+.currency-code {
+  font-weight: 600;
+  color: #1976d2;
+  margin-right: 8px;
+}
+
 /* Loading and Error States */
 
 

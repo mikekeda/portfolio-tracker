@@ -420,6 +420,7 @@ def save_portfolio_snapshots(
     total_profit = 0.0
     country_allocation: Dict[str, float] = defaultdict(float)
     sector_allocation: Dict[str, float] = defaultdict(float)
+    currency_allocation: Dict[str, float] = defaultdict(float)
     etf_equity_allocation: Dict[str, float] = defaultdict(float)
 
     instruments_dict = {i.id: i for i in instruments}
@@ -433,6 +434,7 @@ def save_portfolio_snapshots(
         total_value += gbp_value
         total_profit += h.ppl
         etf_equity_allocation[info["quoteType"]] += gbp_value
+        currency_allocation[info.get("currency") or "Other"] += gbp_value
 
         if info["quoteType"] == "EQUITY":
             country_allocation[info.get("country") or "Other"] += gbp_value
@@ -450,8 +452,12 @@ def save_portfolio_snapshots(
         country_allocation[country] = round(100 * country_allocation[country] / total_value, 2)
     for sector in sector_allocation:
         sector_allocation[sector] = round(100 * sector_allocation[sector] / total_value, 2)
+    for currency in currency_allocation:
+        currency_allocation[currency] = round(100 * currency_allocation[currency] / total_value, 2)
     for quote_type in etf_equity_allocation:
         etf_equity_allocation[quote_type] = round(100 * etf_equity_allocation[quote_type] / total_value, 2)
+
+    currency_allocation["GBP"] += currency_allocation.pop("GBp", 0.0)
 
     with get_session() as session:
         # Check if snapshot already exists for this date
@@ -464,6 +470,7 @@ def save_portfolio_snapshots(
             existing_snapshot.total_return_pct = return_pct
             existing_snapshot.country_allocation = country_allocation
             existing_snapshot.sector_allocation = sector_allocation
+            existing_snapshot.currency_allocation = currency_allocation
             existing_snapshot.etf_equity_split = etf_equity_allocation
             existing_snapshot.updated_at = datetime.now(TIMEZONE)
         else:
@@ -475,6 +482,7 @@ def save_portfolio_snapshots(
                 total_return_pct=return_pct,
                 country_allocation=country_allocation,
                 sector_allocation=sector_allocation,
+                currency_allocation=currency_allocation,
                 etf_equity_split=etf_equity_allocation,
             )
             session.add(snapshot)

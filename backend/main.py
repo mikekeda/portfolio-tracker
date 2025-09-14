@@ -22,13 +22,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, Asyn
 from sqlalchemy.orm import selectinload
 
 from backend.screener_config import get_screener_config
-from backend.utils.portfolio import weighted_add
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 
 # Local imports
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE
-from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 
 # Configure logging
@@ -323,69 +321,12 @@ async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_sessi
         if not latest_snapshot:
             return {"error": "No portfolio data available"}
 
-        # Use the stored allocations from the snapshot if available
-        if latest_snapshot.sector_allocation and latest_snapshot.country_allocation:
-            return {
-                "sector_allocation": latest_snapshot.sector_allocation,
-                "country_allocation": latest_snapshot.country_allocation,
-                "total_value": latest_snapshot.total_value_gbp,
-            }
-
-        # Fallback: calculate from holdings (same logic as terminal)
-        holdings_result = await session.execute(
-            select(HoldingDaily)
-            .join(Instrument)
-            .filter(HoldingDaily.date == latest_snapshot.date)
-            .options(selectinload(HoldingDaily.instrument))
-        )
-        holdings = holdings_result.scalars().all()
-
-        if not holdings:
-            return {"error": "No portfolio data available"}
-
-        # Get currency rates
-        currency_rates = await get_rates(session)
-
-        sector_allocation: Dict[str, float] = {}
-        country_allocation: Dict[str, float] = {}
-
-        for holding in holdings:
-            # Calculate GBP value (same as terminal)
-            market_value_native = holding.quantity * holding.current_price
-            market_value_gbp = market_value_native * currency_rates[holding.instrument.currency]
-
-            # Get symbol for ETF allocation lookup
-            symbol = holding.instrument.yahoo_symbol
-
-            # Apply ETF allocation logic (same as terminal)
-            if symbol in ETF_SECTOR_ALLOCATION:
-                weighted_add(sector_allocation, ETF_SECTOR_ALLOCATION[symbol], market_value_gbp)
-            else:
-                sector = holding.instrument.sector or "Other"
-                sector_allocation[sector] = sector_allocation.get(sector, 0) + market_value_gbp
-
-            if symbol in ETF_COUNTRY_ALLOCATION:
-                weighted_add(country_allocation, ETF_COUNTRY_ALLOCATION[symbol], market_value_gbp)
-            else:
-                country = holding.instrument.country or "Other"
-                country_allocation[country] = country_allocation.get(country, 0) + market_value_gbp
-
-        # Convert to percentages (same as terminal)
-        total_value = sum(sector_allocation.values())
-
-        sector_pct = {
-            k: round((v / total_value) * 100, 2)
-            for k, v in sorted(sector_allocation.items(), key=lambda kv: kv[1], reverse=True)
-        }
-        country_pct = {
-            k: round((v / total_value) * 100, 2)
-            for k, v in sorted(country_allocation.items(), key=lambda kv: kv[1], reverse=True)
-        }
-
         return {
-            "sector_allocation": sector_pct,
-            "country_allocation": country_pct,
-            "total_value": latest_snapshot.total_value_gbp,  # Use correct GBP value
+            "sector_allocation": latest_snapshot.sector_allocation,
+            "country_allocation": latest_snapshot.country_allocation,
+            "currency_allocation": latest_snapshot.currency_allocation,
+            "etf_equity_split": latest_snapshot.etf_equity_split,
+            "total_value": latest_snapshot.total_value_gbp,
         }
     except Exception as e:
         logger.error(f"Error fetching allocations: {e}")
@@ -576,7 +517,7 @@ async def get_top_movers(
 
         # Get the latest available trading day
         latest_date_result = await session.execute(select(func.max(PricesDaily.date)))
-        latest_trading_date = latest_date_result.scalar()
+        latest_trading_date = latest_date_result.scalar_one()
         start_date = latest_trading_date - timedelta(days=days)
 
         result = await session.execute(

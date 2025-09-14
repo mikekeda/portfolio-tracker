@@ -106,7 +106,81 @@ const Dashboard = () => {
         <TopMovers />
       </div>
 
-      {/* Allocations */}
+      {/* ETF/Equity Split and Currency Allocation */}
+      <div className="allocations-section">
+        <div className="allocation-table">
+          <h3>ETF/Equity Split</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Type</th>
+                <th>Allocation (%)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allocations.etf_equity_split && Object.entries(allocations.etf_equity_split).length > 0 ? (
+                Object.entries(allocations.etf_equity_split)
+                  .sort(([,a], [,b]) => b - a)
+                  .map(([type, percentage]) => (
+                    <tr key={type}>
+                      <td>{type}</td>
+                      <td style={{ '--bar-width': `${Math.min(percentage, 100)}%` }}>
+                        <span>{percentage.toFixed(2)}%</span>
+                      </td>
+                    </tr>
+                  ))
+              ) : (
+                <tr>
+                  <td colSpan="2" style={{ textAlign: 'center', color: '#6c757d' }}>
+                    No ETF/Equity data available
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="allocation-table">
+          <h3>Currency Allocation</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Currency</th>
+                <th>Allocation (%)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allocations.currency_allocation && Object.entries(allocations.currency_allocation).length > 0 ? (
+                Object.entries(allocations.currency_allocation)
+                  .sort(([,a], [,b]) => b - a)
+                  .map(([currency, percentage]) => (
+                    <tr key={currency}>
+                      <td>
+                        <span className="currency-code">{currency}</span>
+                        {currency === 'USD' && ' 🇺🇸'}
+                        {currency === 'GBP' && ' 🇬🇧'}
+                        {currency === 'EUR' && ' 🇪🇺'}
+                        {currency === 'CAD' && ' 🇨🇦'}
+                        {currency === 'JPY' && ' 🇯🇵'}
+                      </td>
+                      <td style={{ '--bar-width': `${Math.min(percentage, 100)}%` }}>
+                        <span>{percentage.toFixed(2)}%</span>
+                      </td>
+                    </tr>
+                  ))
+              ) : (
+                <tr>
+                  <td colSpan="2" style={{ textAlign: 'center', color: '#6c757d' }}>
+                    No currency data available
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Sector and Country Allocations */}
       <div className="allocations-section">
         <div className="allocation-table">
           <h3>Sector Allocation</h3>

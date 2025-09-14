@@ -156,6 +156,7 @@ class PortfolioDaily(Base):
     # Allocation data (stored as JSON for flexibility)
     country_allocation: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
     sector_allocation: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
+    currency_allocation: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
     etf_equity_split: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
 
     # Metadata
