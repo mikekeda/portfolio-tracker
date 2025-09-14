@@ -8,10 +8,7 @@ from itertools import combinations
 import logging
 from typing import Dict, List
 
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from screener_config import get_screener_config, FieldRef, _is_finite_value
+from backend.screener_config import get_screener_config, FieldRef, _is_finite_value
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +81,12 @@ def calculate_screener_results(portfolio_data: List[Dict]) -> None:
             holding_data['passedScreeners'] = passed_screeners
             # Bonus for combinations of screeners
             screener_pairs = {
-                tuple(sorted((a, b))) for a, b in combinations(set(passed_screeners), 2)
-                if (b in screener_config.screeners[a].combine_with
-                    or a in screener_config.screeners[b].combine_with)
-                   and screener_config.screeners[a].category != screener_config.screeners[b].category  # optional
+                tuple(sorted((a, b)))
+                for a, b in combinations(set(passed_screeners), 2)
+                if (
+                        (b in screener_config.screeners[a].combine_with or a in screener_config.screeners[b].combine_with)
+                        and screener_config.screeners[a].category != screener_config.screeners[b].category  # optional
+                )
             }
             holding_data['screener_score'] += min(5, 2 * len(screener_pairs))
 

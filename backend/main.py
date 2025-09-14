@@ -10,19 +10,21 @@ import logging
 import os
 from datetime import datetime, timedelta, date, timezone
 from functools import lru_cache
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 
 
 # Third-party imports
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 # Local imports
-from config import PRICE_FIELD
+from config import PRICE_FIELD, CURRENCIES
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from models import HoldingDaily, Instrument, PortfolioDaily, PricesDaily, CurrencyRateDaily
+from screener_config import get_screener_config
 from utils.screener import calculate_screener_results
 from utils.technical import calculate_technical_indicators_for_symbols
 from utils.portfolio import weighted_add
@@ -46,49 +48,53 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @lru_cache(maxsize=1)
 def _engine_and_factory():
-    db_name = os.getenv("DB_NAME", "trading212_portfolio")
-    db_password = os.getenv("DB_PASSWORD")
-    db_user = os.getenv("DB_USER", "postgres")
-    db_host = os.getenv("DB_HOST", "localhost")
-    db_port = os.getenv("DB_PORT", "5432")
-    db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-    engine = create_engine(db_url, echo=False, pool_pre_ping=True)
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-    return engine, SessionLocal
+    db_url = "postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}".format(
+        db_name=os.getenv("DB_NAME", "trading212_portfolio"),
+        db_password=os.getenv("DB_PASSWORD"),
+        db_user=os.getenv("DB_USER", "postgres"),
+        db_host=os.getenv("DB_HOST", "localhost"),
+        db_port=os.getenv("DB_PORT", "5432"),
+    )
+    engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
+    AsyncSessionLocal = async_sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+    return AsyncSessionLocal
 
 
-@contextmanager
-def get_session():
-    _, SessionLocal = _engine_and_factory()
-    session = SessionLocal()
+@asynccontextmanager
+async def get_session():
+    AsyncSessionLocal = _engine_and_factory()
+    session = AsyncSessionLocal()
     try:
         yield session
-        session.commit()
+        await session.commit()
     except Exception:
-        session.rollback()
+        await session.rollback()
         raise
     finally:
-        session.close()
+        await session.close()
 
 
-def get_rates():
+async def get_rates():
     table = {"GBX": 0.01, "GBP": 1.0}
 
-    with get_session() as session:
-        rates = session.query(
-            CurrencyRateDaily.from_currency,
-            CurrencyRateDaily.rate,
-        ).filter(
-            CurrencyRateDaily.from_currency.in_(["USD", "EUR", "CAD"]),
-            CurrencyRateDaily.to_currency == "GBP",
-            CurrencyRateDaily.date == date.today()
-        ).all()
+    async with get_session() as session:
+        result = await session.execute(
+            select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate).filter(
+                CurrencyRateDaily.from_currency.in_(CURRENCIES),
+                CurrencyRateDaily.to_currency == "GBP",
+                CurrencyRateDaily.date == date.today()
+            )
+        )
+        rates = result.all()
         for currency, rate in rates:
             table[currency] = rate
 
     return table
+
 
 @app.get("/")
 async def root():
@@ -100,9 +106,10 @@ async def root():
 async def get_current_portfolio():
     """Get current portfolio holdings."""
     try:
-        with get_session() as session:
+        async with get_session() as session:
             # Get the latest snapshot date
-            latest_date = session.query(func.max(HoldingDaily.date)).scalar()
+            result = await session.execute(select(func.max(HoldingDaily.date)))
+            latest_date = result.scalar()
 
             if not latest_date:
                 return {
@@ -112,30 +119,38 @@ async def get_current_portfolio():
                 }
 
             # Query holdings with instrument data in the same session
-            holdings = session.query(HoldingDaily).join(Instrument).filter(
-                HoldingDaily.date == latest_date
-            ).order_by(Instrument.name).all()
+            holdings_result = await session.execute(
+                select(HoldingDaily)
+                .join(Instrument)
+                .filter(HoldingDaily.date == latest_date)
+                .order_by(Instrument.name)
+                .options(selectinload(HoldingDaily.instrument))
+            )
+            holdings = holdings_result.scalars().all()
 
             # Get currency rates
-            currency_rates = get_rates()
+            currency_rates = await get_rates()
 
             # Get Yahoo Finance data from database cache (optimized batch fetch)
             yahoo_profiles = {}
             yahoo_symbols = [holding.instrument.yahoo_symbol for holding in holdings
-                           if holding.instrument.yahoo_symbol and holding.instrument.yahoo_data]
+                             if holding.instrument.yahoo_symbol and holding.instrument.yahoo_data]
 
             # Fetch all Yahoo Finance data at once from the database
-            instruments = session.query(Instrument).filter(
-                Instrument.yahoo_symbol.in_(yahoo_symbols),
-                Instrument.yahoo_data.isnot(None)
-            ).all()
+            instruments_result = await session.execute(
+                select(Instrument).filter(
+                    Instrument.yahoo_symbol.in_(yahoo_symbols),
+                    Instrument.yahoo_data.isnot(None)
+                )
+            )
+            instruments = instruments_result.scalars().all()
 
             for instrument in instruments:
                 yahoo_profiles[instrument.yahoo_symbol] = instrument.yahoo_data
 
             # Calculate technical indicators using centralized function
             symbols_for_technical = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
-            rsi_data, technical_data = calculate_technical_indicators_for_symbols(symbols_for_technical, session)
+            rsi_data, technical_data = await calculate_technical_indicators_for_symbols(symbols_for_technical, session)
 
             # Calculate total portfolio value for percentage calculation
             total_portfolio_value = 0
@@ -225,19 +240,21 @@ async def get_current_portfolio():
 async def get_portfolio_summary():
     """Get portfolio summary statistics."""
     try:
-        with get_session() as session:
+        async with get_session() as session:
             # Get the latest portfolio snapshot
-            latest_snapshot = session.query(PortfolioDaily).order_by(
-                PortfolioDaily.date.desc()
-            ).first()
+            result = await session.execute(
+                select(PortfolioDaily).order_by(PortfolioDaily.date.desc())
+            )
+            latest_snapshot = result.scalars().first()
 
             if not latest_snapshot:
                 return {"error": "No portfolio data available"}
 
             # Get holdings for the same date to calculate win rate
-            holdings = session.query(HoldingDaily).filter(
-                HoldingDaily.date == latest_snapshot.date
-            ).all()
+            holdings_result = await session.execute(
+                select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)
+            )
+            holdings = holdings_result.scalars().all()
 
             profitable_count = 0
             losing_count = 0
@@ -270,11 +287,12 @@ async def get_portfolio_summary():
 async def get_portfolio_allocations():
     """Get portfolio allocations by sector and country."""
     try:
-        with get_session() as session:
+        async with get_session() as session:
             # Get the latest portfolio snapshot
-            latest_snapshot = session.query(PortfolioDaily).order_by(
-                PortfolioDaily.date.desc()
-            ).first()
+            result = await session.execute(
+                select(PortfolioDaily).order_by(PortfolioDaily.date.desc())
+            )
+            latest_snapshot = result.scalars().first()
 
             if not latest_snapshot:
                 return {"error": "No portfolio data available"}
@@ -288,15 +306,19 @@ async def get_portfolio_allocations():
                 }
 
             # Fallback: calculate from holdings (same logic as terminal)
-            holdings = session.query(HoldingDaily).join(Instrument).filter(
-                HoldingDaily.date == latest_snapshot.date
-            ).all()
+            holdings_result = await session.execute(
+                select(HoldingDaily)
+                .join(Instrument)
+                .filter(HoldingDaily.date == latest_snapshot.date)
+                .options(selectinload(HoldingDaily.instrument))
+            )
+            holdings = holdings_result.scalars().all()
 
             if not holdings:
                 return {"error": "No portfolio data available"}
 
             # Get currency rates
-            currency_rates = get_rates()
+            currency_rates = await get_rates()
 
             sector_allocation = {}
             country_allocation = {}
@@ -342,11 +364,14 @@ async def get_portfolio_allocations():
 async def get_portfolio_history(days: int = 30):
     """Get portfolio history for the last N days."""
     try:
-        with get_session() as session:
+        async with get_session() as session:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-            snapshots = session.query(PortfolioDaily).filter(
-                PortfolioDaily.date >= cutoff_date
-            ).order_by(PortfolioDaily.date.desc()).all()
+            result = await session.execute(
+                select(PortfolioDaily).filter(
+                    PortfolioDaily.date >= cutoff_date
+                ).order_by(PortfolioDaily.date.desc())
+            )
+            snapshots = result.scalars().all()
 
         history_data = []
         for snapshot in snapshots:
@@ -372,10 +397,13 @@ async def get_portfolio_history(days: int = 30):
 async def get_instruments():
     """Get all instruments in the database for autocomplete."""
     try:
-        with get_session() as session:
-            instruments = session.query(Instrument).filter(
-                Instrument.yahoo_symbol.isnot(None)
-            ).order_by(Instrument.name).all()
+        async with get_session() as session:
+            result = await session.execute(
+                select(Instrument).filter(
+                    Instrument.yahoo_symbol.isnot(None)
+                ).order_by(Instrument.name)
+            )
+            instruments = result.scalars().all()
 
             return {
                 "instruments": [
@@ -409,7 +437,6 @@ async def get_chart_metrics(symbols: str, days: int = 30, metric: str = "price")
 async def get_available_screeners():
     """Get list of all available screeners with their configurations."""
     try:
-        from screener_config import get_screener_config
         screener_config = get_screener_config()
         return screener_config.to_dict()
     except Exception as e:
@@ -422,24 +449,26 @@ async def get_chart_metric(symbols: str, days: int, metric: str):
     # Parse symbols from comma-separated string
     symbol_list = [s.strip().upper() for s in symbols.split(',') if s.strip()]
 
-    if not symbol_list:
+    if not symbols:
         raise HTTPException(status_code=400, detail="No symbols provided")
 
     # Calculate date range
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days)
+    start_date = datetime.now() - timedelta(days=days)
 
     if metric == "price":
         # Get price data from database
-        with get_session() as session:
-            price_data = session.query(
-                PricesDaily.symbol,
-                PricesDaily.date,
-                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
-            ).filter(
-                PricesDaily.symbol.in_(symbol_list),
-                PricesDaily.date.between(start_date.date(), end_date.date())
-            ).all()
+        async with get_session() as session:
+            result = await session.execute(
+                select(
+                    PricesDaily.symbol,
+                    PricesDaily.date,
+                    getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
+                ).filter(
+                    PricesDaily.symbol.in_(symbol_list),
+                    PricesDaily.date >= start_date.date()
+                )
+            )
+            price_data = result.all()
 
         # Convert to chart format
         chart_data = {}
@@ -451,13 +480,19 @@ async def get_chart_metric(symbols: str, days: int, metric: str):
     else:
         # Get holdings data for other metrics
         try:
-            with get_session() as session:
+            async with get_session() as session:
                 # Get holdings data for the date range
-                holdings_data = session.query(HoldingDaily).join(Instrument).filter(
-                    Instrument.yahoo_symbol.in_(symbol_list),
-                    HoldingDaily.date >= start_date,
-                    HoldingDaily.date <= end_date
-                ).order_by(HoldingDaily.date).all()
+                result = await session.execute(
+                    select(HoldingDaily)
+                    .join(Instrument)
+                    .filter(
+                        Instrument.yahoo_symbol.in_(symbol_list),
+                        HoldingDaily.date >= start_date,
+                    )
+                    .order_by(HoldingDaily.date)
+                    .options(selectinload(HoldingDaily.instrument))
+                )
+                holdings_data = result.scalars().all()
 
                 if not holdings_data:
                     return {"error": "No holdings data available"}
@@ -518,20 +553,22 @@ async def get_top_movers(period: str = "1d", limit: int = 10):
         # Get price data for all symbols
         start_date = (datetime.now() - timedelta(days=days)).date()
 
-        with get_session() as session:
-
-            instruments = session.query(
-                Instrument.yahoo_symbol,
-                Instrument.name,
-                Instrument.t212_code,
-                PricesDaily.symbol,
-                PricesDaily.date,
-                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('px'),
-            ).join(
-                PricesDaily, PricesDaily.symbol == Instrument.yahoo_symbol
-            ).filter(
-                PricesDaily.date >= start_date
-            ).order_by(Instrument.yahoo_symbol, PricesDaily.date).all()
+        async with get_session() as session:
+            result = await session.execute(
+                select(
+                    Instrument.yahoo_symbol,
+                    Instrument.name,
+                    Instrument.t212_code,
+                    PricesDaily.symbol,
+                    PricesDaily.date,
+                    getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('px'),
+                ).join(
+                    PricesDaily, PricesDaily.symbol == Instrument.yahoo_symbol
+                ).filter(
+                    PricesDaily.date >= start_date
+                ).order_by(Instrument.yahoo_symbol, PricesDaily.date)
+            )
+            instruments = result.all()
 
             prices_data = defaultdict(list)
 

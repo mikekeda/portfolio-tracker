@@ -16,7 +16,7 @@ from sqlalchemy.sql import func
 import pandas as pd
 import yfinance as yf
 
-from config import TRADING212_API_KEY, REQUEST_RETRY, PATTERN_MULTI
+from config import TRADING212_API_KEY, REQUEST_RETRY, PATTERN_MULTI, BATCH_SIZE_YF, HISTORY_YEARS, CURRENCIES
 from data import STOCKS_SUFFIX, STOCKS_ALIASES, STOCKS_DELISTED, ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from models import CurrencyRateDaily, Instrument, PricesDaily, HoldingDaily, PortfolioDaily
 
@@ -285,8 +285,8 @@ def update_instruments(tickers: set[str]):
 
 
 def update_prices(session, tickers: list[str], start):
-    for i in range(0, len(tickers), 25):
-        sub = tickers[i:i + 25]
+    for i in range(0, len(tickers), BATCH_SIZE_YF):
+        sub = tickers[i:i + BATCH_SIZE_YF]
         logging.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), sub)
 
         df = yf.download(
@@ -333,6 +333,8 @@ def update_prices(session, tickers: list[str], start):
 
 
 def get_and_update_prices(tickers: set[str]):
+    today = datetime.now().date()
+
     with get_session() as session:
         existing_prices = session.query(
             PricesDaily.symbol,
@@ -345,13 +347,13 @@ def get_and_update_prices(tickers: set[str]):
             start = latest_date + timedelta(days=1)
 
             # Get prices for existing tickers
-            if start < datetime.now().date():
+            if start <= (today - timedelta(days=[3, 1, 1, 1, 1, 1, 2][today.weekday()])):
                 update_prices(session, list(existing_tickers), start)
 
         # Get prices for new tickers
         new_tickers = list(tickers - existing_tickers)
         if new_tickers:
-            start = datetime.now().date() - timedelta(days=5 * 366)  # 5 years of data
+            start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
             update_prices(session, new_tickers, start)
 
 
@@ -361,9 +363,8 @@ def get_yahoo_ticker_data(symbols: list[str]):
     yahoo_data = {}
 
     # Fetch in batches
-    batch_size = 10
-    for i in range(0, len(symbols), batch_size):
-        batch = symbols[i:i + batch_size]
+    for i in range(0, len(symbols), BATCH_SIZE_YF):
+        batch = symbols[i:i + BATCH_SIZE_YF]
 
         # Use yfinance's batch download capability
         tickers = yf.Tickers(' '.join(batch))
@@ -408,7 +409,7 @@ def save_portfolio_snapshots(holdings, instruments, rates, yahoo_data) -> None:
 
     return_pct = total_profit / (total_value - total_profit) * 100.0 if total_value != total_profit else 0.0
     for country in country_allocation:
-        country_allocation[country] =  round(100 * country_allocation[country] / total_value, 2)
+        country_allocation[country] = round(100 * country_allocation[country] / total_value, 2)
     for sector in sector_allocation:
         sector_allocation[sector] = round(100 * sector_allocation[sector] / total_value, 2)
     for quote_type in etf_equity_allocation:
@@ -466,7 +467,7 @@ if __name__ == "__main__":
     logging.info("Starting data update process")
 
     # 1. Update rates
-    rates = get_currency_table(["USD", "EUR", "CAD"])
+    rates = get_currency_table(CURRENCIES)
 
     # 2. Update holdings and instruments
     update_holdings_and_instruments(rates)

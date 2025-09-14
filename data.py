@@ -189,4 +189,3 @@ ETF_SECTOR_ALLOCATION = {
         "Communication Services": 4.97,
     },
 }
-

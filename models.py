@@ -9,7 +9,7 @@ import os
 from typing import Optional
 
 from sqlalchemy import (
-    Column, Integer, String, Float, DateTime, Date,
+    Column, Integer, BigInteger, String, Float, DateTime, Date,
     Index, UniqueConstraint, ForeignKey, create_engine, MetaData
 )
 from sqlalchemy.ext.declarative import declarative_base
@@ -37,7 +37,7 @@ class PricesDaily(Base):
     low_price = Column(Float, nullable=False)
     close_price = Column(Float, nullable=False)
     adj_close_price = Column(Float, nullable=False)
-    volume = Column(Integer, nullable=False)
+    volume = Column(BigInteger, nullable=False)
 
     # Metadata
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

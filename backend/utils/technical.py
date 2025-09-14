@@ -8,6 +8,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 
+from sqlalchemy import select
+
 from config import BENCH, PRICE_FIELD
 from models import PricesDaily
 
@@ -175,26 +177,26 @@ def calculate_bb_width_percentile(prices: List[float], period: int, lookback: in
     return bb_widths[percentile_index]
 
 
-def calculate_volume_ratio_from_db(symbol: str, session) -> Optional[float]:
+async def calculate_volume_ratio_from_db(symbol: str, session) -> Optional[float]:
     """Calculate volume ratio (today / 20-day average) from database."""
     try:
         # Get recent volume data
         end_date = datetime.now()
 
         # Query volume data directly from database
-        volumes = session.query(PricesDaily.volume).filter(
-            PricesDaily.symbol == symbol,
-            PricesDaily.date <= end_date.date(),
-            PricesDaily.volume.isnot(None),
-            PricesDaily.volume > 0
-        ).order_by(PricesDaily.date.desc()).limit(21).all()
+        result = await session.execute(
+            select(PricesDaily.volume).filter(
+                PricesDaily.symbol == symbol,
+                PricesDaily.date <= end_date.date(),
+            ).order_by(PricesDaily.date.desc()).limit(21)
+        )
+        volumes = result.scalars().all()
 
         if len(volumes) < 21:  # Need at least 21 days (today + 20 days)
             return None
 
-        volumes_list = [v[0] for v in volumes]
-        today_volume = volumes_list[0]
-        avg_20_volume = sum(volumes_list[1:21]) / 20
+        today_volume = volumes[0]
+        avg_20_volume = sum(volumes[1:21]) / 20
 
         if avg_20_volume == 0:
             return None
@@ -206,34 +208,25 @@ def calculate_volume_ratio_from_db(symbol: str, session) -> Optional[float]:
         return None
 
 
-def calculate_volume_contraction_from_db(symbol: str, session) -> Optional[bool]:
+async def calculate_volume_contraction_from_db(symbol: str, session) -> Optional[bool]:
     """Calculate if 20-day volume is less than 60-day volume from database."""
     try:
-        # Get recent volume data - need at least 60 days for proper calculation
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=120)  # Get 120 days to ensure we have 60 trading days
-
         # Query volume data directly from database
-        volumes = session.query(PricesDaily.volume).filter(
-            PricesDaily.symbol == symbol,
-            PricesDaily.date >= start_date.date(),
-            PricesDaily.date <= end_date.date(),
-            PricesDaily.volume.isnot(None),
-            PricesDaily.volume > 0
-        ).order_by(PricesDaily.date.desc()).limit(60).all()
-
-        session.close()
+        result = await session.execute(
+            select(PricesDaily.volume).filter(
+                PricesDaily.symbol == symbol,
+            ).order_by(PricesDaily.date.desc()).limit(60)
+        )
+        volumes = result.scalars().all()
 
         # Need at least 60 days for proper 20d vs 60d comparison
         if len(volumes) < 60:
             logger.debug(f"Volume contraction for {symbol}: Only {len(volumes)} days of volume data (need 60)")
             return None
 
-        volumes_list = [v[0] for v in volumes]
-
         # True 20d vs 60d comparison as per specification
-        vol_20 = sum(volumes_list[:20]) / 20  # Most recent 20 days
-        vol_60 = sum(volumes_list) / 60  # All 60 days
+        vol_20 = sum(volumes[:20]) / 20  # Most recent 20 days
+        vol_60 = sum(volumes) / 60  # All 60 days
 
         result = vol_20 < vol_60
         logger.debug(f"Volume contraction for {symbol}: vol_20={vol_20:.0f}, vol_60={vol_60:.0f}, result={result}")
@@ -273,7 +266,7 @@ def calculate_relative_strength_vs_spy(symbol_prices: List[float], spy_prices: L
         return None
 
 
-def calculate_technical_indicators_for_symbols(symbols: List[str], session) -> tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
+async def calculate_technical_indicators_for_symbols(symbols: List[str], session) -> tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
     """
     Calculate technical indicators for a list of symbols using available database data.
 
@@ -292,13 +285,16 @@ def calculate_technical_indicators_for_symbols(symbols: List[str], session) -> t
 
     try:
         # Get price history for all symbols
-        price_data = session.query(
-            PricesDaily.symbol,
-            getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
-        ).filter(
-            PricesDaily.symbol.in_(symbols),
-            PricesDaily.date >= datetime.now().date() - timedelta(days=420)
-        ).order_by(PricesDaily.date).all()
+        price_result = await session.execute(
+            select(
+                PricesDaily.symbol,
+                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
+            ).filter(
+                PricesDaily.symbol.in_(symbols),
+                PricesDaily.date >= datetime.now().date() - timedelta(days=420)
+            ).order_by(PricesDaily.date)
+        )
+        price_data = price_result.all()
 
         # Convert to chart format
         price_history = {}
@@ -306,13 +302,15 @@ def calculate_technical_indicators_for_symbols(symbols: List[str], session) -> t
             price_history.setdefault(row.symbol, []).append(row.price)
 
         # Get SPY data for relative strength calculation
-        spy_data = session.query(
-            getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
-        ).filter(
-            PricesDaily.symbol == BENCH,
-            PricesDaily.date >= datetime.now().date() - timedelta(days=420)
-        ).order_by(PricesDaily.date).all()
-
+        spy_result = await session.execute(
+            select(
+                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
+            ).filter(
+                PricesDaily.symbol == BENCH,
+                PricesDaily.date >= datetime.now().date() - timedelta(days=420)
+            ).order_by(PricesDaily.date)
+        )
+        spy_data = spy_result.all()
         spy_prices = [row.price for row in spy_data]
 
         # Calculate technical indicators for each symbol
@@ -325,8 +323,8 @@ def calculate_technical_indicators_for_symbols(symbols: List[str], session) -> t
             # Calculate other technical indicators
             if len(symbol_prices) >= 20:  # Minimum for SMA20
                 # Calculate volume-based indicators
-                volume_ratio = calculate_volume_ratio_from_db(symbol, session)
-                vol20_lt_vol60 = calculate_volume_contraction_from_db(symbol, session)
+                volume_ratio = await calculate_volume_ratio_from_db(symbol, session)
+                vol20_lt_vol60 = await calculate_volume_contraction_from_db(symbol, session)
 
                 # Calculate relative strength vs SPY
                 rs_6m_vs_spy = calculate_relative_strength_vs_spy(symbol_prices, spy_prices)

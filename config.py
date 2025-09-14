@@ -29,14 +29,8 @@ PATTERN_MULTI = re.compile(r"^(?P<sym>.+?)_(?P<tag>[A-Z]{2,3})$")
 BENCH = "VUAG.L"  # S&P500
 RISK_FREE = 0.045  # annual risk-free guess (4.5 %); replace with 3-month T-bill
 
-# Display Configuration
-MAX_HOLDINGS_DISPLAY = 20
-MAX_COUNTRIES_DISPLAY = 10
-MAX_SECTORS_DISPLAY = 10
-MAX_PERFORMERS_DISPLAY = 5
-
 # Currency Configuration
-SUPPORTED_CURRENCIES = ["GBX", "GBP", "USD", "EUR", "CAD"]
+CURRENCIES = ("USD", "EUR", "CAD")
 FALLBACK_RATES = {
     "GBX": 0.01,
     "GBP": 1.0,
@@ -44,19 +38,3 @@ FALLBACK_RATES = {
     "EUR": 0.87,
     "CAD": 0.54,
 }
-
-# Color codes for terminal output
-RED = "\033[91m"
-GREEN = "\033[92m"
-RESET = "\033[0m"
-
-# Validation
-def validate_config():
-    """Validate that all required configuration is present."""
-    if not TRADING212_API_KEY:
-        raise ValueError("TRADING212_API_KEY environment variable is required")
-
-    if not DB_PASSWORD:
-        raise ValueError("DB_PASSWORD environment variable is required")
-
-    return True
