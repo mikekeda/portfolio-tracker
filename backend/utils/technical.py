@@ -6,9 +6,10 @@ Helper functions for technical analysis calculations.
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import BENCH, PRICE_FIELD
 from models import PricesDaily
@@ -16,20 +17,8 @@ from models import PricesDaily
 logger = logging.getLogger(__name__)
 
 
-def calculate_rsi(prices: List[float], period: int = 14) -> Optional[float]:
-    """
-    Calculate RSI (Relative Strength Index) for a series of prices.
-
-    Args:
-        prices: List of closing prices
-        period: RSI period (default 14)
-
-    Returns:
-        RSI value between 0 and 100, or None if insufficient data
-    """
-    if len(prices) < period + 1:
-        return None
-
+def calculate_rsi(prices: List[float], period: int = 14) -> float:
+    """Calculate RSI (Relative Strength Index) for a series of prices."""
     # Calculate price changes
     deltas = []
     for i in range(1, len(prices)):
@@ -55,7 +44,7 @@ def calculate_rsi(prices: List[float], period: int = 14) -> Optional[float]:
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
 
-    return round(rsi, 2)
+    return rsi
 
 
 def calculate_sma(prices: List[float], period: int) -> Optional[float]:
@@ -177,7 +166,7 @@ def calculate_bb_width_percentile(prices: List[float], period: int, lookback: in
     return bb_widths[percentile_index]
 
 
-async def calculate_volume_ratio_from_db(symbol: str, session) -> Optional[float]:
+async def calculate_volume_ratio_from_db(symbol: str, session: AsyncSession) -> Optional[float]:
     """Calculate volume ratio (today / 20-day average) from database."""
     try:
         # Get recent volume data
@@ -208,16 +197,16 @@ async def calculate_volume_ratio_from_db(symbol: str, session) -> Optional[float
         return None
 
 
-async def calculate_volume_contraction_from_db(symbol: str, session) -> Optional[bool]:
+async def calculate_volume_contraction_from_db(symbol: str, session: AsyncSession) -> Optional[bool]:
     """Calculate if 20-day volume is less than 60-day volume from database."""
     try:
         # Query volume data directly from database
-        result = await session.execute(
+        rows = await session.execute(
             select(PricesDaily.volume).filter(
                 PricesDaily.symbol == symbol,
             ).order_by(PricesDaily.date.desc()).limit(60)
         )
-        volumes = result.scalars().all()
+        volumes = rows.scalars().all()
 
         # Need at least 60 days for proper 20d vs 60d comparison
         if len(volumes) < 60:
@@ -266,19 +255,10 @@ def calculate_relative_strength_vs_spy(symbol_prices: List[float], spy_prices: L
         return None
 
 
-async def calculate_technical_indicators_for_symbols(symbols: List[str], session) -> tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
-    """
-    Calculate technical indicators for a list of symbols using available database data.
-
-    Args:
-        symbols: List of symbols to calculate indicators for
-        session: Database session instance
-
-    Returns:
-        Tuple of (rsi_data, technical_data) dictionaries
-    """
-    rsi_data = {}
-    technical_data = {}
+async def calculate_technical_indicators_for_symbols(symbols: List[str], session: AsyncSession) -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
+    """Calculate technical indicators for a list of symbols using available database data."""
+    rsi_data: Dict[str, float] = {}
+    technical_data: Dict[str, Dict[str, Any]] = {}
 
     if not symbols:
         return rsi_data, technical_data
@@ -297,7 +277,7 @@ async def calculate_technical_indicators_for_symbols(symbols: List[str], session
         price_data = price_result.all()
 
         # Convert to chart format
-        price_history = {}
+        price_history: Dict[str, List[float]] = {}
         for row in price_data:
             price_history.setdefault(row.symbol, []).append(row.price)
 

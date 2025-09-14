@@ -22,12 +22,7 @@ EXPECTED_FIELDS = {
 
 
 def calculate_screener_results(portfolio_data: List[Dict]) -> None:
-    """
-    Calculate screener results for all holdings in portfolio data.
-
-    Args:
-        portfolio_data: List of holding dictionaries to update with screener results
-    """
+    """Calculate screener results for all holdings in portfolio data."""
     if not portfolio_data:
         logger.warning("No portfolio data provided for screener calculation")
         return
@@ -106,13 +101,7 @@ def calculate_screener_results(portfolio_data: List[Dict]) -> None:
 
 
 def validate_screener_fields(available_screeners: List, sample_holding: Dict) -> None:
-    """
-    Validate that screener field names match portfolio data fields.
-
-    Args:
-        available_screeners: List of available screener definitions
-        sample_holding: Sample holding data to check field availability
-    """
+    """Validate that screener field names match portfolio data fields."""
     if not sample_holding:
         return
 

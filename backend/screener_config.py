@@ -59,15 +59,7 @@ import math
 
 
 def _is_finite_value(value: Any) -> bool:
-    """
-    Check if a value is finite (not None, NaN, or infinite).
-
-    Args:
-        value: The value to check
-
-    Returns:
-        True if the value is finite, False otherwise
-    """
+    """Check if a value is finite (not None, NaN, or infinite)."""
     if value is None:
         return False
 

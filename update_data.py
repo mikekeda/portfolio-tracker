@@ -1,3 +1,9 @@
+"""
+Data Update Script for Trading212 Portfolio Manager
+==================================================
+Updates all database tables with fresh data from Trading212 API and Yahoo Finance.
+"""
+
 import logging
 import os
 import requests
@@ -6,12 +12,11 @@ import time
 from collections import defaultdict
 from datetime import date, datetime, timezone, timedelta
 from functools import lru_cache
-from typing import Dict
-
+from typing import Dict, List, Set, Any, Generator, Union, Tuple, TypeAlias
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, update
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.sql import func
 import pandas as pd
 import yfinance as yf
@@ -21,22 +26,28 @@ from data import STOCKS_SUFFIX, STOCKS_ALIASES, STOCKS_DELISTED, ETF_COUNTRY_ALL
 from models import CurrencyRateDaily, Instrument, PricesDaily, HoldingDaily, PortfolioDaily
 
 
+TRADING212_API_RESPONSE: TypeAlias = List[Dict[str, Union[str, float, int]]]
+
+
 @lru_cache(maxsize=1)
-def _engine_and_factory():
-    db_name = os.getenv("DB_NAME", "trading212_portfolio")
-    db_password = os.getenv("DB_PASSWORD")
-    db_user = os.getenv("DB_USER", "postgres")
-    db_host = os.getenv("DB_HOST", "localhost")
-    db_port = os.getenv("DB_PORT", "5432")
-    db_url = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+def _get_session_factory() -> sessionmaker:
+    """Create and cache the database engine and session factory."""
+    db_url = "postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}".format(
+        db_name=os.getenv("DB_NAME", "trading212_portfolio"),
+        db_password=os.getenv("DB_PASSWORD"),
+        db_user=os.getenv("DB_USER", "postgres"),
+        db_host=os.getenv("DB_HOST", "localhost"),
+        db_port=os.getenv("DB_PORT", "5432"),
+    )
     engine = create_engine(db_url, echo=False, pool_pre_ping=True)
-    SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-    return engine, SessionLocal
+
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 @contextmanager
-def get_session():
-    _, SessionLocal = _engine_and_factory()
+def get_session() -> Generator[Session, None, None]:
+    """Context manager for database sessions."""
+    SessionLocal = _get_session_factory()
     session = SessionLocal()
     try:
         yield session
@@ -49,7 +60,7 @@ def get_session():
 
 
 def convert_ticker(t212: str) -> str:
-    """Convert a Trading 212 code like 'BARCl_EQ' to a Yahoo symbol 'BARC.L'."""
+    """Convert a Trading 212 code to a Yahoo Finance symbol (example: 'BARCl_EQ' -> 'BARC.L')."""
     if t212 in STOCKS_DELISTED:
         raise ValueError(f"{t212} is delisted")
 
@@ -75,7 +86,7 @@ def convert_ticker(t212: str) -> str:
     return sym + suffix
 
 
-def _fetch_rates_batch(currencies: list) -> Dict[str, float]:
+def _fetch_rates_batch(currencies: Tuple[str, ...]) -> Dict[str, float]:
     """Fetch currency rates from a reliable API in batch."""
     rates = {}
 
@@ -118,7 +129,8 @@ def _fetch_rates_batch(currencies: list) -> Dict[str, float]:
     return rates
 
 
-def get_currency_table(currencies: list) -> Dict[str, float]:
+def get_currency_table(currencies: Tuple[str, ...]) -> Dict[str, float]:
+    """Get currency exchange rates to GBP with database caching."""
     today = date.today()
 
     rates = _fetch_rates_batch(currencies)
@@ -152,7 +164,7 @@ def get_currency_table(currencies: list) -> Dict[str, float]:
 # Holdings and Instruments
 
 
-def request_json(url: str, headers: dict, retries: int = REQUEST_RETRY):
+def request_json(url: str, headers: Dict[str, str], retries: int = REQUEST_RETRY) -> TRADING212_API_RESPONSE:
     """Make HTTP request with retries."""
     for attempt in range(retries):
         try:
@@ -167,7 +179,7 @@ def request_json(url: str, headers: dict, retries: int = REQUEST_RETRY):
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
 
 
-def fetch_holdings():
+def fetch_holdings() -> TRADING212_API_RESPONSE:
     """Fetch portfolio holdings from Trading212 API."""
     logging.info("Fetching portfolio from Trading212 API")
     url = "https://live.trading212.com/api/v0/equity/portfolio"
@@ -177,16 +189,17 @@ def fetch_holdings():
     return holdings
 
 
-def update_holdings(holdings, instruments: list, yahoo_datas):
+def update_holdings(holdings: TRADING212_API_RESPONSE, instruments: List[Instrument], yahoo_datas: Dict[str, Any]) -> List[HoldingDaily]:
+    """Update holdings in the database."""
     created = 0
     updated = 0
     result = []
     current_date = datetime.now(timezone.utc).date()
-    instruments = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
+    instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
 
     with get_session() as session:
         for holding in holdings:
-            yahoo_symbol = instruments[holding["ticker"]].yahoo_symbol
+            yahoo_symbol = instruments_dict[holding["ticker"]].yahoo_symbol
             yahoo_data = yahoo_datas[yahoo_symbol]
 
             stmt = (
@@ -245,7 +258,8 @@ def update_holdings(holdings, instruments: list, yahoo_datas):
     return result
 
 
-def update_instruments(tickers: set[str]):
+def update_instruments(tickers: Set[str]) -> List[Instrument]:
+    """Update instruments in the database from Trading212 API."""
     logging.info(f"Fetching instruments from Trading212 API")
     instruments = []
     url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
@@ -284,7 +298,8 @@ def update_instruments(tickers: set[str]):
     return instruments
 
 
-def update_prices(session, tickers: list[str], start):
+def update_prices(session: Session, tickers: List[str], start: date) -> None:
+    """Update price data from Yahoo Finance."""
     for i in range(0, len(tickers), BATCH_SIZE_YF):
         sub = tickers[i:i + BATCH_SIZE_YF]
         logging.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), sub)
@@ -332,7 +347,8 @@ def update_prices(session, tickers: list[str], start):
                     session.add(prices)
 
 
-def get_and_update_prices(tickers: set[str]):
+def get_and_update_prices(tickers: Set[str]) -> None:
+    """Get and update price data for all tickers."""
     today = datetime.now().date()
 
     with get_session() as session:
@@ -357,7 +373,7 @@ def get_and_update_prices(tickers: set[str]):
             update_prices(session, new_tickers, start)
 
 
-def get_yahoo_ticker_data(symbols: list[str]):
+def get_yahoo_ticker_data(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     """Update Yahoo Finance data for all holdings."""
     logging.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
     yahoo_data = {}
@@ -375,19 +391,19 @@ def get_yahoo_ticker_data(symbols: list[str]):
     return yahoo_data
 
 
-def save_portfolio_snapshots(holdings, instruments, rates, yahoo_data) -> None:
-    """Save portfolio snapshot."""
+def save_portfolio_snapshots(holdings: List[HoldingDaily], instruments: List[Instrument], rates: Dict[str, float], yahoo_data: Dict[str, Any]) -> None:
+    """Save portfolio snapshot to database."""
     snapshot_date = datetime.now().date()
     total_value = 0
     total_profit = 0
-    country_allocation = defaultdict(float)
-    sector_allocation = defaultdict(float)
-    etf_equity_allocation = defaultdict(float)
+    country_allocation: Dict[str, float] = defaultdict(float)
+    sector_allocation: Dict[str, float] = defaultdict(float)
+    etf_equity_allocation: Dict[str, float] = defaultdict(float)
 
-    instruments = {i.id: i for i in instruments}
+    instruments_dict = {i.id: i for i in instruments}
 
     for h in holdings:
-        instrument = instruments[h.instrument_id]
+        instrument = instruments_dict[h.instrument_id]
         yahoo_symbol = instrument.yahoo_symbol
         info = yahoo_data[yahoo_symbol]
 
@@ -444,10 +460,10 @@ def save_portfolio_snapshots(holdings, instruments, rates, yahoo_data) -> None:
             session.add(snapshot)
 
 
-def update_holdings_and_instruments(rates):
-
-    holdings = fetch_holdings()
-    t212_codes = set(h["ticker"] for h in holdings)
+def update_holdings_and_instruments(rates: Dict[str, float]) -> None:
+    """Update holdings and instruments in the database."""
+    holdings_from_api = fetch_holdings()
+    t212_codes = set(h["ticker"] for h in holdings_from_api)
 
     # Update instruments
     instruments = update_instruments(t212_codes)
@@ -457,17 +473,18 @@ def update_holdings_and_instruments(rates):
     get_and_update_prices(yahoo_symbols)
 
     yahoo_data = get_yahoo_ticker_data(list(yahoo_symbols))
-    holdings = update_holdings(holdings, instruments, yahoo_data)
+    holdings = update_holdings(holdings_from_api, instruments, yahoo_data)
 
     save_portfolio_snapshots(holdings, instruments, rates, yahoo_data)
 
 
 if __name__ == "__main__":
+    """update all data in the database."""
     logging.getLogger().setLevel(logging.INFO)
     logging.info("Starting data update process")
 
     # 1. Update rates
-    rates = get_currency_table(CURRENCIES)
+    _rates = get_currency_table(CURRENCIES)
 
     # 2. Update holdings and instruments
-    update_holdings_and_instruments(rates)
+    update_holdings_and_instruments(_rates)

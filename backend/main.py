@@ -11,6 +11,7 @@ import os
 from datetime import datetime, timedelta, date, timezone
 from functools import lru_cache
 from contextlib import asynccontextmanager
+from typing import Dict, Any, List, AsyncGenerator
 
 
 # Third-party imports
@@ -24,10 +25,10 @@ from sqlalchemy.orm import selectinload
 from config import PRICE_FIELD, CURRENCIES
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from models import HoldingDaily, Instrument, PortfolioDaily, PricesDaily, CurrencyRateDaily
-from screener_config import get_screener_config
-from utils.screener import calculate_screener_results
-from utils.technical import calculate_technical_indicators_for_symbols
-from utils.portfolio import weighted_add
+from backend.screener_config import get_screener_config
+from backend.utils.screener import calculate_screener_results
+from backend.utils.technical import calculate_technical_indicators_for_symbols
+from backend.utils.portfolio import weighted_add
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,7 +51,8 @@ app.add_middleware(
 
 
 @lru_cache(maxsize=1)
-def _engine_and_factory():
+def _get_session_factory() -> async_sessionmaker:
+    """Create and cache the async database session factory."""
     db_url = "postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}".format(
         db_name=os.getenv("DB_NAME", "trading212_portfolio"),
         db_password=os.getenv("DB_PASSWORD"),
@@ -59,14 +61,14 @@ def _engine_and_factory():
         db_port=os.getenv("DB_PORT", "5432"),
     )
     engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
-    AsyncSessionLocal = async_sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
-    return AsyncSessionLocal
+    return async_sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
 @asynccontextmanager
-async def get_session():
-    AsyncSessionLocal = _engine_and_factory()
+async def get_session() -> AsyncGenerator[Any, None]:
+    """Async context manager for database sessions."""
+    AsyncSessionLocal = _get_session_factory()
     session = AsyncSessionLocal()
     try:
         yield session
@@ -78,7 +80,8 @@ async def get_session():
         await session.close()
 
 
-async def get_rates():
+async def get_rates() -> Dict[str, float]:
+    """Get current currency exchange rates to GBP."""
     table = {"GBX": 0.01, "GBP": 1.0}
 
     async with get_session() as session:
@@ -97,14 +100,14 @@ async def get_rates():
 
 
 @app.get("/")
-async def root():
+async def root() -> Dict[str, str]:
     """Health check endpoint."""
     return {"message": "Trading212 Portfolio API", "status": "running"}
 
 
 @app.get("/api/portfolio/current")
-async def get_current_portfolio():
-    """Get current portfolio holdings."""
+async def get_current_portfolio() -> Dict[str, Any]:
+    """Get current portfolio holdings with detailed information."""
     try:
         async with get_session() as session:
             # Get the latest snapshot date
@@ -198,14 +201,14 @@ async def get_current_portfolio():
                     "revenue_growth": info["revenueGrowth"] * 100.0 if info.get("revenueGrowth") else None,  # Keep full precision for screener evaluation
                     "return_on_assets": info["returnOnAssets"] * 100.0 if info.get("returnOnAssets") else None,  # Keep full precision for screener evaluation
                     "return_on_equity": info["returnOnEquity"] * 100.0 if info.get("returnOnEquity") else None,  # Keep full precision for screener evaluation
-                    "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100 if (info.get("freeCashflow") and info.get("marketCap") and info.get("marketCap") > 0) else None,  # FCF / Market Cap (owner's yield)
+                    "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100 if (info.get("freeCashflow") and info.get("marketCap", 0) > 0) else None,  # FCF / Market Cap (owner's yield)
                     "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
                     "recommendation_key": info.get("recommendationKey"),
                     "number_of_analyst_opinions": info.get("numberOfAnalystOpinions"),
                     "fifty_two_week_high_distance": round(info["fiftyTwoWeekHighChangePercent"] * 100) if info.get("fiftyTwoWeekHighChangePercent") else None,  # Distance from 52-week high (negative = below high)
                     "fifty_two_week_change": round(info.get("52WeekChange", 0) * 100) if info.get("52WeekChange") is not None else None,  # True YoY change vs 52 weeks ago (positive = up from 52w ago)
                     "short_percent_of_float": info["shortPercentOfFloat"] * 100 if info.get("shortPercentOfFloat") else None,  # Keep full precision for screener evaluation
-                    "rsi": rsi_data.get(holding.instrument.yahoo_symbol),  # RSI calculated from price history
+                    "rsi": round(rsi_data[holding.instrument.yahoo_symbol]),  # RSI calculated from price history
                     "rule_of_40_score": (info.get("revenueGrowth", 0) * 100) + (info.get("profitMargins", 0) * 100) if (info.get("revenueGrowth") is not None and info.get("profitMargins") is not None) else None,  # Keep full precision
                     # Technical indicators calculated from price history
                     "sma_20": technical_data.get(holding.instrument.yahoo_symbol, {}).get('sma_20'),
@@ -237,8 +240,8 @@ async def get_current_portfolio():
 
 
 @app.get("/api/portfolio/summary")
-async def get_portfolio_summary():
-    """Get portfolio summary statistics."""
+async def get_portfolio_summary() -> Dict[str, Any]:
+    """Get portfolio summary statistics including total value, profit, and win rate."""
     try:
         async with get_session() as session:
             # Get the latest portfolio snapshot
@@ -284,7 +287,7 @@ async def get_portfolio_summary():
 
 
 @app.get("/api/portfolio/allocations")
-async def get_portfolio_allocations():
+async def get_portfolio_allocations() -> Dict[str, Any]:
     """Get portfolio allocations by sector and country."""
     try:
         async with get_session() as session:
@@ -320,8 +323,8 @@ async def get_portfolio_allocations():
             # Get currency rates
             currency_rates = await get_rates()
 
-            sector_allocation = {}
-            country_allocation = {}
+            sector_allocation: Dict[str, float] = {}
+            country_allocation: Dict[str, float] = {}
 
             for holding in holdings:
                 # Calculate GBP value (same as terminal)
@@ -361,7 +364,7 @@ async def get_portfolio_allocations():
 
 
 @app.get("/api/portfolio/history")
-async def get_portfolio_history(days: int = 30):
+async def get_portfolio_history(days: int = 30) -> Dict[str, Any]:
     """Get portfolio history for the last N days."""
     try:
         async with get_session() as session:
@@ -394,7 +397,7 @@ async def get_portfolio_history(days: int = 30):
 
 
 @app.get("/api/instruments")
-async def get_instruments():
+async def get_instruments() -> Dict[str, List[Dict[str, Any]]]:
     """Get all instruments in the database for autocomplete."""
     try:
         async with get_session() as session:
@@ -422,19 +425,19 @@ async def get_instruments():
 
 
 @app.get("/api/chart/prices")
-async def get_chart_prices(symbols: str, days: int = 30):
+async def get_chart_prices(symbols: str, days: int = 30) -> Dict[str, Any]:
     """Get daily price data for charting."""
     return await get_chart_metric(symbols, days, "price")
 
 
 @app.get("/api/chart/metrics")
-async def get_chart_metrics(symbols: str, days: int = 30, metric: str = "price"):
-    """Get chart data for different metrics: price, pe_ratio, institutional, profit, profit_pct."""
+async def get_chart_metrics(symbols: str, days: int = 30, metric: str = "price") -> Dict[str, Any]:
+    """Get chart data for different metrics."""
     return await get_chart_metric(symbols, days, metric)
 
 
 @app.get("/api/screeners")
-async def get_available_screeners():
+async def get_available_screeners() -> Dict[str, Any]:
     """Get list of all available screeners with their configurations."""
     try:
         screener_config = get_screener_config()
@@ -444,7 +447,7 @@ async def get_available_screeners():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def get_chart_metric(symbols: str, days: int, metric: str):
+async def get_chart_metric(symbols: str, days: int, metric: str) -> Dict[str, Any]:
     """Get chart data for a specific metric."""
     # Parse symbols from comma-separated string
     symbol_list = [s.strip().upper() for s in symbols.split(',') if s.strip()]
@@ -471,9 +474,9 @@ async def get_chart_metric(symbols: str, days: int, metric: str):
             price_data = result.all()
 
         # Convert to chart format
-        chart_data = {}
+        chart_data: Dict[str, List[Dict[str, str | float]]] = defaultdict(list)
         for row in price_data:
-            chart_data.setdefault(row.symbol, []).append({
+            chart_data[row.symbol].append({
                 "date": row.date.isoformat(),
                 "value": row.price
             })
@@ -540,7 +543,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str):
 
 
 @app.get("/api/market/top-movers")
-async def get_top_movers(period: str = "1d", limit: int = 10):
+async def get_top_movers(period: str = "1d", limit: int = 10) -> Dict[str, Any]:
     """Get top movers (gainers and losers) for a given period."""
     try:
         # Validate period parameter

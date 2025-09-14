@@ -5,22 +5,18 @@ Defines the database schema using SQLAlchemy ORM.
 """
 
 from datetime import datetime, timezone
-import os
-from typing import Optional
 
 from sqlalchemy import (
     Column, Integer, BigInteger, String, Float, DateTime, Date,
-    Index, UniqueConstraint, ForeignKey, create_engine, MetaData
+    Index, UniqueConstraint, ForeignKey
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
+from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.dialects.postgresql import JSONB
 
-# Create base class for declarative models
-Base = declarative_base()
 
-# Metadata for Alembic migrations
-metadata = MetaData()
+class Base(DeclarativeBase):
+    """Base class for declarative models."""
+    pass
 
 
 class PricesDaily(Base):
@@ -157,58 +153,3 @@ class PortfolioDaily(Base):
 
     def __repr__(self):
         return f"<PortfolioSnapshot(date='{self.date}', value={self.total_value_gbp})>"
-
-
-# Database connection and session management
-class DatabaseManager:
-    """Manages database connections and sessions."""
-
-    def __init__(self, db_url: str):
-        self.engine = create_engine(db_url, echo=False)
-        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
-
-    def create_tables(self):
-        """Create all tables in the database."""
-        Base.metadata.create_all(bind=self.engine)
-
-    def get_session(self) -> Session:
-        """Get a new database session."""
-        return self.SessionLocal()
-
-    def close(self):
-        """Close the database engine."""
-        self.engine.dispose()
-
-
-def get_db_url() -> str:
-    """Construct database URL from environment variables."""
-    db_name = os.getenv("DB_NAME", "trading212_portfolio")
-    db_password = os.getenv("DB_PASSWORD")
-    db_user = os.getenv("DB_USER", "postgres")
-    db_host = os.getenv("DB_HOST", "localhost")
-    db_port = os.getenv("DB_PORT", "5432")
-
-    if not db_password:
-        raise ValueError("DB_PASSWORD environment variable is required")
-
-    return f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-
-
-# Global database manager instance
-_db_manager: Optional[DatabaseManager] = None
-
-
-def get_db_manager() -> DatabaseManager:
-    """Get or create the global database manager instance."""
-    global _db_manager
-    if _db_manager is None:
-        db_url = get_db_url()
-        _db_manager = DatabaseManager(db_url)
-    return _db_manager
-
-
-def init_database():
-    """Initialize the database with tables."""
-    db_manager = get_db_manager()
-    db_manager.create_tables()
-    return db_manager
