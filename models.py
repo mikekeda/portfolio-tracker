@@ -7,20 +7,21 @@ Defines the database schema using SQLAlchemy ORM.
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List
 
-from sqlalchemy import (BigInteger, Date, DateTime, Float, ForeignKey, Index,
-                        Integer, String, UniqueConstraint)
+from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     """Base class for declarative models."""
+
     pass
 
 
 class PricesDaily(Base):
     """Daily stock price data from Yahoo Finance."""
-    __tablename__ = 'prices_daily'
+
+    __tablename__ = "prices_daily"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -35,7 +36,9 @@ class PricesDaily(Base):
     volume: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     # Metadata
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Constraints
     __table_args__ = (
@@ -49,7 +52,8 @@ class PricesDaily(Base):
 
 class Instrument(Base):
     """Trading212 instrument metadata."""
-    __tablename__ = 'instruments'
+
+    __tablename__ = "instruments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     t212_code: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
@@ -66,7 +70,9 @@ class Instrument(Base):
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Relationships
     holdings: Mapped[List["HoldingDaily"]] = relationship(back_populates="instrument")
@@ -77,10 +83,11 @@ class Instrument(Base):
 
 class HoldingDaily(Base):
     """Portfolio holdings from Trading212."""
-    __tablename__ = 'holdings_daily'
+
+    __tablename__ = "holdings_daily"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey('instruments.id'), nullable=False)
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False)
 
     # Snapshot timestamp (when this holding was recorded)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
@@ -99,7 +106,9 @@ class HoldingDaily(Base):
     beta: Mapped[float] = mapped_column(Float, nullable=True)
 
     # Metadata
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Relationships
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="holdings")
@@ -110,7 +119,8 @@ class HoldingDaily(Base):
 
 class CurrencyRateDaily(Base):
     """Currency exchange rates cache."""
-    __tablename__ = 'currency_rates_daily'
+
+    __tablename__ = "currency_rates_daily"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
@@ -119,12 +129,12 @@ class CurrencyRateDaily(Base):
     rate: Mapped[float] = mapped_column(Float, nullable=False)
 
     # Metadata
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     # Constraints
-    __table_args__ = (
-        UniqueConstraint('from_currency', 'to_currency', 'date', name='uq_currency_rate_date'),
-    )
+    __table_args__ = (UniqueConstraint("from_currency", "to_currency", "date", name="uq_currency_rate_date"),)
 
     def __repr__(self) -> str:
         return f"<CurrencyRate({self.from_currency}->{self.to_currency}={self.rate})>"
@@ -132,7 +142,8 @@ class CurrencyRateDaily(Base):
 
 class PortfolioDaily(Base):
     """Portfolio snapshots for historical tracking."""
-    __tablename__ = 'portfolio_daily'
+
+    __tablename__ = "portfolio_daily"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, unique=True, index=True)
@@ -148,7 +159,9 @@ class PortfolioDaily(Base):
     etf_equity_split: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
 
     # Metadata
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+    )
 
     def __repr__(self) -> str:
         return f"<PortfolioSnapshot(date='{self.date}', value={self.total_value_gbp})>"

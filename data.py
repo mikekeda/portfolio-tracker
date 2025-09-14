@@ -1,9 +1,9 @@
 # ─── Exchange‑suffix + alias tables ───────────────────────────────────────────
 STOCKS_SUFFIX: dict[str, str] = {
-    "US": "",      # NYSE / Nasdaq
-    "l": ".L",    # London
-    "p": ".PA",   # Paris
-    "d": ".DE",   # Xetra
+    "US": "",  # NYSE / Nasdaq
+    "l": ".L",  # London
+    "p": ".PA",  # Paris
+    "d": ".DE",  # Xetra
     "CA": ".TO",  # Toronto
     "ST": ".ST",  # Stockholm
     "BR": ".BR",  # Brussels
@@ -35,14 +35,14 @@ STOCKS_DELISTED: set[str] = {"HYUDl_EQ"}
 
 
 ETF_COUNTRY_ALLOCATION = {
-    "XUTC.L": {                 # Xtrackers MSCI USA IT
+    "XUTC.L": {  # Xtrackers MSCI USA IT
         "United States": 97.88,
         "Ireland": 1.40,
         "Netherlands": 0.34,
         "Australia": 0.20,
         "Singapore": 0.18,
     },
-    "XNAS.L": {                 # Xtrackers Nasdaq-100
+    "XNAS.L": {  # Xtrackers Nasdaq-100
         "United States": 95.00,
         "United Kingdom": 1.92,
         "Canada": 0.99,
@@ -50,7 +50,7 @@ ETF_COUNTRY_ALLOCATION = {
         "Uruguay": 0.74,
         "Other": 0.61,
     },
-    "R2SC.L": {                 # SPDR Russell 2000 US Small Cap
+    "R2SC.L": {  # SPDR Russell 2000 US Small Cap
         "United States": 94.75,
         "Bermuda": 0.84,
         "Cayman Islands": 0.65,
@@ -58,10 +58,10 @@ ETF_COUNTRY_ALLOCATION = {
         "United Kingdom": 0.55,
         "Other": 2.64,
     },
-    "UKDV.L": {                 # SPDR UK Dividend Aristocrats
+    "UKDV.L": {  # SPDR UK Dividend Aristocrats
         "United Kingdom": 100.00,
     },
-    "VUAG.L": {                 # Vanguard S&P 500 (USD Acc)
+    "VUAG.L": {  # Vanguard S&P 500 (USD Acc)
         "United States": 97.48,
         "Ireland": 1.40,
         "United Kingdom": 0.55,
@@ -69,10 +69,10 @@ ETF_COUNTRY_ALLOCATION = {
         "Netherlands": 0.11,
         "Other": 0.2,
     },
-    "R1GR.L": {                 # iShares Russell 1000 Growth
+    "R1GR.L": {  # iShares Russell 1000 Growth
         "United States": 100.00,
     },
-    "CIBR.L": {                 # First Trust NASDAQ Cybersecurity
+    "CIBR.L": {  # First Trust NASDAQ Cybersecurity
         "United States": 91.70,
         "Israel": 3.58,
         "Canada": 2.34,
@@ -80,7 +80,7 @@ ETF_COUNTRY_ALLOCATION = {
         "United Kingdom": 0.22,
         "Other": 0.01,
     },
-    "BOTZ.L": {                 # Global X Robotics & AI UCITS
+    "BOTZ.L": {  # Global X Robotics & AI UCITS
         "United States": 49.7,
         "Japan": 28.8,
         "Switzerland": 9.5,

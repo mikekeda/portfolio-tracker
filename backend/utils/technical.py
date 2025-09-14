@@ -22,7 +22,7 @@ def calculate_rsi(prices: List[float], period: int = 14) -> float:
     # Calculate price changes
     deltas = []
     for i in range(1, len(prices)):
-        deltas.append(prices[i] - prices[i-1])
+        deltas.append(prices[i] - prices[i - 1])
 
     # Separate gains and losses
     gains = [max(delta, 0) for delta in deltas]
@@ -99,7 +99,7 @@ def calculate_golden_cross_days(prices: List[float]) -> Optional[int]:
             prev_sma200 = sma_200_values[current_idx - 1]
 
             # Golden cross: SMA50 crosses above SMA200
-            if (current_sma50 > current_sma200 and prev_sma50 <= prev_sma200):
+            if current_sma50 > current_sma200 and prev_sma50 <= prev_sma200:
                 return days_back
 
     # No golden cross found in last 60 days
@@ -132,13 +132,15 @@ def calculate_bb_width(prices: List[float], period: int) -> Optional[float]:
     # Calculate standard deviation
     recent_prices = prices[-period:]
     variance = sum((price - sma) ** 2 for price in recent_prices) / period
-    std_dev = variance ** 0.5
+    std_dev = variance**0.5
 
     # BB width = (2 * std_dev) / sma
     return (2 * std_dev) / sma if sma != 0 else None
 
 
-def calculate_bb_width_percentile(prices: List[float], period: int, lookback: int, percentile: float) -> Optional[float]:
+def calculate_bb_width_percentile(
+    prices: List[float], period: int, lookback: int, percentile: float
+) -> Optional[float]:
     """Calculate BB width percentile over the last lookback days only."""
     if len(prices) < max(period, lookback):
         return None
@@ -150,7 +152,7 @@ def calculate_bb_width_percentile(prices: List[float], period: int, lookback: in
     start_idx = max(period - 1, len(prices) - lookback)
 
     for i in range(start_idx, len(prices)):
-        bb_width = calculate_bb_width(prices[:i+1], period)
+        bb_width = calculate_bb_width(prices[: i + 1], period)
         if bb_width is not None:
             bb_widths.append(bb_width)
 
@@ -174,10 +176,13 @@ async def calculate_volume_ratio_from_db(symbol: str, session: AsyncSession) -> 
 
         # Query volume data directly from database
         result = await session.execute(
-            select(PricesDaily.volume).filter(
+            select(PricesDaily.volume)
+            .filter(
                 PricesDaily.symbol == symbol,
                 PricesDaily.date <= end_date.date(),
-            ).order_by(PricesDaily.date.desc()).limit(21)
+            )
+            .order_by(PricesDaily.date.desc())
+            .limit(21)
         )
         volumes = result.scalars().all()
 
@@ -202,9 +207,12 @@ async def calculate_volume_contraction_from_db(symbol: str, session: AsyncSessio
     try:
         # Query volume data directly from database
         rows = await session.execute(
-            select(PricesDaily.volume).filter(
+            select(PricesDaily.volume)
+            .filter(
                 PricesDaily.symbol == symbol,
-            ).order_by(PricesDaily.date.desc()).limit(60)
+            )
+            .order_by(PricesDaily.date.desc())
+            .limit(60)
         )
         volumes = rows.scalars().all()
 
@@ -255,7 +263,9 @@ def calculate_relative_strength_vs_spy(symbol_prices: List[float], spy_prices: L
         return None
 
 
-async def calculate_technical_indicators_for_symbols(symbols: List[str], session: AsyncSession) -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
+async def calculate_technical_indicators_for_symbols(
+    symbols: List[str], session: AsyncSession
+) -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
     """Calculate technical indicators for a list of symbols using available database data."""
     rsi_data: Dict[str, float] = {}
     technical_data: Dict[str, Dict[str, Any]] = {}
@@ -268,11 +278,10 @@ async def calculate_technical_indicators_for_symbols(symbols: List[str], session
         price_result = await session.execute(
             select(
                 PricesDaily.symbol,
-                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
-            ).filter(
-                PricesDaily.symbol.in_(symbols),
-                PricesDaily.date >= datetime.now().date() - timedelta(days=420)
-            ).order_by(PricesDaily.date)
+                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price"),
+            )
+            .filter(PricesDaily.symbol.in_(symbols), PricesDaily.date >= datetime.now().date() - timedelta(days=420))
+            .order_by(PricesDaily.date)
         )
         price_data = price_result.all()
 
@@ -283,12 +292,9 @@ async def calculate_technical_indicators_for_symbols(symbols: List[str], session
 
         # Get SPY data for relative strength calculation
         spy_result = await session.execute(
-            select(
-                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label('price')
-            ).filter(
-                PricesDaily.symbol == BENCH,
-                PricesDaily.date >= datetime.now().date() - timedelta(days=420)
-            ).order_by(PricesDaily.date)
+            select(getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price"))
+            .filter(PricesDaily.symbol == BENCH, PricesDaily.date >= datetime.now().date() - timedelta(days=420))
+            .order_by(PricesDaily.date)
         )
         spy_data = spy_result.all()
         spy_prices = [row.price for row in spy_data]
@@ -310,16 +316,20 @@ async def calculate_technical_indicators_for_symbols(symbols: List[str], session
                 rs_6m_vs_spy = calculate_relative_strength_vs_spy(symbol_prices, spy_prices)
 
                 technical_data[symbol] = {
-                    'sma_20': calculate_sma(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
-                    'sma_50': calculate_sma(symbol_prices, 50) if len(symbol_prices) >= 50 else None,
-                    'sma_200': calculate_sma(symbol_prices, 200) if len(symbol_prices) >= 200 else None,
-                    'rs_6m_vs_spy': rs_6m_vs_spy,
-                    'gc_days_since': calculate_golden_cross_days(symbol_prices) if len(symbol_prices) >= 260 else None,
-                    'gc_within_sma50_frac': calculate_gc_within_sma50(symbol_prices) if len(symbol_prices) >= 50 else None,
-                    'bb_width_20': calculate_bb_width(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
-                    'bb_width_20_p30_6m': calculate_bb_width_percentile(symbol_prices, 20, 126, 0.30) if len(symbol_prices) >= 126 else None,
-                    'vol20_lt_vol60': vol20_lt_vol60,
-                    'volume_ratio': volume_ratio
+                    "sma_20": calculate_sma(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
+                    "sma_50": calculate_sma(symbol_prices, 50) if len(symbol_prices) >= 50 else None,
+                    "sma_200": calculate_sma(symbol_prices, 200) if len(symbol_prices) >= 200 else None,
+                    "rs_6m_vs_spy": rs_6m_vs_spy,
+                    "gc_days_since": calculate_golden_cross_days(symbol_prices) if len(symbol_prices) >= 260 else None,
+                    "gc_within_sma50_frac": calculate_gc_within_sma50(symbol_prices)
+                    if len(symbol_prices) >= 50
+                    else None,
+                    "bb_width_20": calculate_bb_width(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
+                    "bb_width_20_p30_6m": calculate_bb_width_percentile(symbol_prices, 20, 126, 0.30)
+                    if len(symbol_prices) >= 126
+                    else None,
+                    "vol20_lt_vol60": vol20_lt_vol60,
+                    "volume_ratio": volume_ratio,
                 }
     except Exception as e:
         logger.warning(f"Failed to calculate technical indicators: {e}")

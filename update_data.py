@@ -11,8 +11,7 @@ from collections import defaultdict
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
-from typing import (Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias,
-                    TypedDict, Union, cast)
+from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, TypedDict, Union, cast
 
 import pandas as pd
 import requests
@@ -21,24 +20,23 @@ from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql import func
 
-from config import (BATCH_SIZE_YF, CURRENCIES, HISTORY_YEARS, PATTERN_MULTI,
-                    REQUEST_RETRY, TRADING212_API_KEY)
-from data import (ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION,
-                  STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX)
-from models import (CurrencyRateDaily, HoldingDaily, Instrument,
-                    PortfolioDaily, PricesDaily)
+from config import BATCH_SIZE_YF, CURRENCIES, HISTORY_YEARS, PATTERN_MULTI, REQUEST_RETRY, TRADING212_API_KEY
+from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
+from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 
 
 # GET /api/v0/equity/metadata/instruments
 class T212Instrument(TypedDict):
-    addedOn: str                  # ISO8601
-    currencyCode: str             # e.g. "USD"
+    addedOn: str  # ISO8601
+    currencyCode: str  # e.g. "USD"
     isin: str
     maxOpenQuantity: int
     name: str
     shortName: str
-    ticker: str                   # e.g. "AAPL_US_EQ"
-    type: Literal["STOCK", "ETF", "FUND", "ETC", "ETN", "ADR", "REIT", "ETF_LEVERAGED", "ETF_INVERSE", "ETF_COMPLEX"]  # expand if needed
+    ticker: str  # e.g. "AAPL_US_EQ"
+    type: Literal[
+        "STOCK", "ETF", "FUND", "ETC", "ETN", "ADR", "REIT", "ETF_LEVERAGED", "ETF_INVERSE", "ETF_COMPLEX"
+    ]  # expand if needed
     workingScheduleId: int
 
 
@@ -48,7 +46,7 @@ class T212Position(TypedDict):
     currentPrice: float
     frontend: Literal["API", "WEB", "MOBILE"]  # docs example shows "API"
     fxPpl: float
-    initialFillDate: str          # ISO8601
+    initialFillDate: str  # ISO8601
     maxBuy: float
     maxSell: float
     pieQuantity: float
@@ -130,9 +128,9 @@ def _fetch_rates_batch(currencies: Tuple[str, ...]) -> Dict[str, float]:
 
         # Convert from GBP to other currencies (invert the rates)
         for currency in currencies:
-            if currency in data['rates']:
+            if currency in data["rates"]:
                 # Invert the rate since we want TO GBP, not FROM GBP
-                rates[currency] = 1.0 / data['rates'][currency]
+                rates[currency] = 1.0 / data["rates"][currency]
             else:
                 rates[currency] = None
 
@@ -147,8 +145,8 @@ def _fetch_rates_batch(currencies: Tuple[str, ...]) -> Dict[str, float]:
                 response.raise_for_status()
                 data = response.json()
 
-                if 'rates' in data and 'GBP' in data['rates']:
-                    rates[currency] = data['rates']['GBP']
+                if "rates" in data and "GBP" in data["rates"]:
+                    rates[currency] = data["rates"]["GBP"]
                 else:
                     rates[currency] = None
 
@@ -168,11 +166,15 @@ def get_currency_table(currencies: Tuple[str, ...]) -> Dict[str, float]:
 
     with get_session() as session:
         for currency in currencies:
-            existing = session.query(CurrencyRateDaily).filter(
-                CurrencyRateDaily.from_currency == currency,
-                CurrencyRateDaily.to_currency == "GBP",
-                CurrencyRateDaily.date == today
-            ).first()
+            existing = (
+                session.query(CurrencyRateDaily)
+                .filter(
+                    CurrencyRateDaily.from_currency == currency,
+                    CurrencyRateDaily.to_currency == "GBP",
+                    CurrencyRateDaily.date == today,
+                )
+                .first()
+            )
 
             if existing:
                 logging.info(f"Updated rate {currency}: {rates[currency]}")
@@ -180,10 +182,7 @@ def get_currency_table(currencies: Tuple[str, ...]) -> Dict[str, float]:
                 existing.updated_at = func.now()
             else:
                 currency_rate = CurrencyRateDaily(
-                    from_currency=currency,
-                    to_currency="GBP",
-                    rate=rates[currency],
-                    date=today
+                    from_currency=currency, to_currency="GBP", rate=rates[currency], date=today
                 )
                 session.add(currency_rate)
 
@@ -206,7 +205,7 @@ def request_json(url: str, headers: Dict[str, str], retries: int = REQUEST_RETRY
         except requests.RequestException as exc:
             logging.warning(f"Request error for {url}: {exc}")
         if attempt < retries - 1:
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
 
 
@@ -223,7 +222,9 @@ def fetch_holdings() -> List[T212Position]:
     return holdings
 
 
-def update_holdings(holdings: List[T212Position], instruments: List[Instrument], yahoo_datas: Dict[str, Any]) -> List[HoldingDaily]:
+def update_holdings(
+    holdings: List[T212Position], instruments: List[Instrument], yahoo_datas: Dict[str, Any]
+) -> List[HoldingDaily]:
     """Update holdings in the database."""
     created = 0
     updated = 0
@@ -249,18 +250,19 @@ def update_holdings(holdings: List[T212Position], instruments: List[Instrument],
             )
             instrument_id = session.execute(stmt).scalar_one()
 
-            existing_holding = session.query(HoldingDaily).filter(
-                HoldingDaily.instrument_id == instrument_id,
-                HoldingDaily.date == current_date
-            ).first()
+            existing_holding = (
+                session.query(HoldingDaily)
+                .filter(HoldingDaily.instrument_id == instrument_id, HoldingDaily.date == current_date)
+                .first()
+            )
 
             if existing_holding:
                 # Update existing holding
-                existing_holding.quantity = holding['quantity']
-                existing_holding.avg_price = holding['averagePrice']
-                existing_holding.current_price = holding['currentPrice']
-                existing_holding.ppl = holding['ppl']
-                existing_holding.fx_ppl = holding['fxPpl'] or 0
+                existing_holding.quantity = holding["quantity"]
+                existing_holding.avg_price = holding["averagePrice"]
+                existing_holding.current_price = holding["currentPrice"]
+                existing_holding.ppl = holding["ppl"]
+                existing_holding.fx_ppl = holding["fxPpl"] or 0
                 existing_holding.market_cap = yahoo_data.get("marketCap")
                 existing_holding.pe_ratio = yahoo_data.get("trailingPE")
                 existing_holding.beta = yahoo_data.get("beta")
@@ -272,16 +274,16 @@ def update_holdings(holdings: List[T212Position], instruments: List[Instrument],
                 # Create new holding record
                 new_holding = HoldingDaily(
                     instrument_id=instrument_id,
-                    quantity=holding['quantity'],
-                    avg_price=holding['averagePrice'],
-                    current_price=holding['currentPrice'],
-                    ppl=holding['ppl'],
-                    fx_ppl=holding['fxPpl'] or 0,
+                    quantity=holding["quantity"],
+                    avg_price=holding["averagePrice"],
+                    current_price=holding["currentPrice"],
+                    ppl=holding["ppl"],
+                    fx_ppl=holding["fxPpl"] or 0,
                     market_cap=yahoo_data.get("marketCap"),
                     pe_ratio=yahoo_data.get("trailingPE"),
                     institutional=yahoo_data.get("heldPercentInstitutions"),
                     beta=yahoo_data.get("beta"),
-                    date=current_date
+                    date=current_date,
                 )
                 session.add(new_holding)
                 result.append(new_holding)
@@ -294,7 +296,7 @@ def update_holdings(holdings: List[T212Position], instruments: List[Instrument],
 
 def update_instruments(tickers: Set[str]) -> List[Instrument]:
     """Update instruments in the database from Trading212 API."""
-    logging.info(f"Fetching instruments from Trading212 API")
+    logging.info("Fetching instruments from Trading212 API")
     instruments = []
     url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
     instruments_from_api = cast(
@@ -307,13 +309,11 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
         updated = 0
         for instrument in instruments_from_api:
             if instrument["ticker"] in tickers:
-                existing = session.query(Instrument).filter(
-                    Instrument.t212_code == instrument["ticker"]
-                ).first()
+                existing = session.query(Instrument).filter(Instrument.t212_code == instrument["ticker"]).first()
 
                 if existing:
-                    existing.name = instrument['name']
-                    existing.currency = instrument['currencyCode']
+                    existing.name = instrument["name"]
+                    existing.currency = instrument["currencyCode"]
                     existing.yahoo_symbol = convert_ticker(instrument["ticker"])
                     existing.updated_at = func.now()
                     instruments.append(existing)
@@ -322,8 +322,8 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
                     # Create new instrument only
                     new_instrument = Instrument(
                         t212_code=instrument["ticker"],
-                        name=instrument['name'],
-                        currency=instrument['currencyCode'],
+                        name=instrument["name"],
+                        currency=instrument["currencyCode"],
                         yahoo_symbol=convert_ticker(instrument["ticker"]),
                     )
                     session.add(new_instrument)
@@ -338,7 +338,7 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
 def update_prices(session: Session, tickers: List[str], start: date) -> None:
     """Update price data from Yahoo Finance."""
     for i in range(0, len(tickers), BATCH_SIZE_YF):
-        sub = tickers[i:i + BATCH_SIZE_YF]
+        sub = tickers[i : i + BATCH_SIZE_YF]
         logging.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), sub)
 
         df = yf.download(
@@ -355,31 +355,32 @@ def update_prices(session: Session, tickers: List[str], start: date) -> None:
         for ticker in df.columns.get_level_values(0).unique():
             tdf = df[ticker].dropna(how="all")  # Open/High/Low/Close/Adj Close/Volume
             for dt, row in tdf.iterrows():
-                existing = session.query(PricesDaily).filter(
-                    PricesDaily.symbol == ticker,
-                    PricesDaily.date == dt.date()
-                ).first()
+                existing = (
+                    session.query(PricesDaily)
+                    .filter(PricesDaily.symbol == ticker, PricesDaily.date == dt.date())
+                    .first()
+                )
 
                 if existing:
                     # Update existing record
-                    existing.open_price = float(row['Open'])
-                    existing.high_price = float(row['High'])
-                    existing.low_price = float(row['Low'])
-                    existing.close_price = float(row['Close'])
-                    existing.adj_close_price = float(row['Adj_Close'])
-                    existing.volume = int(row['Volume']) if not pd.isna(row['Volume']) else 0
+                    existing.open_price = float(row["Open"])
+                    existing.high_price = float(row["High"])
+                    existing.low_price = float(row["Low"])
+                    existing.close_price = float(row["Close"])
+                    existing.adj_close_price = float(row["Adj_Close"])
+                    existing.volume = int(row["Volume"]) if not pd.isna(row["Volume"]) else 0
                     existing.updated_at = func.now()
                 else:
                     # Insert new record
                     prices = PricesDaily(
                         symbol=ticker,
                         date=dt.date(),
-                        open_price=float(row['Open']),
-                        high_price=float(row['High']),
-                        low_price=float(row['Low']),
-                        close_price=float(row['Close']),
-                        adj_close_price=float(row['Adj_Close']),
-                        volume=int(row['Volume']) if not pd.isna(row['Volume']) else 0,
+                        open_price=float(row["Open"]),
+                        high_price=float(row["High"]),
+                        low_price=float(row["Low"]),
+                        close_price=float(row["Close"]),
+                        adj_close_price=float(row["Adj_Close"]),
+                        volume=int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
                     )
                     session.add(prices)
 
@@ -389,10 +390,14 @@ def get_and_update_prices(tickers: Set[str]) -> None:
     today = datetime.now().date()
 
     with get_session() as session:
-        existing_prices = session.query(
-            PricesDaily.symbol,
-            func.max(PricesDaily.date).label("max_date"),
-        ).group_by(PricesDaily.symbol).all()
+        existing_prices = (
+            session.query(
+                PricesDaily.symbol,
+                func.max(PricesDaily.date).label("max_date"),
+            )
+            .group_by(PricesDaily.symbol)
+            .all()
+        )
 
         existing_tickers = set(row.symbol for row in existing_prices)
         if existing_tickers:
@@ -417,10 +422,10 @@ def get_yahoo_ticker_data(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 
     # Fetch in batches
     for i in range(0, len(symbols), BATCH_SIZE_YF):
-        batch = symbols[i:i + BATCH_SIZE_YF]
+        batch = symbols[i : i + BATCH_SIZE_YF]
 
         # Use yfinance's batch download capability
-        tickers = yf.Tickers(' '.join(batch))
+        tickers = yf.Tickers(" ".join(batch))
         for symbol in batch:
             info = tickers.tickers[symbol].info
             yahoo_data[symbol] = info
@@ -428,7 +433,9 @@ def get_yahoo_ticker_data(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
     return yahoo_data
 
 
-def save_portfolio_snapshots(holdings: List[HoldingDaily], instruments: List[Instrument], rates: Dict[str, float], yahoo_data: Dict[str, Any]) -> None:
+def save_portfolio_snapshots(
+    holdings: List[HoldingDaily], instruments: List[Instrument], rates: Dict[str, float], yahoo_data: Dict[str, Any]
+) -> None:
     """Save portfolio snapshot to database."""
     snapshot_date = datetime.now().date()
     total_value = 0.0
@@ -470,9 +477,7 @@ def save_portfolio_snapshots(holdings: List[HoldingDaily], instruments: List[Ins
 
     with get_session() as session:
         # Check if snapshot already exists for this date
-        existing_snapshot = session.query(PortfolioDaily).filter(
-            PortfolioDaily.date == snapshot_date
-        ).first()
+        existing_snapshot = session.query(PortfolioDaily).filter(PortfolioDaily.date == snapshot_date).first()
 
         if existing_snapshot:
             # Update existing snapshot
@@ -492,7 +497,7 @@ def save_portfolio_snapshots(holdings: List[HoldingDaily], instruments: List[Ins
                 total_return_pct=return_pct,
                 country_allocation=country_allocation,
                 sector_allocation=sector_allocation,
-                etf_equity_split=etf_equity_allocation
+                etf_equity_split=etf_equity_allocation,
             )
             session.add(snapshot)
 
