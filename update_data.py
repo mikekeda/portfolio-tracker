@@ -12,21 +12,49 @@ import time
 from collections import defaultdict
 from datetime import date, datetime, timezone, timedelta
 from functools import lru_cache
-from typing import Dict, List, Set, Any, Generator, Union, Tuple, TypeAlias
+from typing import cast, Dict, List, Set, Any, Generator, Union, Tuple, TypeAlias, TypedDict, Literal
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine, update
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.sql import func
 import pandas as pd
-import yfinance as yf
+import yfinance as yf  # type: ignore[import-untyped]
 
 from config import TRADING212_API_KEY, REQUEST_RETRY, PATTERN_MULTI, BATCH_SIZE_YF, HISTORY_YEARS, CURRENCIES
 from data import STOCKS_SUFFIX, STOCKS_ALIASES, STOCKS_DELISTED, ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from models import CurrencyRateDaily, Instrument, PricesDaily, HoldingDaily, PortfolioDaily
 
 
-TRADING212_API_RESPONSE: TypeAlias = List[Dict[str, Union[str, float, int]]]
+# GET /api/v0/equity/metadata/instruments
+class T212Instrument(TypedDict):
+    addedOn: str                  # ISO8601
+    currencyCode: str             # e.g. "USD"
+    isin: str
+    maxOpenQuantity: int
+    name: str
+    shortName: str
+    ticker: str                   # e.g. "AAPL_US_EQ"
+    type: Literal["STOCK", "ETF", "FUND", "ETC", "ETN", "ADR", "REIT", "ETF_LEVERAGED", "ETF_INVERSE", "ETF_COMPLEX"]  # expand if needed
+    workingScheduleId: int
+
+
+# GET /api/v0/equity/portfolio
+class T212Position(TypedDict):
+    averagePrice: float
+    currentPrice: float
+    frontend: Literal["API", "WEB", "MOBILE"]  # docs example shows "API"
+    fxPpl: float
+    initialFillDate: str          # ISO8601
+    maxBuy: float
+    maxSell: float
+    pieQuantity: float
+    ppl: float
+    quantity: float
+    ticker: str
+
+
+TRADING212_API_RESPONSE: TypeAlias = List[Union[T212Instrument, T212Position]]
 
 
 @lru_cache(maxsize=1)
@@ -179,17 +207,20 @@ def request_json(url: str, headers: Dict[str, str], retries: int = REQUEST_RETRY
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
 
 
-def fetch_holdings() -> TRADING212_API_RESPONSE:
+def fetch_holdings() -> List[T212Position]:
     """Fetch portfolio holdings from Trading212 API."""
     logging.info("Fetching portfolio from Trading212 API")
     url = "https://live.trading212.com/api/v0/equity/portfolio"
-    raw = request_json(url, {"Authorization": TRADING212_API_KEY})
+    raw = cast(
+        List[T212Position],
+        request_json(url, {"Authorization": TRADING212_API_KEY}),
+    )
     holdings = [h for h in raw if h["ticker"] not in STOCKS_DELISTED]
 
     return holdings
 
 
-def update_holdings(holdings: TRADING212_API_RESPONSE, instruments: List[Instrument], yahoo_datas: Dict[str, Any]) -> List[HoldingDaily]:
+def update_holdings(holdings: List[T212Position], instruments: List[Instrument], yahoo_datas: Dict[str, Any]) -> List[HoldingDaily]:
     """Update holdings in the database."""
     created = 0
     updated = 0
@@ -263,7 +294,10 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
     logging.info(f"Fetching instruments from Trading212 API")
     instruments = []
     url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
-    instruments_from_api = request_json(url, {"Authorization": TRADING212_API_KEY})
+    instruments_from_api = cast(
+        List[T212Instrument],
+        request_json(url, {"Authorization": TRADING212_API_KEY}),
+    )
 
     with get_session() as session:
         created = 0
@@ -283,14 +317,14 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
                     updated += 1
                 else:
                     # Create new instrument only
-                    instrument = Instrument(
+                    new_instrument = Instrument(
                         t212_code=instrument["ticker"],
                         name=instrument['name'],
                         currency=instrument['currencyCode'],
                         yahoo_symbol=convert_ticker(instrument["ticker"]),
                     )
-                    session.add(instrument)
-                    instruments.append(instrument)
+                    session.add(new_instrument)
+                    instruments.append(new_instrument)
                     created += 1
 
     logging.info(f"Created {created} instruments, updated {updated} instruments")
@@ -394,8 +428,8 @@ def get_yahoo_ticker_data(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
 def save_portfolio_snapshots(holdings: List[HoldingDaily], instruments: List[Instrument], rates: Dict[str, float], yahoo_data: Dict[str, Any]) -> None:
     """Save portfolio snapshot to database."""
     snapshot_date = datetime.now().date()
-    total_value = 0
-    total_profit = 0
+    total_value = 0.0
+    total_profit = 0.0
     country_allocation: Dict[str, float] = defaultdict(float)
     sector_allocation: Dict[str, float] = defaultdict(float)
     etf_equity_allocation: Dict[str, float] = defaultdict(float)
