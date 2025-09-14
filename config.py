@@ -7,6 +7,10 @@ Centralized configuration settings.
 import os
 import re
 
+from datetime import timezone
+
+TIMEZONE = timezone.utc
+
 # API Configuration
 TRADING212_API_KEY = os.environ["TRADING212_API_KEY"]
 

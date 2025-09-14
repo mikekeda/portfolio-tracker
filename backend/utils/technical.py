@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import BENCH, PRICE_FIELD
+from config import BENCH, PRICE_FIELD, TIMEZONE
 from models import PricesDaily
 
 logger = logging.getLogger(__name__)
@@ -172,14 +172,14 @@ async def calculate_volume_ratio_from_db(symbol: str, session: AsyncSession) -> 
     """Calculate volume ratio (today / 20-day average) from database."""
     try:
         # Get recent volume data
-        end_date = datetime.now()
+        end_date = datetime.now(TIMEZONE).date()
 
         # Query volume data directly from database
         result = await session.execute(
             select(PricesDaily.volume)
             .filter(
                 PricesDaily.symbol == symbol,
-                PricesDaily.date <= end_date.date(),
+                PricesDaily.date <= end_date,
             )
             .order_by(PricesDaily.date.desc())
             .limit(21)
@@ -280,7 +280,9 @@ async def calculate_technical_indicators_for_symbols(
                 PricesDaily.symbol,
                 getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price"),
             )
-            .filter(PricesDaily.symbol.in_(symbols), PricesDaily.date >= datetime.now().date() - timedelta(days=420))
+            .filter(
+                PricesDaily.symbol.in_(symbols), PricesDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420)
+            )
             .order_by(PricesDaily.date)
         )
         price_data = price_result.all()
@@ -293,7 +295,9 @@ async def calculate_technical_indicators_for_symbols(
         # Get SPY data for relative strength calculation
         spy_result = await session.execute(
             select(getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price"))
-            .filter(PricesDaily.symbol == BENCH, PricesDaily.date >= datetime.now().date() - timedelta(days=420))
+            .filter(
+                PricesDaily.symbol == BENCH, PricesDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420)
+            )
             .order_by(PricesDaily.date)
         )
         spy_data = spy_result.all()

@@ -9,7 +9,7 @@ import os
 import time
 from collections import defaultdict
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, TypedDict, Union, cast
 
@@ -20,7 +20,7 @@ from sqlalchemy import create_engine, update
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql import func
 
-from config import BATCH_SIZE_YF, CURRENCIES, HISTORY_YEARS, PATTERN_MULTI, REQUEST_RETRY, TRADING212_API_KEY
+from config import BATCH_SIZE_YF, CURRENCIES, HISTORY_YEARS, PATTERN_MULTI, REQUEST_RETRY, TRADING212_API_KEY, TIMEZONE
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
 from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 
@@ -120,47 +120,25 @@ def _fetch_rates_batch(currencies: Tuple[str, ...]) -> Dict[str, float]:
     rates = {}
 
     # Use exchangerate-api.com (free tier available)
-    try:
-        url = "https://api.exchangerate-api.com/v4/latest/GBP"
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+    url = "https://api.exchangerate-api.com/v4/latest/GBP"
+    response = requests.get(url, timeout=10)
+    response.raise_for_status()
+    data = response.json()
 
-        # Convert from GBP to other currencies (invert the rates)
-        for currency in currencies:
-            if currency in data["rates"]:
-                # Invert the rate since we want TO GBP, not FROM GBP
-                rates[currency] = 1.0 / data["rates"][currency]
-            else:
-                rates[currency] = None
-
-    except Exception as e:
-        logging.warning("exchangerate-api.com failed: %s", e)
-
-        # Fallback to a simpler API
-        try:
-            for currency in currencies:
-                url = f"https://api.exchangerate.host/latest?base={currency}&symbols=GBP"
-                response = requests.get(url, timeout=5)
-                response.raise_for_status()
-                data = response.json()
-
-                if "rates" in data and "GBP" in data["rates"]:
-                    rates[currency] = data["rates"]["GBP"]
-                else:
-                    rates[currency] = None
-
-        except Exception as e2:
-            logging.warning("exchangerate.host also failed: %s", e2)
-            for currency in currencies:
-                rates[currency] = None
+    # Convert from GBP to other currencies (invert the rates)
+    for currency in currencies:
+        if currency in data["rates"]:
+            # Invert the rate since we want TO GBP, not FROM GBP
+            rates[currency] = 1.0 / data["rates"][currency]
+        else:
+            raise KeyError(f"Currency {currency} not found in fallback API response")
 
     return rates
 
 
 def get_currency_table(currencies: Tuple[str, ...]) -> Dict[str, float]:
     """Get currency exchange rates to GBP with database caching."""
-    today = date.today()
+    today = datetime.now(TIMEZONE).date()
 
     rates = _fetch_rates_batch(currencies)
 
@@ -179,7 +157,7 @@ def get_currency_table(currencies: Tuple[str, ...]) -> Dict[str, float]:
             if existing:
                 logging.info(f"Updated rate {currency}: {rates[currency]}")
                 existing.rate = rates[currency]
-                existing.updated_at = func.now()
+                existing.updated_at = datetime.now(TIMEZONE)
             else:
                 currency_rate = CurrencyRateDaily(
                     from_currency=currency, to_currency="GBP", rate=rates[currency], date=today
@@ -229,7 +207,7 @@ def update_holdings(
     created = 0
     updated = 0
     result = []
-    current_date = datetime.now(timezone.utc).date()
+    current_date = datetime.now(TIMEZONE).date()
     instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
 
     with get_session() as session:
@@ -244,7 +222,7 @@ def update_holdings(
                     sector=yahoo_data.get("sector"),
                     country=yahoo_data.get("country"),
                     yahoo_data=yahoo_data,
-                    updated_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(TIMEZONE),
                 )
                 .returning(Instrument.id)
             )
@@ -267,7 +245,7 @@ def update_holdings(
                 existing_holding.pe_ratio = yahoo_data.get("trailingPE")
                 existing_holding.beta = yahoo_data.get("beta")
                 existing_holding.institutional = yahoo_data.get("heldPercentInstitutions")
-                existing_holding.updated_at = func.now()
+                existing_holding.updated_at = datetime.now(TIMEZONE)
                 result.append(existing_holding)
                 updated += 1
             else:
@@ -315,7 +293,7 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
                     existing.name = instrument["name"]
                     existing.currency = instrument["currencyCode"]
                     existing.yahoo_symbol = convert_ticker(instrument["ticker"])
-                    existing.updated_at = func.now()
+                    existing.updated_at = datetime.now(TIMEZONE)
                     instruments.append(existing)
                     updated += 1
                 else:
@@ -369,7 +347,7 @@ def update_prices(session: Session, tickers: List[str], start: date) -> None:
                     existing.close_price = float(row["Close"])
                     existing.adj_close_price = float(row["Adj_Close"])
                     existing.volume = int(row["Volume"]) if not pd.isna(row["Volume"]) else 0
-                    existing.updated_at = func.now()
+                    existing.updated_at = datetime.now(TIMEZONE)
                 else:
                     # Insert new record
                     prices = PricesDaily(
@@ -387,7 +365,7 @@ def update_prices(session: Session, tickers: List[str], start: date) -> None:
 
 def get_and_update_prices(tickers: Set[str]) -> None:
     """Get and update price data for all tickers."""
-    today = datetime.now().date()
+    today = datetime.now(TIMEZONE).date()
 
     with get_session() as session:
         existing_prices = (
@@ -437,7 +415,7 @@ def save_portfolio_snapshots(
     holdings: List[HoldingDaily], instruments: List[Instrument], rates: Dict[str, float], yahoo_data: Dict[str, Any]
 ) -> None:
     """Save portfolio snapshot to database."""
-    snapshot_date = datetime.now().date()
+    snapshot_date = datetime.now(TIMEZONE).date()
     total_value = 0.0
     total_profit = 0.0
     country_allocation: Dict[str, float] = defaultdict(float)
@@ -487,7 +465,7 @@ def save_portfolio_snapshots(
             existing_snapshot.country_allocation = country_allocation
             existing_snapshot.sector_allocation = sector_allocation
             existing_snapshot.etf_equity_split = etf_equity_allocation
-            existing_snapshot.updated_at = datetime.now(timezone.utc)
+            existing_snapshot.updated_at = datetime.now(TIMEZONE)
         else:
             # Create new snapshot
             snapshot = PortfolioDaily(

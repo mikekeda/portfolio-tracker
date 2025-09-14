@@ -10,7 +10,7 @@ import os
 # Standard library imports
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from typing import Any, AsyncGenerator, Dict, List
 
@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.screener_config import get_screener_config
@@ -27,7 +27,7 @@ from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 
 # Local imports
-from config import CURRENCIES, PRICE_FIELD
+from config import CURRENCIES, PRICE_FIELD, TIMEZONE
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION
 from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 
@@ -63,7 +63,7 @@ def _get_session_factory() -> async_sessionmaker:
 
 
 @asynccontextmanager
-async def get_session() -> AsyncGenerator[Any, None]:
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Async context manager for database sessions."""
     AsyncSessionLocal = _get_session_factory()
     session = AsyncSessionLocal()
@@ -399,7 +399,7 @@ async def get_portfolio_history(days: int = 30) -> Dict[str, Any]:
     """Get portfolio history for the last N days."""
     try:
         async with get_session() as session:
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
             result = await session.execute(
                 select(PortfolioDaily).filter(PortfolioDaily.date >= cutoff_date).order_by(PortfolioDaily.date.desc())
             )
@@ -482,7 +482,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str) -> Dict[str, An
         raise HTTPException(status_code=400, detail="No symbols provided")
 
     # Calculate date range
-    start_date = datetime.now() - timedelta(days=days)
+    start_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
 
     if metric == "price":
         # Get price data from database
@@ -492,7 +492,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str) -> Dict[str, An
                     PricesDaily.symbol,
                     PricesDaily.date,
                     getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price"),
-                ).filter(PricesDaily.symbol.in_(symbol_list), PricesDaily.date >= start_date.date())
+                ).filter(PricesDaily.symbol.in_(symbol_list), PricesDaily.date >= start_date)
             )
             price_data = result.all()
 
@@ -575,7 +575,7 @@ async def get_top_movers(period: str = "1d", limit: int = 10) -> Dict[str, Any]:
         days = valid_periods[period]
 
         # Get price data for all symbols
-        start_date = (datetime.now() - timedelta(days=days)).date()
+        start_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
 
         async with get_session() as session:
             result = await session.execute(
