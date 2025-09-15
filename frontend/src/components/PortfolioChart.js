@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import './PortfolioChart.css';
+import SharedTooltip from './SharedTooltip';
 
 const PortfolioChart = () => {
   const [chartData, setChartData] = useState(null);
@@ -49,6 +50,7 @@ const PortfolioChart = () => {
             totalValue: item.total_value || 0,
             totalProfit: item.total_profit || 0,
             totalReturn: item.total_return_pct || 0,
+            benchmarkReturn: item.benchmark_return_pct ?? null,
           };
 
 
@@ -162,14 +164,24 @@ const PortfolioChart = () => {
               <XAxis dataKey="date" />
               <YAxis />
               <Tooltip
-                formatter={(value) => [`${value.toFixed(2)}%`, 'Total Return']}
-                labelFormatter={(label) => `Date: ${label}`}
+                content={<SharedTooltip valueFormatter={(v) => `${Number(v).toFixed(2)}%`} />}
               />
               <Line
                 type="monotone"
                 dataKey="totalReturn"
+                name="Portfolio"
                 stroke="#ffc658"
                 strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="benchmarkReturn"
+                name="Benchmark"
+                stroke="#2563eb"
+                strokeWidth={2}
+                dot={false}
+                isAnimationActive={false}
               />
             </LineChart>
           </ResponsiveContainer>

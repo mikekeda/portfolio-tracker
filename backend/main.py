@@ -17,7 +17,7 @@ from typing import Any, AsyncGenerator, Dict, List
 # Third-party imports
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, select
+from sqlalchemy import func, select, and_
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,7 +26,7 @@ from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 
 # Local imports
-from config import CURRENCIES, PRICE_FIELD, TIMEZONE
+from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH
 from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 
 # Configure logging
@@ -338,13 +338,32 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
     """Get portfolio history for the last N days."""
     try:
         cutoff_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
-        result = await session.execute(
-            select(PortfolioDaily).filter(PortfolioDaily.date >= cutoff_date).order_by(PortfolioDaily.date.desc())
+        snap_res = await session.execute(
+            select(PortfolioDaily).filter(PortfolioDaily.date >= cutoff_date).order_by(PortfolioDaily.date)
         )
-        snapshots = result.scalars().all()
+        snapshots = snap_res.scalars().all()
+
+        bench_res = await session.execute(
+            select(PricesDaily.date, PricesDaily.adj_close_price)
+            .where(
+                PricesDaily.symbol == BENCH,
+                PricesDaily.date >= snapshots[0].date,  # latest date in the snapshots
+            )
+            .order_by(PricesDaily.date)
+        )
+        bench_rows = bench_res.all()
+        daily_bench = {bench.date: bench.adj_close_price for bench in bench_rows}
+        bench_base_price = bench_rows[0].adj_close_price
+        bench_start = snapshots[0].total_return_pct
+        bench = bench_start + (bench_rows[0].adj_close_price / bench_base_price - 1) * 100
 
         history_data = []
         for snapshot in snapshots:
+            bench = (
+                bench_start + (daily_bench[snapshot.date] / bench_base_price - 1) * 100
+                if daily_bench.get(snapshot.date)
+                else bench
+            )
             history_data.append(
                 {
                     "date": snapshot.date.isoformat(),
@@ -355,6 +374,8 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
                     "sector_allocation": snapshot.sector_allocation,
                     "currency_allocation": snapshot.currency_allocation,
                     "etf_equity_split": snapshot.etf_equity_split,
+                    "benchmark": BENCH,
+                    "benchmark_return_pct": bench,
                 }
             )
 
