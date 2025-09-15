@@ -16,7 +16,13 @@ const Navigation = () => {
             to="/"
             className={location.pathname === '/' ? 'active' : ''}
           >
-            Dashboard
+            Summary
+          </Link>
+          <Link
+            to="/allocations"
+            className={location.pathname === '/allocations' ? 'active' : ''}
+          >
+            Allocations
           </Link>
           <Link
             to="/holdings"

@@ -4,6 +4,7 @@ import Navigation from './components/Navigation';
 import Dashboard from './components/Dashboard';
 import Holdings from './components/Holdings';
 import Chart from './components/Chart';
+import Allocations from './components/Allocations';
 import './App.css';
 
 function App() {
@@ -14,6 +15,7 @@ function App() {
         <main className="main-content">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/allocations" element={<Allocations />} />
             <Route path="/holdings" element={<Holdings />} />
             <Route path="/chart" element={<Chart />} />
           </Routes>

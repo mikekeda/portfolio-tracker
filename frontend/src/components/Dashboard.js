@@ -1,12 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { portfolioAPI } from '../services/api';
-import { renderCountryWithFlag } from '../utils/countryUtils';
 import TopMovers from './TopMovers';
+import PortfolioChart from './PortfolioChart';
 import './Dashboard.css';
 
 const Dashboard = () => {
   const [summary, setSummary] = useState(null);
-  const [allocations, setAllocations] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -14,13 +13,9 @@ const Dashboard = () => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const [summaryData, allocationsData] = await Promise.all([
-          portfolioAPI.getSummary(),
-          portfolioAPI.getAllocations()
-        ]);
+        const summaryData = await portfolioAPI.getSummary();
 
         setSummary(summaryData);
-        setAllocations(allocationsData);
         setError(null);
       } catch (err) {
         setError('Failed to fetch portfolio data');
@@ -49,7 +44,7 @@ const Dashboard = () => {
     );
   }
 
-  if (!summary || !allocations) {
+  if (!summary) {
     return (
       <div className="dashboard-container">
         <div className="error">No portfolio data available</div>
@@ -59,7 +54,7 @@ const Dashboard = () => {
 
   return (
     <div className="dashboard-container">
-      <h1>Portfolio Dashboard</h1>
+      <h1>Portfolio Summary</h1>
 
       {/* Portfolio Summary Cards */}
       <div className="summary-cards">
@@ -101,137 +96,16 @@ const Dashboard = () => {
         </div>
       </div>
 
+      {/* Portfolio Analytics Charts */}
+      <div className="portfolio-charts-section">
+        <PortfolioChart />
+      </div>
+
       {/* Top Movers Section */}
       <div className="top-movers-section">
         <TopMovers />
       </div>
 
-      {/* ETF/Equity Split and Currency Allocation */}
-      <div className="allocations-section">
-        <div className="allocation-table">
-          <h3>ETF/Equity Split</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Type</th>
-                <th>Allocation (%)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allocations.etf_equity_split && Object.entries(allocations.etf_equity_split).length > 0 ? (
-                Object.entries(allocations.etf_equity_split)
-                  .sort(([,a], [,b]) => b - a)
-                  .map(([type, percentage]) => (
-                    <tr key={type}>
-                      <td>{type}</td>
-                      <td style={{ '--bar-width': `${Math.min(percentage, 100)}%` }}>
-                        <span>{percentage.toFixed(2)}%</span>
-                      </td>
-                    </tr>
-                  ))
-              ) : (
-                <tr>
-                  <td colSpan="2" style={{ textAlign: 'center', color: '#6c757d' }}>
-                    No ETF/Equity data available
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="allocation-table">
-          <h3>Currency Allocation</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Currency</th>
-                <th>Allocation (%)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allocations.currency_allocation && Object.entries(allocations.currency_allocation).length > 0 ? (
-                Object.entries(allocations.currency_allocation)
-                  .sort(([,a], [,b]) => b - a)
-                  .map(([currency, percentage]) => (
-                    <tr key={currency}>
-                      <td>
-                        <span className="currency-code">{currency}</span>
-                        {currency === 'USD' && ' 🇺🇸'}
-                        {currency === 'GBP' && ' 🇬🇧'}
-                        {currency === 'EUR' && ' 🇪🇺'}
-                        {currency === 'CAD' && ' 🇨🇦'}
-                        {currency === 'JPY' && ' 🇯🇵'}
-                      </td>
-                      <td style={{ '--bar-width': `${Math.min(percentage, 100)}%` }}>
-                        <span>{percentage.toFixed(2)}%</span>
-                      </td>
-                    </tr>
-                  ))
-              ) : (
-                <tr>
-                  <td colSpan="2" style={{ textAlign: 'center', color: '#6c757d' }}>
-                    No currency data available
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Sector and Country Allocations */}
-      <div className="allocations-section">
-        <div className="allocation-table">
-          <h3>Sector Allocation</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Sector</th>
-                <th>Allocation (%)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(allocations.sector_allocation)
-                .sort(([,a], [,b]) => b - a)
-                .map(([sector, percentage]) => (
-                  <tr key={sector}>
-                    <td>{sector}</td>
-                    <td style={{ '--bar-width': `${Math.min(percentage, 100)}%` }}>
-                      <span>{percentage.toFixed(2)}%</span>
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="allocation-table">
-          <h3>Country Allocation</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Country</th>
-                <th>Allocation (%)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(allocations.country_allocation)
-                .sort(([,a], [,b]) => b - a)
-                .map(([country, percentage]) => (
-                  <tr key={country}>
-                    <td>
-                      {renderCountryWithFlag(country)}
-                    </td>
-                    <td style={{ '--bar-width': `${Math.min(percentage, 100)}%` }}>
-                      <span>{percentage.toFixed(2)}%</span>
-                    </td>
-                  </tr>
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 };

@@ -434,7 +434,7 @@ def save_portfolio_snapshots(
         total_value += gbp_value
         total_profit += h.ppl
         etf_equity_allocation[info["quoteType"]] += gbp_value
-        currency_allocation[info.get("currency") or "Other"] += gbp_value
+        currency_allocation[instrument.currency] += gbp_value
 
         if info["quoteType"] == "EQUITY":
             country_allocation[info.get("country") or "Other"] += gbp_value
@@ -457,7 +457,7 @@ def save_portfolio_snapshots(
     for quote_type in etf_equity_allocation:
         etf_equity_allocation[quote_type] = round(100 * etf_equity_allocation[quote_type] / total_value, 2)
 
-    currency_allocation["GBP"] += currency_allocation.pop("GBp", 0.0)
+    currency_allocation["GBP"] += currency_allocation.pop("GBX", 0.0)
 
     with get_session() as session:
         # Check if snapshot already exists for this date

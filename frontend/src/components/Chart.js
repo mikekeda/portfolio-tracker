@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { portfolioAPI } from '../services/api';
+import SharedTooltip from './SharedTooltip';
 import './Chart.css';
 
 const Chart = () => {
@@ -197,51 +198,24 @@ const Chart = () => {
   // Generate colors for chart lines
   const colors = ['#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff'];
 
-  // Custom tooltip component that sorts entries by value
-  const CustomTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      // Sort payload by value (descending)
-      const sortedPayload = [...payload].sort((a, b) => {
-        const aValue = typeof a.value === 'number' ? a.value : parseFloat(a.value) || 0;
-        const bValue = typeof b.value === 'number' ? b.value : parseFloat(b.value) || 0;
-        return bValue - aValue;
-      });
-
-      return (
-        <div className="custom-tooltip">
-          <p className="tooltip-label">{new Date(label).toLocaleDateString()}</p>
-          {sortedPayload.map((entry, index) => {
-            const symbol = entry.dataKey;
-            const value = entry.value;
-            const color = entry.color;
-
-            let formattedValue;
-            if (selectedMetric === 'price') {
-              formattedValue = value.toFixed(2);
-            } else if (selectedMetric === 'price_pct_change') {
-              formattedValue = `${value.toFixed(2)}%`;
-            } else if (selectedMetric === 'pe_ratio') {
-              formattedValue = value.toFixed(1);
-            } else if (selectedMetric === 'institutional') {
-              formattedValue = `${value.toFixed(1)}%`;
-            } else if (selectedMetric === 'profit') {
-              formattedValue = `£${value.toFixed(2)}`;
-            } else if (selectedMetric === 'profit_pct') {
-              formattedValue = `${value.toFixed(1)}%`;
-            } else {
-              formattedValue = value.toFixed(2);
-            }
-
-            return (
-              <p key={symbol} className="tooltip-item" style={{ color }}>
-                {symbol}: {formattedValue}
-              </p>
-            );
-          })}
-        </div>
-      );
+  // Value formatter based on selected metric
+  const getValueFormatter = (metric) => {
+    switch (metric) {
+      case 'price':
+        return (value) => value.toFixed(2);
+      case 'price_pct_change':
+        return (value) => `${value.toFixed(2)}%`;
+      case 'pe_ratio':
+        return (value) => value.toFixed(1);
+      case 'institutional':
+        return (value) => `${value.toFixed(1)}%`;
+      case 'profit':
+        return (value) => `£${value.toFixed(2)}`;
+      case 'profit_pct':
+        return (value) => `${value.toFixed(1)}%`;
+      default:
+        return (value) => value.toFixed(2);
     }
-    return null;
   };
 
   return (
@@ -356,7 +330,7 @@ const Chart = () => {
                   return value;
                 }}
               />
-              <Tooltip content={<CustomTooltip />} />
+              <Tooltip content={<SharedTooltip valueFormatter={getValueFormatter(selectedMetric)} />} />
               <Legend />
               {selectedSymbols.map((symbol, index) => (
                 <Line

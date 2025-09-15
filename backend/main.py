@@ -353,6 +353,8 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
                     "total_return_pct": snapshot.total_return_pct,
                     "country_allocation": snapshot.country_allocation,
                     "sector_allocation": snapshot.sector_allocation,
+                    "currency_allocation": snapshot.currency_allocation,
+                    "etf_equity_split": snapshot.etf_equity_split,
                 }
             )
 

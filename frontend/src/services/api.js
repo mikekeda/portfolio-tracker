@@ -67,6 +67,12 @@ export const portfolioAPI = {
     return response.data;
   },
 
+  // Get portfolio history
+  getHistory: async (days = 30) => {
+    const response = await apiClient.get(`/api/portfolio/history?days=${days}`);
+    return response.data;
+  },
+
   // Get all instruments for autocomplete
   getInstruments: async () => {
     const response = await apiClient.get('/api/instruments');
