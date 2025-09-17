@@ -17,7 +17,7 @@ from typing import Any, AsyncGenerator, Dict, List
 # Third-party imports
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import func, select, and_
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -89,7 +89,7 @@ async def get_rates(session: AsyncSession) -> Dict[str, float]:
         select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate).filter(
             CurrencyRateDaily.from_currency.in_(CURRENCIES),
             CurrencyRateDaily.to_currency == "GBP",
-            CurrencyRateDaily.date == date.today(),
+            CurrencyRateDaily.date == datetime.now(TIMEZONE).date(),
         )
     )
     rates = result.all()
@@ -483,9 +483,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
                 return {"error": "No holdings data available"}
 
             # Group by date and symbol
-            chart_data = {}
-            for symbol in symbol_list:
-                chart_data[symbol] = []
+            chart_data = defaultdict(list)
 
             for holding in holdings_data:
                 symbol = holding.instrument.yahoo_symbol
@@ -509,9 +507,8 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
                     if value is not None:
                         chart_data[symbol].append({"date": holding.date.isoformat(), "value": float(value)})
 
-                # Sort data by date for each symbol
-                for symbol in chart_data:
-                    chart_data[symbol].sort(key=lambda x: x["date"])
+                # Sort data by date
+                chart_data[symbol].sort(key=lambda x: x["date"])
 
         except Exception as e:
             logger.error(f"Error fetching holdings data for chart: {e}")

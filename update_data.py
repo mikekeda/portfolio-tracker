@@ -5,6 +5,7 @@ Updates all database tables with fresh data from Trading212 API and Yahoo Financ
 """
 
 import logging
+import math
 import os
 import time
 from collections import defaultdict
@@ -201,7 +202,10 @@ def fetch_holdings() -> List[T212Position]:
 
 
 def update_holdings(
-    holdings: List[T212Position], instruments: List[Instrument], yahoo_datas: Dict[str, Any]
+    holdings: List[T212Position],
+    instruments: List[Instrument],
+    yahoo_datas: Dict[str, Any],
+    cashflow_datas: Dict[str, Any],
 ) -> List[HoldingDaily]:
     """Update holdings in the database."""
     created = 0
@@ -222,6 +226,7 @@ def update_holdings(
                     sector=yahoo_data.get("sector"),
                     country=yahoo_data.get("country"),
                     yahoo_data=yahoo_data,
+                    yahoo_cashflow=cashflow_datas[yahoo_symbol],
                     updated_at=datetime.now(TIMEZONE),
                 )
                 .returning(Instrument.id)
@@ -393,10 +398,21 @@ def get_and_update_prices(tickers: Set[str]) -> None:
             update_prices(session, new_tickers, start)
 
 
-def get_yahoo_ticker_data(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+def scrub_for_json(obj):
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+
+    if isinstance(obj, dict):
+        return {str(k): scrub_for_json(v) for k, v in obj.items()}
+
+    return obj
+
+
+def get_yahoo_ticker_data(symbols: List[str]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """Update Yahoo Finance data for all holdings."""
     logging.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
     yahoo_data = {}
+    cashflow_data = {}
 
     # Fetch in batches
     for i in range(0, len(symbols), BATCH_SIZE_YF):
@@ -405,10 +421,11 @@ def get_yahoo_ticker_data(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
         # Use yfinance's batch download capability
         tickers = yf.Tickers(" ".join(batch))
         for symbol in batch:
-            info = tickers.tickers[symbol].info
-            yahoo_data[symbol] = info
+            yahoo_data[symbol] = tickers.tickers[symbol].info
+            data = tickers.tickers[symbol].cashflow.to_dict()
+            cashflow_data[symbol] = {k.date().isoformat(): scrub_for_json(v) for k, v in data.items()}
 
-    return yahoo_data
+    return yahoo_data, cashflow_data
 
 
 def save_portfolio_snapshots(
@@ -500,8 +517,8 @@ def update_holdings_and_instruments(rates: Dict[str, float]) -> None:
     # Update prices
     get_and_update_prices(yahoo_symbols)
 
-    yahoo_data = get_yahoo_ticker_data(list(yahoo_symbols))
-    holdings = update_holdings(holdings_from_api, instruments, yahoo_data)
+    yahoo_data, cashflow_data = get_yahoo_ticker_data(list(yahoo_symbols))
+    holdings = update_holdings(holdings_from_api, instruments, yahoo_data, cashflow_data)
 
     save_portfolio_snapshots(holdings, instruments, rates, yahoo_data)
 

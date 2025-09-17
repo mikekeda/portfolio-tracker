@@ -6,7 +6,7 @@ import './Chart.css';
 
 const Chart = () => {
   const [instruments, setInstruments] = useState([]);
-  const [selectedSymbols, setSelectedSymbols] = useState([]);
+  const [selectedSymbols, setSelectedSymbols] = useState(['VUAG.L']);
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingInstruments, setLoadingInstruments] = useState(true);

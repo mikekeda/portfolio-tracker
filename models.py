@@ -67,6 +67,7 @@ class Instrument(Base):
 
     # Yahoo Finance data cache
     yahoo_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # Stores Yahoo Finance profile data
+    yahoo_cashflow: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
