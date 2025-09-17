@@ -206,6 +206,7 @@ def update_holdings(
     instruments: List[Instrument],
     yahoo_datas: Dict[str, Any],
     cashflow_datas: Dict[str, Any],
+    earnings_datas: Dict[str, Any],
 ) -> List[HoldingDaily]:
     """Update holdings in the database."""
     created = 0
@@ -227,6 +228,7 @@ def update_holdings(
                     country=yahoo_data.get("country"),
                     yahoo_data=yahoo_data,
                     yahoo_cashflow=cashflow_datas[yahoo_symbol],
+                    yahoo_earnings=earnings_datas[yahoo_symbol],
                     updated_at=datetime.now(TIMEZONE),
                 )
                 .returning(Instrument.id)
@@ -403,16 +405,19 @@ def scrub_for_json(obj):
         return None if (math.isnan(obj) or math.isinf(obj)) else obj
 
     if isinstance(obj, dict):
-        return {str(k): scrub_for_json(v) for k, v in obj.items()}
+        return {k.date().isoformat() if isinstance(k, datetime) else str(k): scrub_for_json(v) for k, v in obj.items()}
 
     return obj
 
 
-def get_yahoo_ticker_data(symbols: List[str]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+def get_yahoo_ticker_data(
+    symbols: List[str],
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """Update Yahoo Finance data for all holdings."""
     logging.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
     yahoo_data = {}
     cashflow_data = {}
+    earnings_data: Dict[str, Dict[str, Dict[str, float]]] = {}
 
     # Fetch in batches
     for i in range(0, len(symbols), BATCH_SIZE_YF):
@@ -422,10 +427,19 @@ def get_yahoo_ticker_data(symbols: List[str]) -> Tuple[Dict[str, Dict[str, Any]]
         tickers = yf.Tickers(" ".join(batch))
         for symbol in batch:
             yahoo_data[symbol] = tickers.tickers[symbol].info
-            data = tickers.tickers[symbol].cashflow.to_dict()
-            cashflow_data[symbol] = {k.date().isoformat(): scrub_for_json(v) for k, v in data.items()}
 
-    return yahoo_data, cashflow_data
+            data = tickers.tickers[symbol].cashflow.to_dict()
+            cashflow_data[symbol] = scrub_for_json(data)
+
+            data = tickers.tickers[symbol].get_earnings_dates(limit=40)
+            if data is None:
+                # ETFs don't have earnings
+                earnings_data[symbol] = {}
+            else:
+                data = data[data["Event Type"] == "Earnings"].drop("Event Type", axis=1).dropna()
+                earnings_data[symbol] = scrub_for_json(data.to_dict(orient="index"))
+
+    return yahoo_data, cashflow_data, earnings_data
 
 
 def save_portfolio_snapshots(
@@ -517,8 +531,8 @@ def update_holdings_and_instruments(rates: Dict[str, float]) -> None:
     # Update prices
     get_and_update_prices(yahoo_symbols)
 
-    yahoo_data, cashflow_data = get_yahoo_ticker_data(list(yahoo_symbols))
-    holdings = update_holdings(holdings_from_api, instruments, yahoo_data, cashflow_data)
+    yahoo_data, cashflow_data, earnings_data = get_yahoo_ticker_data(list(yahoo_symbols))
+    holdings = update_holdings(holdings_from_api, instruments, yahoo_data, cashflow_data, earnings_data)
 
     save_portfolio_snapshots(holdings, instruments, rates, yahoo_data)
 

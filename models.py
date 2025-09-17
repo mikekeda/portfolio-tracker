@@ -68,6 +68,7 @@ class Instrument(Base):
     # Yahoo Finance data cache
     yahoo_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # Stores Yahoo Finance profile data
     yahoo_cashflow: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    yahoo_earnings: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
@@ -113,6 +114,12 @@ class HoldingDaily(Base):
 
     # Relationships
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="holdings")
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "date", name="uq_holding_instrument_date"),
+        Index("idx_holding_instrument_date", "instrument_id", "date"),
+    )
 
     def __repr__(self) -> str:
         return f"<Holding(instrument='{self.instrument.t212_code}', quantity={self.quantity})>"
