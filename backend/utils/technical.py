@@ -14,6 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import BENCH, PRICE_FIELD, TIMEZONE
 from models import PricesDaily
 
+PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
+
 logger = logging.getLogger(__name__)
 
 
@@ -278,7 +280,7 @@ async def calculate_technical_indicators_for_symbols(
         price_result = await session.execute(
             select(
                 PricesDaily.symbol,
-                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price"),
+                PRICE_COLUMN,
             )
             .filter(
                 PricesDaily.symbol.in_(symbols), PricesDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420)
@@ -294,7 +296,7 @@ async def calculate_technical_indicators_for_symbols(
 
         # Get SPY data for relative strength calculation
         spy_result = await session.execute(
-            select(getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price"))
+            select(PRICE_COLUMN)
             .filter(
                 PricesDaily.symbol == BENCH, PricesDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420)
             )

@@ -10,7 +10,7 @@ import os
 # Standard library imports
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from functools import lru_cache
 from typing import Any, AsyncGenerator, Dict, List
 
@@ -28,6 +28,8 @@ from backend.utils.technical import calculate_technical_indicators_for_symbols
 # Local imports
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH
 from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
+
+PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -344,7 +346,7 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
         snapshots = snap_res.scalars().all()
 
         bench_res = await session.execute(
-            select(PricesDaily.date, PricesDaily.adj_close_price)
+            select(PricesDaily.date, PRICE_COLUMN)
             .where(
                 PricesDaily.symbol == BENCH,
                 PricesDaily.date >= snapshots[0].date,  # latest date in the snapshots
@@ -352,10 +354,10 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
             .order_by(PricesDaily.date)
         )
         bench_rows = bench_res.all()
-        daily_bench = {bench.date: bench.adj_close_price for bench in bench_rows}
-        bench_base_price = bench_rows[0].adj_close_price
+        daily_bench = {bench.date: bench.price for bench in bench_rows}
+        bench_base_price = bench_rows[0].price
         bench_start = snapshots[0].total_return_pct
-        bench = bench_start + (bench_rows[0].adj_close_price / bench_base_price - 1) * 100
+        bench = bench_start + (bench_rows[0].price / bench_base_price - 1) * 100
 
         history_data = []
         for snapshot in snapshots:
@@ -454,7 +456,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
             select(
                 PricesDaily.symbol,
                 PricesDaily.date,
-                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price"),
+                PRICE_COLUMN,
             ).filter(PricesDaily.symbol.in_(symbol_list), PricesDaily.date >= start_date)
         )
         price_data = result.all()
@@ -536,37 +538,35 @@ async def get_top_movers(
         days = valid_periods[period]
 
         # Get the latest available trading day
-        latest_date_result = await session.execute(select(func.max(PricesDaily.date)))
-        latest_trading_date = latest_date_result.scalar_one()
-        start_date = latest_trading_date - timedelta(days=days)
+        today = datetime.now(TIMEZONE).date()
+        start_date = today - timedelta(days=days)
 
         result = await session.execute(
             select(
                 Instrument.yahoo_symbol,
                 Instrument.name,
                 Instrument.t212_code,
-                PricesDaily.symbol,
-                PricesDaily.date,
-                getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("px"),
+                HoldingDaily.date,
+                HoldingDaily.current_price,
             )
-            .join(PricesDaily, PricesDaily.symbol == Instrument.yahoo_symbol)
-            .filter(PricesDaily.date >= start_date)
-            .order_by(Instrument.yahoo_symbol, PricesDaily.date)
+            .join(HoldingDaily)
+            .filter(HoldingDaily.date >= start_date)
+            .order_by(Instrument.yahoo_symbol, HoldingDaily.date)
         )
         instruments = result.all()
 
         prices_data = defaultdict(list)
 
         for price in instruments:
-            prices_data[price.symbol].append(price)
+            prices_data[price.yahoo_symbol].append(price)
 
         # Calculate percentage changes
         movers = []
         for symbol, symbol_data in prices_data.items():
             if len(symbol_data) >= 2:
                 # Get first and last prices
-                first_price = symbol_data[0].px
-                last_price = symbol_data[-1].px
+                first_price = symbol_data[0].current_price
+                last_price = symbol_data[-1].current_price
 
                 if first_price > 0:
                     change_pct = ((last_price - first_price) / first_price) * 100
@@ -592,7 +592,7 @@ async def get_top_movers(
             "gainers": gainers,
             "losers": losers,
             "total_symbols": len(movers),
-            "latest_trading_date": latest_trading_date.isoformat(),
+            "latest_trading_date": today.isoformat(),
             "start_date": start_date.isoformat(),
         }
 
