@@ -98,4 +98,10 @@ export const portfolioAPI = {
     const response = await apiClient.get(`/api/market/top-movers?period=${period}&limit=${limit}`);
     return response.data;
   },
+
+  // Get detailed instrument data
+  getInstrument: async (symbol) => {
+    const response = await apiClient.get(`/api/instrument/${encodeURIComponent(symbol)}`);
+    return response.data;
+  },
 };

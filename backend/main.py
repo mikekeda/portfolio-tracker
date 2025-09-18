@@ -412,6 +412,79 @@ async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> Di
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/instrument/{symbol}")
+async def get_instrument(symbol: str, session: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
+    """Get detailed data for a specific stock by Yahoo symbol.
+
+    Returns core profile fields together with cached Yahoo blobs:
+    - instrument: id, symbol, t212_code, name, currency, sector, country
+    - fundamentals: curated subset from yahoo_data
+    - earnings: raw dict stored in Instrument.yahoo_earnings (date-keyed)
+    - cashflow: raw dict stored in Instrument.yahoo_cashflow (date-keyed)
+    """
+    try:
+        result = await session.execute(select(Instrument).filter(Instrument.yahoo_symbol == symbol))
+        instrument = result.scalars().first()
+
+        if not instrument:
+            raise HTTPException(status_code=404, detail="Instrument not found")
+
+        yd = instrument.yahoo_data or {}
+
+        fundamentals = {
+            "marketCap": yd.get("marketCap"),
+            "peRatio": yd.get("trailingPE"),
+            "pegRatio": yd.get("trailingPegRatio"),
+            "beta": yd.get("beta"),
+            "dividendYield": yd.get("dividendYield"),
+            "totalDebt": yd.get("totalDebt"),
+            "totalCash": yd.get("totalCash"),
+            "sharesOutstanding": yd.get("sharesOutstanding") or yd.get("impliedSharesOutstanding"),
+            "freeCashflow": yd.get("freeCashflow"),
+            "operatingCashflow": yd.get("operatingCashflow"),
+            "totalRevenue": yd.get("totalRevenue"),
+            "revenuePerShare": yd.get("revenuePerShare"),
+            "revenueGrowth": yd.get("revenueGrowth"),
+            "profitMargins": yd.get("profitMargins"),
+            "returnOnAssets": yd.get("returnOnAssets"),
+            "returnOnEquity": yd.get("returnOnEquity"),
+            # Additional valuation fields
+            "enterpriseValue": yd.get("enterpriseValue"),
+            "enterpriseToEbitda": yd.get("enterpriseToEbitda"),
+            "enterpriseToRevenue": yd.get("enterpriseToRevenue"),
+            "priceToSalesTtm": yd.get("priceToSalesTrailing12Months"),
+            "priceToBook": yd.get("priceToBook"),
+            "ebitda": yd.get("ebitda"),
+            "recommendationMean": yd.get("recommendationMean"),
+            "recommendationKey": yd.get("recommendationKey"),
+            "numberOfAnalystOpinions": yd.get("numberOfAnalystOpinions"),
+            "fiftyTwoWeekHighChangePercent": yd.get("fiftyTwoWeekHighChangePercent"),
+            "_rawCurrency": yd.get("financialCurrency"),
+        }
+
+        return {
+            "instrument": {
+                "id": instrument.id,
+                "symbol": instrument.yahoo_symbol,
+                "t212_code": instrument.t212_code,
+                "name": instrument.name,
+                "currency": instrument.currency,
+                "sector": instrument.sector,
+                "country": instrument.country,
+                "business_summary": yd.get("longBusinessSummary"),
+                "quote_type": yd.get("quoteType"),
+            },
+            "fundamentals": fundamentals,
+            "earnings": instrument.yahoo_earnings or {},
+            "cashflow": instrument.yahoo_cashflow or {},
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching instrument {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/chart/prices")
 async def get_chart_prices(
     symbols: str, days: int = 30, session: AsyncSession = Depends(get_db_session)

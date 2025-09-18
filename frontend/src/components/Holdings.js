@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
 import {
   useReactTable,
@@ -47,9 +48,12 @@ const Holdings = () => {
     () => [
       columnHelper.accessor('yahoo_symbol', {
         header: 'Symbol',
-        cell: (info) => (
-          <span className="symbol">{info.getValue() || info.row.original.t212_code}</span>
-        ),
+        cell: (info) => {
+          const symbol = info.getValue() || info.row.original.t212_code;
+          return (
+            <Link className="symbol" to={`/stock/${encodeURIComponent(symbol)}`}>{symbol}</Link>
+          );
+        },
         enableSorting: true,
         enableGlobalFilter: true,
         size: 80,

@@ -4,6 +4,7 @@ import Navigation from './components/Navigation';
 import Dashboard from './components/Dashboard';
 import Holdings from './components/Holdings';
 import Chart from './components/Chart';
+import Stock from './components/Stock';
 import Allocations from './components/Allocations';
 import './App.css';
 
@@ -18,6 +19,7 @@ function App() {
             <Route path="/allocations" element={<Allocations />} />
             <Route path="/holdings" element={<Holdings />} />
             <Route path="/chart" element={<Chart />} />
+            <Route path="/stock/:symbol" element={<Stock />} />
           </Routes>
         </main>
       </div>
