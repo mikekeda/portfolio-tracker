@@ -27,7 +27,14 @@ from backend.utils.technical import calculate_technical_indicators_for_symbols
 
 # Local imports
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH
-from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
+from models import (
+    CurrencyRateDaily,
+    HoldingDaily,
+    Instrument,
+    PortfolioDaily,
+    PricesDaily,
+    InstrumentMetricsDaily,
+)
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
 
@@ -124,29 +131,23 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
             .join(Instrument)
             .filter(HoldingDaily.date == latest_date)
             .order_by(Instrument.name)
-            .options(selectinload(HoldingDaily.instrument))
+            .options(selectinload(HoldingDaily.instrument).selectinload(Instrument.yahoo))
         )
         holdings = holdings_result.scalars().all()
 
         # Get currency rates
         currency_rates = await get_rates(session)
 
-        # Get Yahoo Finance data from database cache (optimized batch fetch)
-        yahoo_profiles = {}
-        yahoo_symbols = [
-            holding.instrument.yahoo_symbol
-            for holding in holdings
-            if holding.instrument.yahoo_symbol and holding.instrument.yahoo_data
-        ]
-
-        # Fetch all Yahoo Finance data at once from the database
-        instruments_result = await session.execute(
-            select(Instrument).filter(Instrument.yahoo_symbol.in_(yahoo_symbols), Instrument.yahoo_data.isnot(None))
+        # Fetch market metrics for latest_date in one batch
+        instrument_ids = {h.instrument_id for h in holdings}
+        metrics_result = await session.execute(
+            select(InstrumentMetricsDaily).where(
+                InstrumentMetricsDaily.date == latest_date,
+                InstrumentMetricsDaily.instrument_id.in_(instrument_ids),
+            )
         )
-        instruments = instruments_result.scalars().all()
-
-        for instrument in instruments:
-            yahoo_profiles[instrument.yahoo_symbol] = instrument.yahoo_data or {}
+        metrics_rows = metrics_result.scalars().all()
+        metrics_by_instrument_id = {m.instrument_id: m for m in metrics_rows}
 
         # Calculate technical indicators using centralized function
         symbols_for_technical = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
@@ -165,8 +166,9 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
             market_value_gbp = market_value_native * currency_rates[holding.instrument.currency]
             portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
 
-            # Get Yahoo Finance data for this holding (same as terminal)
-            info = yahoo_profiles[holding.instrument.yahoo_symbol]
+            # Yahoo Finance profile for this instrument
+            info = holding.instrument.yahoo.yahoo_profile
+            metrics = metrics_by_instrument_id[holding.instrument_id]
 
             portfolio_data.append(
                 {
@@ -181,9 +183,9 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "current_price": holding.current_price,
                     "ppl": holding.ppl,
                     "fx_ppl": holding.fx_ppl,
-                    "market_cap": holding.market_cap,
-                    "pe_ratio": holding.pe_ratio,
-                    "beta": holding.beta,
+                    "market_cap": metrics.market_cap,
+                    "pe_ratio": metrics.pe_ratio,
+                    "beta": metrics.beta,
                     "date": holding.date.isoformat(),
                     "market_value": market_value_gbp,  # Now in GBP
                     "profit": holding.ppl,  # Total profit (same as terminal - ppl already includes FX)
@@ -197,8 +199,8 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "prediction": round((info["targetMedianPrice"] / holding.current_price - 1) * 100.0)
                     if info.get("targetMedianPrice")
                     else None,
-                    "institutional_ownership": round(info["heldPercentInstitutions"] * 100.0)
-                    if info.get("heldPercentInstitutions")
+                    "institutional_ownership": round(metrics.institutional * 100.0)
+                    if (metrics and metrics.institutional is not None)
                     else None,
                     "peg_ratio": info["trailingPegRatio"]
                     if info.get("trailingPegRatio")
@@ -423,13 +425,15 @@ async def get_instrument(symbol: str, session: AsyncSession = Depends(get_db_ses
     - cashflow: raw dict stored in Instrument.yahoo_cashflow (date-keyed)
     """
     try:
-        result = await session.execute(select(Instrument).filter(Instrument.yahoo_symbol == symbol))
+        result = await session.execute(
+            select(Instrument).filter(Instrument.yahoo_symbol == symbol).options(selectinload(Instrument.yahoo))
+        )
         instrument = result.scalars().first()
 
         if not instrument:
             raise HTTPException(status_code=404, detail="Instrument not found")
 
-        yd = instrument.yahoo_data or {}
+        yd = instrument.yahoo.yahoo_profile or {}
 
         fundamentals = {
             "marketCap": yd.get("marketCap"),
@@ -475,8 +479,8 @@ async def get_instrument(symbol: str, session: AsyncSession = Depends(get_db_ses
                 "quote_type": yd.get("quoteType"),
             },
             "fundamentals": fundamentals,
-            "earnings": instrument.yahoo_earnings or {},
-            "cashflow": instrument.yahoo_cashflow or {},
+            "earnings": instrument.yahoo.yahoo_earnings or {},
+            "cashflow": instrument.yahoo.yahoo_cashflow or {},
         }
     except HTTPException:
         raise
@@ -541,33 +545,42 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
     else:
         # Get holdings data for other metrics
         try:
-            # Get holdings data for the date range
-            result = await session.execute(
-                select(HoldingDaily)
-                .join(Instrument)
-                .filter(
-                    Instrument.yahoo_symbol.in_(symbol_list),
-                    HoldingDaily.date >= start_date,
-                )
-                .order_by(HoldingDaily.date)
-                .options(selectinload(HoldingDaily.instrument))
-            )
-            holdings_data = result.scalars().all()
-
-            if not holdings_data:
-                return {"error": "No holdings data available"}
-
-            # Group by date and symbol
+            # For valuation metrics, read from InstrumentMetricsDaily; for PnL metrics, read from holdings
             chart_data = defaultdict(list)
-
-            for holding in holdings_data:
-                symbol = holding.instrument.yahoo_symbol
-                if symbol in symbol_list:
+            if metric in {"pe_ratio", "institutional"}:
+                result = await session.execute(
+                    select(InstrumentMetricsDaily, Instrument.yahoo_symbol)
+                    .join(Instrument, Instrument.id == InstrumentMetricsDaily.instrument_id)
+                    .where(
+                        Instrument.yahoo_symbol.in_(symbol_list),
+                        InstrumentMetricsDaily.date >= start_date,
+                    )
+                    .order_by(InstrumentMetricsDaily.date)
+                )
+                rows = result.all()
+                for metrics, symbol in rows:
+                    value = None
                     if metric == "pe_ratio":
-                        value = holding.pe_ratio
+                        value = metrics.pe_ratio
                     elif metric == "institutional":
-                        value = holding.institutional * 100 if holding.institutional is not None else None
-                    elif metric == "profit":
+                        value = (metrics.institutional * 100) if metrics.institutional is not None else None
+                    if value is not None:
+                        chart_data[symbol].append({"date": metrics.date.isoformat(), "value": value})
+            else:
+                result = await session.execute(
+                    select(HoldingDaily)
+                    .join(Instrument)
+                    .filter(
+                        Instrument.yahoo_symbol.in_(symbol_list),
+                        HoldingDaily.date >= start_date,
+                    )
+                    .order_by(HoldingDaily.date)
+                    .options(selectinload(HoldingDaily.instrument))
+                )
+                holdings_data = result.scalars().all()
+                for holding in holdings_data:
+                    symbol = holding.instrument.yahoo_symbol
+                    if metric == "profit":
                         value = holding.ppl
                     elif metric == "profit_pct":
                         market_value = holding.quantity * holding.current_price
@@ -582,11 +595,12 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
                     if value is not None:
                         chart_data[symbol].append({"date": holding.date.isoformat(), "value": float(value)})
 
-                # Sort data by date
-                chart_data[symbol].sort(key=lambda x: x["date"])
+            # Sort series by date
+            for sym in chart_data:
+                chart_data[sym].sort(key=lambda x: x["date"])
 
         except Exception as e:
-            logger.error(f"Error fetching holdings data for chart: {e}")
+            logger.error(f"Error fetching data for chart: {e}")
             return {"error": f"Failed to fetch {metric} data"}
 
     return {

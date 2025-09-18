@@ -7,9 +7,11 @@ Defines the database schema using SQLAlchemy ORM.
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List
 
-from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from config import TIMEZONE
 
 
 class Base(DeclarativeBase):
@@ -37,7 +39,7 @@ class PricesDaily(Base):
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
     )
 
     # Constraints
@@ -65,19 +67,24 @@ class Instrument(Base):
     sector: Mapped[str] = mapped_column(String(100), nullable=True)
     country: Mapped[str] = mapped_column(String(100), nullable=True)
 
-    # Yahoo Finance data cache
-    yahoo_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)  # Stores Yahoo Finance profile data
-    yahoo_cashflow: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
-    yahoo_earnings: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # TODO: Remove this later
+    # Yahoo Finance data cache (legacy in-table storage; consider using InstrumentYahoo)
+    yahoo_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)  # deprecated
+    yahoo_cashflow: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)  # deprecated
+    yahoo_earnings: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)  # deprecated
 
     # Metadata
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
     )
 
     # Relationships
     holdings: Mapped[List["HoldingDaily"]] = relationship(back_populates="instrument")
+    # One-to-one detached Yahoo cache container
+    yahoo: Mapped["InstrumentYahoo"] = relationship(back_populates="instrument", uselist=False)
+    # Time-series of market metrics (market_cap, pe, etc.)
+    metrics: Mapped[List["InstrumentMetricsDaily"]] = relationship(back_populates="instrument")
 
     def __repr__(self) -> str:
         return f"<Instrument(t212_code='{self.t212_code}', name='{self.name}')>"
@@ -109,7 +116,7 @@ class HoldingDaily(Base):
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
     )
 
     # Relationships
@@ -125,6 +132,58 @@ class HoldingDaily(Base):
         return f"<Holding(instrument='{self.instrument.t212_code}', quantity={self.quantity})>"
 
 
+class InstrumentYahoo(Base):
+    """One-to-one container for Yahoo Finance cached blobs per instrument"""
+
+    __tablename__ = "instruments_yahoo"
+
+    # Use instrument_id as the primary key to enforce one-to-one mapping
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), primary_key=True)
+
+    # Cached JSONB payloads
+    yahoo_profile: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    yahoo_cashflow: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    yahoo_earnings: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    # Relationship back to instrument
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="yahoo")
+
+    def __repr__(self) -> str:
+        return f"<InstrumentYahoo(instrument_id={self.instrument_id})>"
+
+
+class InstrumentMetricsDaily(Base):
+    """Daily market metrics per instrument (market_cap, pe, beta, etc.)"""
+
+    __tablename__ = "instruments_metrics_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
+    market_cap: Mapped[float] = mapped_column(Float, nullable=True)
+    pe_ratio: Mapped[float] = mapped_column(Float, nullable=True)
+    institutional: Mapped[float] = mapped_column(Float, nullable=True)  # heldPercentInstitutions
+    beta: Mapped[float] = mapped_column(Float, nullable=True)
+
+    # Metadata
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "date", name="uq_metrics_instrument_date"),
+        Index("idx_metrics_instrument_date", "instrument_id", "date"),
+    )
+
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="metrics")
+
+    def __repr__(self) -> str:
+        return f"<InstrumentMetricsDaily(instrument_id={self.instrument_id}, date='{self.date}')>"
+
+
 class CurrencyRateDaily(Base):
     """Currency exchange rates cache."""
 
@@ -138,7 +197,7 @@ class CurrencyRateDaily(Base):
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
     )
 
     # Constraints
@@ -169,7 +228,7 @@ class PortfolioDaily(Base):
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
     )
 
     def __repr__(self) -> str:

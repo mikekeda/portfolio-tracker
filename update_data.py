@@ -23,7 +23,15 @@ from sqlalchemy.sql import func
 
 from config import BATCH_SIZE_YF, CURRENCIES, HISTORY_YEARS, PATTERN_MULTI, REQUEST_RETRY, TRADING212_API_KEY, TIMEZONE
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
-from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
+from models import (
+    CurrencyRateDaily,
+    HoldingDaily,
+    Instrument,
+    PortfolioDaily,
+    PricesDaily,
+    InstrumentYahoo,
+    InstrumentMetricsDaily,
+)
 
 
 # GET /api/v0/equity/metadata/instruments
@@ -235,6 +243,50 @@ def update_holdings(
             )
             instrument_id = session.execute(stmt).scalar_one()
 
+            # Upsert InstrumentYahoo (detached Yahoo blobs)
+            yahoo_row = session.get(InstrumentYahoo, instrument_id)
+            if yahoo_row:
+                yahoo_row.yahoo_profile = yahoo_data
+                yahoo_row.yahoo_cashflow = cashflow_datas[yahoo_symbol]
+                yahoo_row.yahoo_earnings = earnings_datas[yahoo_symbol]
+                yahoo_row.updated_at = datetime.now(TIMEZONE)
+            else:
+                session.add(
+                    InstrumentYahoo(
+                        instrument_id=instrument_id,
+                        yahoo_profile=yahoo_data,
+                        yahoo_cashflow=cashflow_datas[yahoo_symbol],
+                        yahoo_earnings=earnings_datas[yahoo_symbol],
+                    )
+                )
+
+            # Upsert InstrumentMetricsDaily for this date (market facts)
+            metrics_row = (
+                session.query(InstrumentMetricsDaily)
+                .filter(
+                    InstrumentMetricsDaily.instrument_id == instrument_id,
+                    InstrumentMetricsDaily.date == current_date,
+                )
+                .first()
+            )
+            if metrics_row:
+                metrics_row.market_cap = yahoo_data.get("marketCap")
+                metrics_row.pe_ratio = yahoo_data.get("trailingPE")
+                metrics_row.institutional = yahoo_data.get("heldPercentInstitutions")
+                metrics_row.beta = yahoo_data.get("beta")
+                metrics_row.updated_at = datetime.now(TIMEZONE)
+            else:
+                session.add(
+                    InstrumentMetricsDaily(
+                        instrument_id=instrument_id,
+                        date=current_date,
+                        market_cap=yahoo_data.get("marketCap"),
+                        pe_ratio=yahoo_data.get("trailingPE"),
+                        institutional=yahoo_data.get("heldPercentInstitutions"),
+                        beta=yahoo_data.get("beta"),
+                    )
+                )
+
             existing_holding = (
                 session.query(HoldingDaily)
                 .filter(HoldingDaily.instrument_id == instrument_id, HoldingDaily.date == current_date)
@@ -248,10 +300,10 @@ def update_holdings(
                 existing_holding.current_price = holding["currentPrice"]
                 existing_holding.ppl = holding["ppl"]
                 existing_holding.fx_ppl = holding["fxPpl"] or 0
-                existing_holding.market_cap = yahoo_data.get("marketCap")
-                existing_holding.pe_ratio = yahoo_data.get("trailingPE")
-                existing_holding.beta = yahoo_data.get("beta")
-                existing_holding.institutional = yahoo_data.get("heldPercentInstitutions")
+                existing_holding.market_cap = yahoo_data.get("marketCap")  # deprecated
+                existing_holding.pe_ratio = yahoo_data.get("trailingPE")  # deprecated
+                existing_holding.beta = yahoo_data.get("beta")  # deprecated
+                existing_holding.institutional = yahoo_data.get("heldPercentInstitutions")  # deprecated
                 existing_holding.updated_at = datetime.now(TIMEZONE)
                 result.append(existing_holding)
                 updated += 1
@@ -264,10 +316,10 @@ def update_holdings(
                     current_price=holding["currentPrice"],
                     ppl=holding["ppl"],
                     fx_ppl=holding["fxPpl"] or 0,
-                    market_cap=yahoo_data.get("marketCap"),
-                    pe_ratio=yahoo_data.get("trailingPE"),
-                    institutional=yahoo_data.get("heldPercentInstitutions"),
-                    beta=yahoo_data.get("beta"),
+                    market_cap=yahoo_data.get("marketCap"),  # deprecated
+                    pe_ratio=yahoo_data.get("trailingPE"),  # deprecated
+                    institutional=yahoo_data.get("heldPercentInstitutions"),  # deprecated
+                    beta=yahoo_data.get("beta"),  # deprecated
                     date=current_date,
                 )
                 session.add(new_holding)
