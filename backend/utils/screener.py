@@ -44,60 +44,46 @@ def calculate_screener_results(portfolio_data: List[Dict]) -> None:
             logger.warning("No available screeners found")
             for holding_data in portfolio_data:
                 holding_data["passedScreeners"] = []
+                holding_data["screener_score"] = 0
             return
 
         logger.debug(f"Evaluating {len(available_screeners)} screeners for {len(portfolio_data)} holdings")
 
-        # Calculate technical indicators for first holding to get complete field set
-        if portfolio_data:
-            first_holding = portfolio_data[0]
-
-            # Validate field consistency after technical indicators are added
-            validate_screener_fields(available_screeners, first_holding)
-
         for holding_data in portfolio_data:
             passed_screeners = []
+            # Initialize screener_score if it doesn't exist
+            holding_data["screener_score"] = holding_data.get("screener_score", 0)
 
             # Check each available screener
             for screener_def in available_screeners:
                 if not screener_def.available:
                     continue
 
-                # For screeners requiring historical data, check if we have the data
-                if screener_def.requires_historical_data:
-                    # Check if we have the required technical fields
-                    required_fields = set()
-                    for criteria in screener_def.criteria:
-                        if isinstance(criteria.value, FieldRef):
-                            required_fields.add(criteria.value.name)
-                        required_fields.add(criteria.field)
-
-                    # Skip if we don't have the required technical data (check for None and NaN)
-                    if not all(
-                        field in holding_data
-                        and holding_data[field] is not None
-                        and _is_finite_value(holding_data[field])
-                        for field in required_fields
-                    ):
-                        continue
-
-                # Check if holding passes this screener's criteria using new evaluation engine
+                # Check if holding passes this screener's criteria using the evaluation engine
                 result = screener_config.eval_screener(holding_data, screener_def)
                 if result["passed"]:
                     passed_screeners.append(screener_def.id)
                     holding_data["screener_score"] += screener_def.weight
 
             holding_data["passedScreeners"] = passed_screeners
-            # Bonus for combinations of screeners
+
+            # --- SUGGESTION: Refined Combination Bonus Logic ---
+            # This bonus rewards stocks that pass screeners from different, complementary categories.
+            # For example, a stock with strong fundamentals (Quality) that is also in a technical
+            # uptrend (Momentum) is a more robust candidate.
             screener_pairs = {
                 tuple(sorted((a, b)))
                 for a, b in combinations(set(passed_screeners), 2)
                 if (
                     (b in screener_config.screeners[a].combine_with or a in screener_config.screeners[b].combine_with)
-                    and screener_config.screeners[a].category != screener_config.screeners[b].category  # optional
+                    and screener_config.screeners[a].category != screener_config.screeners[b].category
                 )
             }
-            holding_data["screener_score"] += min(5, 2 * len(screener_pairs))
+
+            # Increased the cap from 5 to 10 to give more weight to exceptional stocks
+            # that pass multiple combinations.
+            combination_bonus = 2 * len(screener_pairs)
+            holding_data["screener_score"] += min(10, combination_bonus)
 
         # Log summary for debugging
         total_matches = sum(len(h.get("passedScreeners", [])) for h in portfolio_data)
@@ -109,11 +95,13 @@ def calculate_screener_results(portfolio_data: List[Dict]) -> None:
         logger.error(f"Failed to import screener configuration: {e}")
         for holding_data in portfolio_data:
             holding_data["passedScreeners"] = []
+            holding_data["screener_score"] = 0
     except Exception as e:
-        logger.error(f"Unexpected error in screener calculation: {e}")
+        logger.error(f"Unexpected error in screener calculation: {e}", exc_info=True)
         # Continue without screener results if calculation fails
         for holding_data in portfolio_data:
             holding_data["passedScreeners"] = []
+            holding_data["screener_score"] = 0
 
 
 def validate_screener_fields(available_screeners: List, sample_holding: Dict) -> None:
@@ -131,13 +119,16 @@ def validate_screener_fields(available_screeners: List, sample_holding: Dict) ->
 
     missing_fields = used_fields - set(sample_holding.keys())
     if missing_fields:
-        logger.error(f"CRITICAL: Screener fields not found in portfolio data: {missing_fields}")
-        logger.error("This will cause incorrect screener results!")
+        # This is downgraded to a warning, as some data might not be available for all stocks,
+        # which is a normal occurrence. The eval engine handles this gracefully.
+        logger.warning(f"Screener fields not found in sample holding data: {missing_fields}")
 
-    unexpected_fields = (
-        set(sample_holding.keys())
-        - EXPECTED_FIELDS
-        - {
+    # This validation can be noisy if technical indicators haven't been added yet.
+    # It's more for initial setup debugging.
+    all_known_fields = (
+        EXPECTED_FIELDS
+        | used_fields
+        | {
             "name",
             "symbol",
             "quantity",
@@ -148,7 +139,11 @@ def validate_screener_fields(available_screeners: List, sample_holding: Dict) ->
             "portfolio_pct",
             "date",
             "passedScreeners",
+            "screener_score",
         }
     )
+
+    unexpected_fields = set(sample_holding.keys()) - all_known_fields
+
     if unexpected_fields:
-        logger.debug(f"Unexpected fields in portfolio data: {unexpected_fields}")
+        logger.debug(f"Fields in holding data not defined in screeners: {unexpected_fields}")

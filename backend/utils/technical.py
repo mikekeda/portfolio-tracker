@@ -21,10 +21,11 @@ logger = logging.getLogger(__name__)
 
 def calculate_rsi(prices: List[float], period: int = 14) -> float:
     """Calculate RSI (Relative Strength Index) for a series of prices."""
+    if len(prices) <= period:
+        return 50.0  # Return neutral if not enough data
+
     # Calculate price changes
-    deltas = []
-    for i in range(1, len(prices)):
-        deltas.append(prices[i] - prices[i - 1])
+    deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
 
     # Separate gains and losses
     gains = [max(delta, 0) for delta in deltas]
@@ -56,55 +57,60 @@ def calculate_sma(prices: List[float], period: int) -> Optional[float]:
     return sum(prices[-period:]) / period
 
 
-def calculate_golden_cross_days(prices: List[float]) -> Optional[int]:
-    """Calculate days since golden cross (SMA50 > SMA200) using O(n) algorithm."""
-    if len(prices) < 260:  # Need 200 + 60 trading days for proper detection
+def find_golden_cross_in_last_n_days(prices: List[float], n_days: int) -> Optional[int]:
+    """
+    Calculate days since a moving average cross (e.g., SMA50 vs SMA200) within the last n_days.
+    This function detects both golden (50 > 200) and death (50 < 200) crosses.
+    Returns the number of days ago the *most recent* cross occurred.
+    """
+    if len(prices) < 200:  # Need at least 200 days for SMA200
         return None
 
-    # Calculate SMA50 and SMA200 using O(n) rolling mean with cumulative sums
+    # Calculate SMA50 and SMA200 efficiently
     sma_50_values = []
     sma_200_values = []
 
-    # Calculate cumulative sums for O(n) rolling mean
-    cumsum: List[float] = [0] * (len(prices) + 1)
-    for i in range(len(prices)):
-        cumsum[i + 1] = cumsum[i] + prices[i]
+    # Use rolling window approach for simplicity and clarity
+    for i in range(49, len(prices)):
+        sma_50_values.append(sum(prices[i - 49 : i + 1]) / 50)
 
-    # Calculate SMAs starting from day 200
     for i in range(199, len(prices)):
-        # Calculate SMA50 (O(1) using cumulative sum)
-        if i >= 49:  # Need at least 50 prices for SMA50
-            sma_50 = (cumsum[i + 1] - cumsum[i + 1 - 50]) / 50
-            sma_50_values.append(sma_50)
+        sma_200_values.append(sum(prices[i - 199 : i + 1]) / 200)
 
-        # Calculate SMA200 (O(1) using cumulative sum)
-        if i >= 199:  # Need at least 200 prices for SMA200
-            sma_200 = (cumsum[i + 1] - cumsum[i + 1 - 200]) / 200
-            sma_200_values.append(sma_200)
+    # Align the shorter SMA50 list with the SMA200 list
+    # SMA50 values are available from day 50 onwards
+    # SMA200 values are available from day 200 onwards
+    # We need to compare them starting from day 200
+    offset = 199 - 49
+    aligned_sma_50 = sma_50_values[offset:]
 
-    # Ensure we have enough SMA values
-    if len(sma_50_values) < 60 or len(sma_200_values) < 60:
+    # Ensure we have values to compare
+    if not aligned_sma_50 or not sma_200_values:
         return None
 
-    # Look for golden cross in the last 60 days
+    # Look for a cross in the last n_days
     # Start from the most recent day and work backwards
-    for days_back in range(min(60, len(sma_50_values), len(sma_200_values))):
-        current_idx = len(sma_50_values) - 1 - days_back
+    lookback_period = min(n_days, len(aligned_sma_50), len(sma_200_values))
 
-        if current_idx > 0:  # Need previous day to detect cross
-            # Current day values
-            current_sma50 = sma_50_values[current_idx]
-            current_sma200 = sma_200_values[current_idx]
+    for days_back in range(lookback_period):
+        idx = len(aligned_sma_50) - 1 - days_back
 
-            # Previous day values
-            prev_sma50 = sma_50_values[current_idx - 1]
-            prev_sma200 = sma_200_values[current_idx - 1]
+        if idx > 0:
+            current_sma50 = aligned_sma_50[idx]
+            current_sma200 = sma_200_values[idx]
 
-            # Golden cross: SMA50 crosses above SMA200
-            if current_sma50 > current_sma200 and prev_sma50 <= prev_sma200:
+            prev_sma50 = aligned_sma_50[idx - 1]
+            prev_sma200 = sma_200_values[idx - 1]
+
+            # Check for a cross in either direction
+            # Golden cross: (prev50 <= prev200) and (curr50 > curr200)
+            # Death cross: (prev50 >= prev200) and (curr50 < curr200)
+            if (prev_sma50 <= prev_sma200 and current_sma50 > current_sma200) or (
+                prev_sma50 >= prev_sma200 and current_sma50 < current_sma200
+            ):
                 return days_back
 
-    # No golden cross found in last 60 days
+    # No cross found in the last n_days
     return None
 
 
@@ -136,38 +142,37 @@ def calculate_bb_width(prices: List[float], period: int) -> Optional[float]:
     variance = sum((price - sma) ** 2 for price in recent_prices) / period
     std_dev = variance**0.5
 
-    # BB width = (2 * std_dev) / sma
-    return (2 * std_dev) / sma if sma != 0 else None
+    # BB width = (Upper Band - Lower Band) / Middle Band = (4 * std_dev) / sma
+    return (4 * std_dev) / sma if sma != 0 else None
 
 
 def calculate_bb_width_percentile(
     prices: List[float], period: int, lookback: int, percentile: float
 ) -> Optional[float]:
     """Calculate BB width percentile over the last lookback days only."""
-    if len(prices) < max(period, lookback):
+    if len(prices) < lookback + period:
         return None
 
-    # Calculate BB width for each day in the last lookback days only
+    # Calculate BB width for each day in the last lookback days
     bb_widths = []
-
-    # Start from the end and work backwards for the last lookback days
-    start_idx = max(period - 1, len(prices) - lookback)
-
-    for i in range(start_idx, len(prices)):
-        bb_width = calculate_bb_width(prices[: i + 1], period)
+    for i in range(len(prices) - lookback, len(prices)):
+        window = prices[i - period + 1 : i + 1]
+        bb_width = calculate_bb_width(window, period)
         if bb_width is not None:
             bb_widths.append(bb_width)
 
-    if len(bb_widths) < 2:
+    if not bb_widths:
         return None
 
-    # Sort and find percentile using nearest-rank method
-    bb_widths.sort()
-    # Use nearest-rank: idx = int(p * (N-1)) for 0-based indexing
-    percentile_index = int(percentile * (len(bb_widths) - 1))
-    percentile_index = min(percentile_index, len(bb_widths) - 1)
+    current_bb_width = calculate_bb_width(prices[-period:], period)
+    if current_bb_width is None:
+        return None
 
-    return bb_widths[percentile_index]
+    # Find the rank of the current width among historical widths
+    rank = sum(1 for width in bb_widths if width < current_bb_width)
+    percentile_rank = rank / len(bb_widths)
+
+    return percentile_rank
 
 
 async def calculate_volume_ratio_from_db(symbol: str, session: AsyncSession) -> Optional[float]:
@@ -218,18 +223,13 @@ async def calculate_volume_contraction_from_db(symbol: str, session: AsyncSessio
         )
         volumes = rows.scalars().all()
 
-        # Need at least 60 days for proper 20d vs 60d comparison
         if len(volumes) < 60:
-            logger.debug(f"Volume contraction for {symbol}: Only {len(volumes)} days of volume data (need 60)")
             return None
 
-        # True 20d vs 60d comparison as per specification
         vol_20 = sum(volumes[:20]) / 20  # Most recent 20 days
         vol_60 = sum(volumes) / 60  # All 60 days
 
-        result = vol_20 < vol_60
-        logger.debug(f"Volume contraction for {symbol}: vol_20={vol_20:.0f}, vol_60={vol_60:.0f}, result={result}")
-        return result
+        return vol_20 < vol_60
 
     except Exception as e:
         logger.warning(f"Failed to calculate volume contraction for {symbol}: {e}")
@@ -241,23 +241,22 @@ def calculate_relative_strength_vs_spy(symbol_prices: List[float], spy_prices: L
     if not spy_prices or len(symbol_prices) < 126 or len(spy_prices) < 126:
         return None
     try:
-        # Sanity guards for corrupt data
-        if symbol_prices[-126] <= 0 or spy_prices[-126] <= 0:
+        # Ensure we are comparing the same time period
+        symbol_period = symbol_prices[-126:]
+        spy_period = spy_prices[-126:]
+
+        if symbol_period[0] <= 0 or spy_period[0] <= 0:
             return None
 
         # Calculate 6-month growth factors (126 trading days)
-        symbol_growth = symbol_prices[-1] / symbol_prices[-126]
-        spy_growth = spy_prices[-1] / spy_prices[-126]
+        symbol_growth = symbol_period[-1] / symbol_period[0]
+        spy_growth = spy_period[-1] / spy_period[0]
 
-        # Relative strength = (Stock Growth / SPY Growth - 1) * 100
         if spy_growth == 0:
             return None
 
+        # Relative strength = (Stock Growth / SPY Growth - 1) * 100
         relative_strength = (symbol_growth / spy_growth - 1) * 100
-
-        # Sanity check for reasonable values (avoid extreme outliers)
-        if abs(relative_strength) > 1000:  # More than 1000% relative strength is likely an error
-            return None
 
         return relative_strength
     except Exception as e:
@@ -289,12 +288,11 @@ async def calculate_technical_indicators_for_symbols(
         )
         price_data = price_result.all()
 
-        # Convert to chart format
         price_history: Dict[str, List[float]] = {}
         for row in price_data:
             price_history.setdefault(row.symbol, []).append(row.price)
 
-        # Get SPY data for relative strength calculation
+        # Get SPY data
         spy_result = await session.execute(
             select(PRICE_COLUMN)
             .filter(
@@ -302,42 +300,33 @@ async def calculate_technical_indicators_for_symbols(
             )
             .order_by(PricesDaily.date)
         )
-        spy_data = spy_result.all()
-        spy_prices = [row.price for row in spy_data]
+        spy_prices = [row.price for row in spy_result.all()]
 
-        # Calculate technical indicators for each symbol
+        # Calculate technical indicators
         for symbol, symbol_prices in price_history.items():
-            # Calculate RSI
-            if len(symbol_prices) >= 14:
-                rsi_value = calculate_rsi(symbol_prices)
-                rsi_data[symbol] = rsi_value
+            rsi_data[symbol] = calculate_rsi(symbol_prices)
 
-            # Calculate other technical indicators
-            if len(symbol_prices) >= 20:  # Minimum for SMA20
-                # Calculate volume-based indicators
-                volume_ratio = await calculate_volume_ratio_from_db(symbol, session)
-                vol20_lt_vol60 = await calculate_volume_contraction_from_db(symbol, session)
+            # Calculate other indicators
+            volume_ratio = await calculate_volume_ratio_from_db(symbol, session)
+            vol20_lt_vol60 = await calculate_volume_contraction_from_db(symbol, session)
+            rs_6m_vs_spy = calculate_relative_strength_vs_spy(symbol_prices, spy_prices)
 
-                # Calculate relative strength vs SPY
-                rs_6m_vs_spy = calculate_relative_strength_vs_spy(symbol_prices, spy_prices)
+            # Use the updated flexible golden cross function
+            gc_days_since = find_golden_cross_in_last_n_days(symbol_prices, 60)
 
-                technical_data[symbol] = {
-                    "sma_20": calculate_sma(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
-                    "sma_50": calculate_sma(symbol_prices, 50) if len(symbol_prices) >= 50 else None,
-                    "sma_200": calculate_sma(symbol_prices, 200) if len(symbol_prices) >= 200 else None,
-                    "rs_6m_vs_spy": rs_6m_vs_spy,
-                    "gc_days_since": calculate_golden_cross_days(symbol_prices) if len(symbol_prices) >= 260 else None,
-                    "gc_within_sma50_frac": calculate_gc_within_sma50(symbol_prices)
-                    if len(symbol_prices) >= 50
-                    else None,
-                    "bb_width_20": calculate_bb_width(symbol_prices, 20) if len(symbol_prices) >= 20 else None,
-                    "bb_width_20_p30_6m": calculate_bb_width_percentile(symbol_prices, 20, 126, 0.30)
-                    if len(symbol_prices) >= 126
-                    else None,
-                    "vol20_lt_vol60": vol20_lt_vol60,
-                    "volume_ratio": volume_ratio,
-                }
+            technical_data[symbol] = {
+                "sma_20": calculate_sma(symbol_prices, 20),
+                "sma_50": calculate_sma(symbol_prices, 50),
+                "sma_200": calculate_sma(symbol_prices, 200),
+                "rs_6m_vs_spy": rs_6m_vs_spy,
+                "gc_days_since": gc_days_since,
+                "gc_within_sma50_frac": calculate_gc_within_sma50(symbol_prices),
+                "bb_width_20": calculate_bb_width(symbol_prices, 20),
+                "bb_width_20_p30_6m": calculate_bb_width_percentile(symbol_prices, 20, 126, 0.30),
+                "vol20_lt_vol60": vol20_lt_vol60,
+                "volume_ratio": volume_ratio,
+            }
     except Exception as e:
-        logger.warning(f"Failed to calculate technical indicators: {e}")
+        logger.error(f"Failed to calculate technical indicators: {e}", exc_info=True)
 
     return rsi_data, technical_data

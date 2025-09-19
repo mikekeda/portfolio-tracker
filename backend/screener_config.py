@@ -4,52 +4,6 @@ Screener Configuration System
 
 This module defines all available stock screeners and their criteria in a centralized,
 maintainable way. It serves as the single source of truth for screener definitions.
-
-HOW TO ADD A NEW SCREENER:
-==========================
-
-1. Add a new ScreenerDefinition in the _initialize_screeners() method:
-
-   screeners['new_screener_id'] = ScreenerDefinition(
-       id='new_screener_id',
-       name='New Screener Name',
-       description='Brief description of what this screener does',
-       category=ScreenerCategory.FUNDAMENTALS,  # or TECHNICAL, MOMENTUM, VALUE, QUALITY, GROWTH
-       criteria=[
-           ScreenerCriteria('field_name', '>=', 10, 'Description of this criteria'),
-           ScreenerCriteria('another_field', '<=', 2.0, 'Another criteria description'),
-       ],
-       requires_historical_data=False,  # Set to True if you need price history data
-       requires_yahoo_data=True,        # Set to False if you don't need Yahoo Finance data
-       available=True                   # Set to False to disable the screener
-   )
-
-2. Available field names (use exact names from portfolio API):
-   - return_on_equity, return_on_assets, free_cashflow_yield
-   - peg_ratio, revenue_growth, profit_margins, pe_ratio
-   - short_percent_of_float, fifty_two_week_change, rsi
-   - institutional_ownership, current_price, sma_20, sma_50, sma_200, volume_ratio
-
-3. Available operators: >=, <=, >, <, ==, !=
-
-4. Available categories: FUNDAMENTALS, TECHNICAL, MOMENTUM, VALUE, QUALITY, GROWTH
-
-5. The screener will automatically work in both backend and frontend - no additional code needed!
-
-HOW TO MODIFY AN EXISTING SCREENER:
-===================================
-
-Simply update the criteria, values, or description in the ScreenerDefinition.
-Changes will automatically apply to both backend and frontend.
-
-FIELD MAPPING:
-==============
-
-The configuration uses field names that match the portfolio API response:
-- Frontend: Uses field names directly from portfolio API
-- Backend: Maps field names to internal metrics via _get_field_value()
-
-This ensures consistency and eliminates the need for complex field mapping.
 """
 
 import math
@@ -85,6 +39,7 @@ class ScreenerCategory(Enum):
     VALUE = "value"
     QUALITY = "quality"
     GROWTH = "growth"
+    MACRO_ENVIRONMENT = "macro"  # Added for broader market context screeners
 
 
 @dataclass(frozen=True)
@@ -223,7 +178,7 @@ class ScreenerConfig:
             "high_short_interest": ScreenerDefinition(
                 id="high_short_interest",
                 name="High Short Interest",
-                description="Short Float >= 10% (Technical criteria temporarily disabled due to numpy/pandas compatibility issue)",
+                description="Short Float >= 10% & Price reclaiming key moving averages on high volume.",
                 category=ScreenerCategory.MOMENTUM,
                 criteria=[
                     ScreenerCriteria("short_percent_of_float", ">=", 10, "High short interest"),
@@ -260,13 +215,13 @@ class ScreenerConfig:
             "golden_cross": ScreenerDefinition(
                 id="golden_cross",
                 name="Golden Cross + First Pullback",
-                description="SMA(50) crossed above SMA(200) within 60d & Close within -2%..0% of SMA(50)",
+                description="SMA(50) crossed above SMA(200) within 60d & Close within -2%..+1% of SMA(50)",
                 category=ScreenerCategory.TECHNICAL,
                 criteria=[
                     ScreenerCriteria("gc_days_since", "<=", 60, "SMA50>200 crossed within 60d"),
                     ScreenerCriteria("gc_days_since", ">=", 0, "Cross exists"),
-                    ScreenerCriteria("gc_within_sma50_frac", ">=", -0.02, "Close not > SMA50 by more than 0%"),
-                    ScreenerCriteria("gc_within_sma50_frac", "<=", 0.01, "Close within pullback window"),
+                    ScreenerCriteria("gc_within_sma50_frac", ">=", -0.02, "Close near SMA50"),
+                    ScreenerCriteria("gc_within_sma50_frac", "<=", 0.01, "Close not extended past SMA50"),
                 ],
                 requires_historical_data=True,
                 requires_yahoo_data=True,
@@ -292,7 +247,6 @@ class ScreenerConfig:
                 combine_with=["breakout_quiet_base", "r40_momentum"],
             ),
             # Rule-of-40 + Momentum
-            # Quality growth (Rev+Margin) with trend confirmation; great core list to buy on dips.
             "r40_momentum": ScreenerDefinition(
                 id="r40_momentum",
                 name="Rule of 40 + Momentum",
@@ -317,7 +271,6 @@ class ScreenerConfig:
                 ],
             ),
             # 52-Week Breakout (Quiet Base + Volume)
-            # Captures leaders launching from tight bases; works great after your VCP-lite flags “tightness,” this adds the trigger.
             "breakout_quiet_base": ScreenerDefinition(
                 id="breakout_quiet_base",
                 name="52W Breakout (Quiet Base + Volume)",
@@ -337,7 +290,6 @@ class ScreenerConfig:
                 combine_with=["volatility_contraction", "r40_momentum", "growth_at_reasonable_price"],
             ),
             # Quality Growth Pullback
-            # “buy the dip” on profitable high-quality growers; tends to have better follow-through than buying pure momentum.
             "quality_growth_pullback": ScreenerDefinition(
                 id="quality_growth_pullback",
                 name="Quality Growth Pullback",
@@ -355,6 +307,25 @@ class ScreenerConfig:
                 available=True,
                 weight=8,
                 combine_with=["r40_momentum", "qarp", "golden_cross"],
+            ),
+            # --- SUGGESTION: New "Risk-Off" Screener ---
+            "death_cross": ScreenerDefinition(
+                id="death_cross",
+                name="Bearish: Death Cross",
+                description="SMA(50) crossed below SMA(200) within 60d, indicating a major trend change to the downside.",
+                category=ScreenerCategory.MACRO_ENVIRONMENT,
+                criteria=[
+                    # Note: We can reuse gc_days_since; it just tells us days since *any* cross.
+                    # The second criterion confirms the direction of the cross was bearish.
+                    ScreenerCriteria("gc_days_since", "<=", 60, "SMA50/200 crossed within 60d"),
+                    ScreenerCriteria("gc_days_since", ">=", 0, "Cross exists"),
+                    ScreenerCriteria("sma_50", "<", FieldRef("sma_200"), "SMA50 is currently below SMA200"),
+                ],
+                requires_historical_data=True,
+                requires_yahoo_data=True,
+                available=True,  # Disabled by default
+                weight=-5,  # Negative weight to penalize stocks in a downtrend
+                combine_with=[],
             ),
         }
 
@@ -426,12 +397,18 @@ class ScreenerConfig:
         lhs = fields[criteria.field]
         rhs = fields[criteria.value.name] if isinstance(criteria.value, FieldRef) else criteria.value
 
-        # Handle None and NaN values gracefully (critical for finance accuracy)
+        # Handle None and NaN values gracefully
         if lhs is None or not _is_finite_value(lhs):
             return False, f"field {criteria.field} is None or non-finite"
 
-        if isinstance(criteria.value, FieldRef) and (rhs is None or not _is_finite_value(rhs)):
-            raise ValueError(f"field {criteria.value.name} is None or non-finite")
+        # Also check RHS if it's a field reference
+        if isinstance(criteria.value, FieldRef):
+            if criteria.value.name not in fields:
+                raise ValueError(f"missing field reference {criteria.value.name}")
+            rhs_val = fields[criteria.value.name]
+            if rhs_val is None or not _is_finite_value(rhs_val):
+                return False, f"field {criteria.value.name} is None or non-finite"
+            rhs = rhs_val
 
         ok = OP_FUNCS[criteria.operator](lhs, rhs)
 
