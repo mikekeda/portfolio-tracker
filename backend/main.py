@@ -24,6 +24,7 @@ from sqlalchemy.orm import selectinload
 from backend.screener_config import get_screener_config
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
+from backend.utils.valuation import get_dcf_prices
 
 # Local imports
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH
@@ -92,7 +93,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def get_rates(session: AsyncSession) -> Dict[str, float]:
     """Get current currency exchange rates to GBP."""
-    table = {"GBX": 0.01, "GBP": 1.0}
+    table = {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01}
 
     result = await session.execute(
         select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate).filter(
@@ -152,6 +153,8 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
         # Calculate technical indicators using centralized function
         symbols_for_technical = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
         rsi_data, technical_data = await calculate_technical_indicators_for_symbols(symbols_for_technical, session)
+        dcf_prices = await get_dcf_prices([h.instrument for h in holdings])
+        dcf_prices_dict = dict(zip(symbols_for_technical, dcf_prices))
 
         # Calculate total portfolio value for percentage calculation
         total_portfolio_value = 0.0
@@ -165,6 +168,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
             market_value_native = holding.quantity * holding.current_price
             market_value_gbp = market_value_native * currency_rates[holding.instrument.currency]
             portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
+            dcf_price = dcf_prices_dict[holding.instrument.yahoo_symbol]
 
             # Yahoo Finance info for this instrument
             info = holding.instrument.yahoo.info
@@ -182,6 +186,8 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "avg_price": holding.avg_price,
                     "current_price": holding.current_price,
                     "analyst_price_targets": holding.instrument.yahoo.analyst_price_targets,
+                    "dcf_price": dcf_price,
+                    "dcf_diff": dcf_price / holding.current_price - 1 if dcf_price else None,
                     "ppl": holding.ppl,
                     "fx_ppl": holding.fx_ppl,
                     "market_cap": metrics.market_cap,

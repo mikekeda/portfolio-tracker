@@ -832,3 +832,17 @@
     min-width: 0;
   }
 }
+
+/* DCF Diff Column Styles */
+.dcf-diff {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.dcf-diff.positive {
+  color: #4CAF50; /* Green for profit potential (DCF price above current price) */
+}
+
+.dcf-diff.negative {
+  color: #F44336; /* Red for loss potential (DCF price below current price) */
+}

@@ -25,20 +25,11 @@ DB_PORT = os.getenv("DB_PORT", "5432")
 PRICE_FIELD = "Adj Close"  # or "close_price" if you prefer raw closes
 BATCH_SIZE_YF = 50  # tickers per yahoo request
 REQUEST_RETRY = 5
-REQUEST_SLEEP = 1.0  # polite pause between Yahoo calls
 HISTORY_YEARS = 10
 
 # Portfolio Configuration
 PATTERN_MULTI = re.compile(r"^(?P<sym>.+?)_(?P<tag>[A-Z]{2,3})$")
 BENCH = "VUAG.L"  # S&P500
-RISK_FREE = 0.045  # annual risk-free guess (4.5 %); replace with 3-month T-bill
 
 # Currency Configuration
 CURRENCIES = ("USD", "EUR", "CAD")
-FALLBACK_RATES = {
-    "GBX": 0.01,
-    "GBP": 1.0,
-    "USD": 0.74,
-    "EUR": 0.87,
-    "CAD": 0.54,
-}

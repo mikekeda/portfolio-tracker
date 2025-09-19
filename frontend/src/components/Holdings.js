@@ -536,8 +536,36 @@ const Holdings = () => {
         enableGlobalFilter: true,
         size: 70,
       }),
+      columnHelper.accessor('dcf_diff', {
+        header: 'DCF Diff',
+        cell: (info) => {
+          const row = info.row.original || {};
+          const dcfDiff = row.dcf_diff;
+          const dcfPrice = row.dcf_price;
+
+          if (dcfDiff === null || dcfDiff === undefined) {
+            return <span className="dcf-diff">-</span>;
+          }
+
+          // Convert from decimal (1 = 100%) to percentage
+          const potentialProfitPct = dcfDiff * 100;
+          const isProfit = potentialProfitPct > 0; // Positive = profit potential
+          const isLoss = potentialProfitPct < 0; // Negative = loss potential
+
+          const className = isProfit ? 'positive' : isLoss ? 'negative' : '';
+
+          return (
+            <span className={`dcf-diff ${className}`} title={dcfPrice ? `DCF: £${dcfPrice.toFixed(2)}` : undefined}>
+              {potentialProfitPct >= 0 ? '+' : ''}{potentialProfitPct.toFixed(1)}%
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 80,
+      }),
       columnHelper.accessor('current_price', {
-        header: 'Price (£)',
+        header: 'Price',
         cell: (info) => {
           const row = info.row.original || {};
           const targets = row.analyst_price_targets || {};
