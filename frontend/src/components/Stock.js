@@ -91,6 +91,21 @@ const Stock = () => {
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [data]);
 
+  const recommendationsSeries = useMemo(() => {
+    const recs = data?.recommendations || {};
+    return Object.entries(recs)
+      .map(([date, v]) => ({
+        date: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        strongBuy: v.strongBuy || 0,
+        buy: v.buy || 0,
+        hold: v.hold || 0,
+        sell: v.sell || 0,
+        strongSell: v.strongSell || 0,
+        total: (v.strongBuy || 0) + (v.buy || 0) + (v.hold || 0) + (v.sell || 0) + (v.strongSell || 0)
+      }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+  }, [data]);
+
   if (loading) return <div className="stock-container">Loading...</div>;
   if (error) return <div className="stock-container error">{error}</div>;
   if (!data) return null;
@@ -230,6 +245,38 @@ const Stock = () => {
               </BarChart>
             </ResponsiveContainer>
           ) : <div className="empty">No cash flow data</div>}
+        </div>
+
+        <div className="panel">
+          <h3>Analyst Recommendations</h3>
+          {recommendationsSeries.length > 0 ? (
+            <ResponsiveContainer width="100%" height={320}>
+              <BarChart data={recommendationsSeries} stackOffset="expand">
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis domain={[0, 1]} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
+                <Tooltip
+                  content={<SharedTooltip
+                    valueFormatter={(v) => `${v} analysts`}
+                    nameMap={{
+                      strongBuy: 'Strong Buy',
+                      buy: 'Buy',
+                      hold: 'Hold',
+                      sell: 'Sell',
+                      strongSell: 'Strong Sell'
+                    }}
+                    sortOrder={['strongBuy', 'buy', 'hold', 'sell', 'strongSell']}
+                  />}
+                />
+                <Legend />
+                <Bar dataKey="strongSell" name="Strong Sell" stackId="a" fill="#dc3545" />
+                <Bar dataKey="sell" name="Sell" stackId="a" fill="#fd7e14" />
+                <Bar dataKey="hold" name="Hold" stackId="a" fill="#ffc107" />
+                <Bar dataKey="buy" name="Buy" stackId="a" fill="#20c997" />
+                <Bar dataKey="strongBuy" name="Strong Buy" stackId="a" fill="#28a745" />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <div className="empty">No recommendations data</div>}
         </div>
       </div>
     </div>

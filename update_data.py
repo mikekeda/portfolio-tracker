@@ -11,6 +11,7 @@ import time
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from functools import lru_cache
 from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, TypedDict, Union, cast
 
@@ -62,6 +63,14 @@ class T212Position(TypedDict):
     ppl: float
     quantity: float
     ticker: str
+
+
+class YahooData(TypedDict):
+    info: Dict[str, Any]
+    cashflow: Dict[str, Any]
+    earnings: Dict[str, Any]
+    recommendations: Dict[str, Any]
+    analyst_price_targets: Dict[str, Any]
 
 
 TRADING212_API_RESPONSE: TypeAlias = List[Union[T212Instrument, T212Position]]
@@ -212,9 +221,7 @@ def fetch_holdings() -> List[T212Position]:
 def update_holdings(
     holdings: List[T212Position],
     instruments: List[Instrument],
-    yahoo_datas: Dict[str, Any],
-    cashflow_datas: Dict[str, Any],
-    earnings_datas: Dict[str, Any],
+    yahoo_datas: YahooData,
 ) -> List[HoldingDaily]:
     """Update holdings in the database."""
     created = 0
@@ -226,7 +233,7 @@ def update_holdings(
     with get_session() as session:
         for holding in holdings:
             yahoo_symbol = instruments_dict[holding["ticker"]].yahoo_symbol
-            yahoo_data = yahoo_datas[yahoo_symbol]
+            yahoo_data = yahoo_datas["info"][yahoo_symbol]
 
             stmt = (
                 update(Instrument)
@@ -235,8 +242,8 @@ def update_holdings(
                     sector=yahoo_data.get("sector"),
                     country=yahoo_data.get("country"),
                     yahoo_data=yahoo_data,
-                    yahoo_cashflow=cashflow_datas[yahoo_symbol],
-                    yahoo_earnings=earnings_datas[yahoo_symbol],
+                    yahoo_cashflow=yahoo_datas["cashflow"][yahoo_symbol],
+                    yahoo_earnings=yahoo_datas["earnings"][yahoo_symbol],
                     updated_at=datetime.now(TIMEZONE),
                 )
                 .returning(Instrument.id)
@@ -246,17 +253,21 @@ def update_holdings(
             # Upsert InstrumentYahoo (detached Yahoo blobs)
             yahoo_row = session.get(InstrumentYahoo, instrument_id)
             if yahoo_row:
-                yahoo_row.yahoo_profile = yahoo_data
-                yahoo_row.yahoo_cashflow = cashflow_datas[yahoo_symbol]
-                yahoo_row.yahoo_earnings = earnings_datas[yahoo_symbol]
+                yahoo_row.info = yahoo_data
+                yahoo_row.cashflow = yahoo_datas["cashflow"][yahoo_symbol]
+                yahoo_row.earnings = yahoo_datas["earnings"][yahoo_symbol]
+                yahoo_row.recommendations = yahoo_datas["recommendations"][yahoo_symbol]
+                yahoo_row.analyst_price_targets = yahoo_datas["analyst_price_targets"][yahoo_symbol]
                 yahoo_row.updated_at = datetime.now(TIMEZONE)
             else:
                 session.add(
                     InstrumentYahoo(
                         instrument_id=instrument_id,
-                        yahoo_profile=yahoo_data,
-                        yahoo_cashflow=cashflow_datas[yahoo_symbol],
-                        yahoo_earnings=earnings_datas[yahoo_symbol],
+                        info=yahoo_data,
+                        cashflow=yahoo_datas["cashflow"][yahoo_symbol],
+                        earnings=yahoo_datas["earnings"][yahoo_symbol],
+                        recommendations=yahoo_datas["recommendations"][yahoo_symbol],
+                        analyst_price_targets=yahoo_datas["analyst_price_targets"][yahoo_symbol],
                     )
                 )
 
@@ -462,14 +473,16 @@ def scrub_for_json(obj):
     return obj
 
 
-def get_yahoo_ticker_data(
-    symbols: List[str],
-) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
     """Update Yahoo Finance data for all holdings."""
     logging.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
-    yahoo_data = {}
-    cashflow_data = {}
-    earnings_data: Dict[str, Dict[str, Dict[str, float]]] = {}
+    yahoo_data: YahooData = {
+        "info": {},
+        "cashflow": {},
+        "earnings": {},
+        "recommendations": {},
+        "analyst_price_targets": {},
+    }
 
     # Fetch in batches
     for i in range(0, len(symbols), BATCH_SIZE_YF):
@@ -478,20 +491,29 @@ def get_yahoo_ticker_data(
         # Use yfinance's batch download capability
         tickers = yf.Tickers(" ".join(batch))
         for symbol in batch:
-            yahoo_data[symbol] = tickers.tickers[symbol].info
+            yahoo_data["info"][symbol] = tickers.tickers[symbol].info
 
             data = tickers.tickers[symbol].cashflow.to_dict()
-            cashflow_data[symbol] = scrub_for_json(data)
+            yahoo_data["cashflow"][symbol] = scrub_for_json(data)
 
             data = tickers.tickers[symbol].get_earnings_dates(limit=40)
             if data is None:
                 # ETFs don't have earnings
-                earnings_data[symbol] = {}
+                yahoo_data["earnings"][symbol] = {}
             else:
                 data = data[data["Event Type"] == "Earnings"].drop("Event Type", axis=1).dropna()
-                earnings_data[symbol] = scrub_for_json(data.to_dict(orient="index"))
+                yahoo_data["earnings"][symbol] = scrub_for_json(data.to_dict(orient="index"))
 
-    return yahoo_data, cashflow_data, earnings_data
+            data = tickers.tickers[symbol].recommendations.to_dict(orient="index")
+            data = {
+                datetime.now(TIMEZONE).date() + relativedelta(months=int(v.pop("period").rstrip("m"))): v
+                for k, v in data.items()
+            }
+            yahoo_data["recommendations"][symbol] = scrub_for_json(data)
+
+            yahoo_data["analyst_price_targets"][symbol] = tickers.tickers[symbol].analyst_price_targets
+
+    return yahoo_data
 
 
 def save_portfolio_snapshots(
@@ -583,10 +605,10 @@ def update_holdings_and_instruments(rates: Dict[str, float]) -> None:
     # Update prices
     get_and_update_prices(yahoo_symbols)
 
-    yahoo_data, cashflow_data, earnings_data = get_yahoo_ticker_data(list(yahoo_symbols))
-    holdings = update_holdings(holdings_from_api, instruments, yahoo_data, cashflow_data, earnings_data)
+    yahoo_data = get_yahoo_ticker_data(list(yahoo_symbols))
+    holdings = update_holdings(holdings_from_api, instruments, yahoo_data)
 
-    save_portfolio_snapshots(holdings, instruments, rates, yahoo_data)
+    save_portfolio_snapshots(holdings, instruments, rates, yahoo_data["info"])
 
 
 if __name__ == "__main__":

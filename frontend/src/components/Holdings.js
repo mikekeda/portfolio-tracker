@@ -540,13 +540,34 @@ const Holdings = () => {
         header: 'Price (£)',
         cell: (info) => {
           const row = info.row.original || {};
+          const targets = row.analyst_price_targets || {};
+          const currentPrice = info.getValue();
+
           const tooltip = [
-            row.sma_20 !== undefined && row.sma_20 !== null ? `SMA20: ${Number(row.sma_20).toFixed(2)}` : null,
-            row.sma_50 !== undefined && row.sma_50 !== null ? `SMA50: ${Number(row.sma_50).toFixed(2)}` : null,
-            row.sma_200 !== undefined && row.sma_200 !== null ? `SMA200: ${Number(row.sma_200).toFixed(2)}` : null,
+            // Price targets (if available)
+            targets.high !== undefined && targets.high !== null ? `High: ${Number(targets.high).toFixed(2)}` : null,
+            targets.median !== undefined && targets.median !== null ? `Median: ${Number(targets.median).toFixed(2)}` : null,
+            targets.mean !== undefined && targets.mean !== null ? `Mean: ${Number(targets.mean).toFixed(2)}` : null,
+            targets.low !== undefined && targets.low !== null ? `Low: ${Number(targets.low).toFixed(2)}` : null,
+            row.number_of_analyst_opinions !== undefined && row.number_of_analyst_opinions !== null ? `Analysts: ${Number(row.number_of_analyst_opinions)}` : null,
           ].filter(Boolean).join('\n');
+
+          // Simple text coloring based on price targets
+          let textColor = '';
+          if (Object.keys(targets).length > 0) {
+            const { low, high } = targets;
+            if (low !== undefined && low !== null && currentPrice < low) {
+              textColor = '#28a745'; // Green: below low
+            } else if (high !== undefined && high !== null && currentPrice > high) {
+              textColor = '#dc3545'; // Red: above high
+            }
+            // Default color for everything else
+          }
+
           return (
-            <span title={tooltip || undefined}>{info.getValue().toFixed(2)}</span>
+            <span style={{ color: textColor }} title={tooltip || undefined}>
+              {currentPrice.toFixed(2)}
+            </span>
           );
         },
         enableSorting: true,

@@ -23,7 +23,7 @@ DB_PORT = os.getenv("DB_PORT", "5432")
 
 # Yahoo Finance Configuration
 PRICE_FIELD = "Adj Close"  # or "close_price" if you prefer raw closes
-BATCH_SIZE_YF = 25  # tickers per yahoo request
+BATCH_SIZE_YF = 50  # tickers per yahoo request
 REQUEST_RETRY = 5
 REQUEST_SLEEP = 1.0  # polite pause between Yahoo calls
 HISTORY_YEARS = 10

@@ -141,9 +141,11 @@ class InstrumentYahoo(Base):
     instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), primary_key=True)
 
     # Cached JSONB payloads
-    yahoo_profile: Mapped[Dict[str, Any]] = mapped_column(JSONB)
-    yahoo_cashflow: Mapped[Dict[str, Any]] = mapped_column(JSONB)
-    yahoo_earnings: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    info: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    cashflow: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    earnings: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    recommendations: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    analyst_price_targets: Mapped[Dict[str, Any]] = mapped_column(JSONB)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

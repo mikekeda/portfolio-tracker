@@ -166,8 +166,8 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
             market_value_gbp = market_value_native * currency_rates[holding.instrument.currency]
             portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
 
-            # Yahoo Finance profile for this instrument
-            info = holding.instrument.yahoo.yahoo_profile
+            # Yahoo Finance info for this instrument
+            info = holding.instrument.yahoo.info
             metrics = metrics_by_instrument_id[holding.instrument_id]
 
             portfolio_data.append(
@@ -181,6 +181,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "quantity": holding.quantity,
                     "avg_price": holding.avg_price,
                     "current_price": holding.current_price,
+                    "analyst_price_targets": holding.instrument.yahoo.analyst_price_targets,
                     "ppl": holding.ppl,
                     "fx_ppl": holding.fx_ppl,
                     "market_cap": metrics.market_cap,
@@ -416,14 +417,7 @@ async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> Di
 
 @app.get("/api/instrument/{symbol}")
 async def get_instrument(symbol: str, session: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
-    """Get detailed data for a specific stock by Yahoo symbol.
-
-    Returns core profile fields together with cached Yahoo blobs:
-    - instrument: id, symbol, t212_code, name, currency, sector, country
-    - fundamentals: curated subset from yahoo_data
-    - earnings: raw dict stored in Instrument.yahoo_earnings (date-keyed)
-    - cashflow: raw dict stored in Instrument.yahoo_cashflow (date-keyed)
-    """
+    """Get detailed data for a specific stock by Yahoo symbol"""
     try:
         result = await session.execute(
             select(Instrument).filter(Instrument.yahoo_symbol == symbol).options(selectinload(Instrument.yahoo))
@@ -433,7 +427,7 @@ async def get_instrument(symbol: str, session: AsyncSession = Depends(get_db_ses
         if not instrument:
             raise HTTPException(status_code=404, detail="Instrument not found")
 
-        yd = instrument.yahoo.yahoo_profile or {}
+        yd = instrument.yahoo.info or {}
 
         fundamentals = {
             "marketCap": yd.get("marketCap"),
@@ -479,8 +473,9 @@ async def get_instrument(symbol: str, session: AsyncSession = Depends(get_db_ses
                 "quote_type": yd.get("quoteType"),
             },
             "fundamentals": fundamentals,
-            "earnings": instrument.yahoo.yahoo_earnings or {},
-            "cashflow": instrument.yahoo.yahoo_cashflow or {},
+            "earnings": instrument.yahoo.earnings or {},
+            "cashflow": instrument.yahoo.cashflow or {},
+            "recommendations": instrument.yahoo.recommendations or {},
         }
     except HTTPException:
         raise
