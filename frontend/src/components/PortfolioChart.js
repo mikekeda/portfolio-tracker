@@ -40,7 +40,7 @@ const PortfolioChart = () => {
 
       if (historyData.history && historyData.history.length > 0) {
         // Process the data for charts
-        const processedData = historyData.history.map(item => {
+            const processedData = historyData.history.map(item => {
           const processedItem = {
             date: new Date(item.date).toLocaleDateString('en-US', {
               month: 'short',
@@ -53,6 +53,13 @@ const PortfolioChart = () => {
             benchmarkReturn: item.benchmark_return_pct ?? null,
           };
 
+              // Derived fields for combined chart (invested base, profit/loss bands)
+              const invested = (processedItem.totalValue - processedItem.totalProfit) || 0;
+              const profitPos = Math.max(processedItem.totalProfit, 0);
+              const lossNeg = Math.min(processedItem.totalProfit, 0); // negative or 0
+              processedItem.invested = invested;
+              processedItem.profitPos = profitPos;
+              processedItem.lossNeg = lossNeg; // negative values
 
           return processedItem;
         });
@@ -94,6 +101,31 @@ const PortfolioChart = () => {
     );
   }
 
+  // Custom tooltip for combined Total Value + Profit/Loss chart
+  const CombinedTooltip = ({ active, payload, label }) => {
+    if (active && payload && payload.length) {
+      const getVal = (key) => {
+        const entry = payload.find((p) => p.dataKey === key);
+        const v = entry ? Number(entry.value) : 0;
+        return isNaN(v) ? 0 : v;
+      };
+      const invested = getVal('invested');
+      const profit = getVal('profitPos') + getVal('lossNeg'); // lossNeg is negative
+      const profitColor = profit >= 0 ? '#28a745' : '#dc3545';
+
+      const fmt = (n) => `£${Number(n).toLocaleString()}`;
+
+      return (
+        <div className="custom-tooltip">
+          <p className="tooltip-label">{label}</p>
+          <p className="tooltip-item" style={{ color: profitColor }}>Profit: {fmt(profit)}</p>
+          <p className="tooltip-item" style={{ color: '#8884d8' }}>Base Cost: {fmt(invested)}</p>
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="portfolio-chart-container">
       <div className="chart-header">
@@ -114,45 +146,20 @@ const PortfolioChart = () => {
       {/* Performance Metrics */}
       <div className="performance-charts">
         <div className="chart-panel">
-          <h3>Total Value (£)</h3>
-          <ResponsiveContainer width="100%" height={200}>
+          <h3>Total Value (£) + Profit/Loss</h3>
+          <ResponsiveContainer width="100%" height={220}>
             <AreaChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
               <YAxis />
-              <Tooltip
-                formatter={(value) => [`£${value.toLocaleString()}`, 'Total Value']}
-                labelFormatter={(label) => `Date: ${label}`}
-              />
-              <Area
-                type="monotone"
-                dataKey="totalValue"
-                stroke="#8884d8"
-                fill="#8884d8"
-                fillOpacity={0.3}
-              />
+              <Tooltip content={<CombinedTooltip />} />
+              {/* Base invested cost */}
+              <Area type="monotone" dataKey="invested" name="Base Cost" stackId="1" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
+              {/* Profit overlay (positive values) */}
+              <Area type="monotone" dataKey="profitPos" name="Profit" stackId="1" stroke="#28a745" fill="#28a745" fillOpacity={0.4} />
+              {/* Loss overlay (negative values) - rendered in red */}
+              <Area type="monotone" dataKey="lossNeg" name="Loss" stackId="1" stroke="#dc3545" fill="#dc3545" fillOpacity={0.35} />
             </AreaChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="chart-panel">
-          <h3>Total Profit/Loss (£)</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
-              <YAxis />
-              <Tooltip
-                formatter={(value) => [`£${value.toLocaleString()}`, 'Total Profit/Loss']}
-                labelFormatter={(label) => `Date: ${label}`}
-              />
-              <Line
-                type="monotone"
-                dataKey="totalProfit"
-                stroke="#82ca9d"
-                strokeWidth={2}
-              />
-            </LineChart>
           </ResponsiveContainer>
         </div>
 

@@ -10,6 +10,22 @@
   text-align: center;
 }
 
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.dashboard-header .last-updated {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #6c757d;
+  font-size: 12px;
+}
+
 /* Summary Cards */
 .summary-cards {
   display: grid;
@@ -47,6 +63,15 @@
   margin: 0;
   color: #333;
 }
+
+.positions-breakdown {
+  font-size: 24px;
+  font-weight: 600;
+  color: #6c757d;
+}
+
+.positions-breakdown .pos { color: #28a745; }
+.positions-breakdown .neg { color: #dc3545; }
 
 .card .value.positive {
   color: #28a745;

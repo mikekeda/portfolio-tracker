@@ -54,7 +54,12 @@ const Dashboard = () => {
 
   return (
     <div className="dashboard-container">
-      <h1>Portfolio Summary</h1>
+      <div className="dashboard-header">
+        <h1>Portfolio Summary</h1>
+        {summary.last_updated && (
+          <div className="last-updated">Last updated: {new Date(summary.last_updated).toLocaleDateString()}</div>
+        )}
+      </div>
 
       {/* Portfolio Summary Cards */}
       <div className="summary-cards">
@@ -75,24 +80,15 @@ const Dashboard = () => {
           </p>
         </div>
         <div className="card">
-          <h3>Total Holdings</h3>
-          <p className="value">{summary.total_holdings}</p>
-        </div>
-        <div className="card">
-          <h3>Profitable Positions</h3>
-          <p className="value positive">{summary.profitable_holdings}</p>
-        </div>
-        <div className="card">
-          <h3>Losing Positions</h3>
-          <p className="value negative">{summary.losing_holdings}</p>
-        </div>
-        <div className="card">
-          <h3>Win Rate</h3>
-          <p className="value">{summary.win_rate.toFixed(1)}%</p>
-        </div>
-        <div className="card">
-          <h3>Last Updated</h3>
-          <p className="value">{summary.last_updated ? new Date(summary.last_updated).toLocaleDateString() : 'N/A'}</p>
+          <h3>Positions</h3>
+          <p className="value">
+            {summary.total_holdings}
+            {typeof summary.profitable_holdings === 'number' && typeof summary.losing_holdings === 'number' && (
+              <span className="positions-breakdown"> (
+                <span className="pos">{summary.profitable_holdings}</span> / <span className="neg">{summary.losing_holdings}</span>
+              )</span>
+            )}
+          </p>
         </div>
       </div>
 
