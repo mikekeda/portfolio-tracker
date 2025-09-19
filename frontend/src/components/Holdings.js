@@ -407,7 +407,7 @@ const Holdings = () => {
           const textClassName = isOverbought ? 'negative' : isOversold ? 'positive' : '';
 
           return (
-            <span className={`rsi ${textClassName}`}>{value}</span>
+            <span className={`rsi ${textClassName}`}>{Math.round(value)}</span>
           );
         },
         enableSorting: true,

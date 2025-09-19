@@ -198,9 +198,8 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "profit": holding.ppl,  # Total profit (same as terminal - ppl already includes FX)
                     "return_pct": round((holding.ppl / (market_value_gbp - holding.ppl) * 100.0), 2)
                     if (market_value_gbp - holding.ppl) > 0
-                    else 0.0,  # Same formula as terminal
+                    else 0.0,
                     "portfolio_pct": portfolio_pct,
-                    # Additional fields from Yahoo Finance (same as terminal)
                     "dividend_yield": info.get("dividendYield"),
                     "business_summary": info.get("longBusinessSummary"),
                     "prediction": round((info["targetMedianPrice"] / holding.current_price - 1) * 100.0)
@@ -226,7 +225,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     else None,  # Keep full precision for screener evaluation
                     "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100
                     if (info.get("freeCashflow") and info.get("marketCap", 0) > 0)
-                    else None,  # FCF / Market Cap (owner's yield)
+                    else None,
                     "recommendation_mean": round(info["recommendationMean"], 2)
                     if info.get("recommendationMean")
                     else None,
@@ -237,11 +236,11 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     else None,  # Distance from 52-week high (negative = below high)
                     "fifty_two_week_change": round(info.get("52WeekChange", 0) * 100)
                     if info.get("52WeekChange") is not None
-                    else None,  # True YoY change vs 52 weeks ago (positive = up from 52w ago)
+                    else None,
                     "short_percent_of_float": info["shortPercentOfFloat"] * 100
                     if info.get("shortPercentOfFloat")
-                    else None,  # Keep full precision for screener evaluation
-                    "rsi": round(rsi_data[holding.instrument.yahoo_symbol]),  # RSI calculated from price history
+                    else None,
+                    "rsi": rsi_data[holding.instrument.yahoo_symbol],
                     "rule_of_40_score": (info.get("revenueGrowth", 0) * 100) + (info.get("profitMargins", 0) * 100)
                     if (info.get("revenueGrowth") is not None and info.get("profitMargins") is not None)
                     else None,  # Keep full precision
