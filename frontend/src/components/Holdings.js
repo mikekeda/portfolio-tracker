@@ -544,7 +544,7 @@ const Holdings = () => {
           const dcfPrice = row.dcf_price;
 
           if (dcfDiff === null || dcfDiff === undefined) {
-            return <span className="dcf-diff">-</span>;
+            return <span className="dcf-diff"></span>;
           }
 
           // Convert from decimal (1 = 100%) to percentage
@@ -555,7 +555,7 @@ const Holdings = () => {
           const className = isProfit ? 'positive' : isLoss ? 'negative' : '';
 
           return (
-            <span className={`dcf-diff ${className}`} title={dcfPrice ? `DCF: £${dcfPrice.toFixed(2)}` : undefined}>
+            <span className={`dcf-diff ${className}`} title={dcfPrice ? `DCF: ${dcfPrice.toFixed(2)}` : undefined}>
               {potentialProfitPct >= 0 ? '+' : ''}{potentialProfitPct.toFixed(1)}%
             </span>
           );

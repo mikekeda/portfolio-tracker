@@ -24,7 +24,7 @@ from sqlalchemy.orm import selectinload
 from backend.screener_config import get_screener_config
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
-from backend.utils.valuation import get_dcf_prices
+from backend.utils.dcf import get_dcf_prices
 
 # Local imports
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH
