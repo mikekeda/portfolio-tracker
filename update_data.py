@@ -242,9 +242,6 @@ def update_holdings(
                 .values(
                     sector=yahoo_data.get("sector"),
                     country=yahoo_data.get("country"),
-                    yahoo_data=yahoo_data,  # TODO: Remove this
-                    yahoo_cashflow=yahoo_datas["cashflow"][yahoo_symbol],  # TODO: Remove this
-                    yahoo_earnings=yahoo_datas["earnings"][yahoo_symbol],  # TODO: Remove this
                     updated_at=datetime.now(TIMEZONE),
                 )
                 .returning(Instrument.id)
@@ -314,10 +311,6 @@ def update_holdings(
                 existing_holding.current_price = holding["currentPrice"]
                 existing_holding.ppl = holding["ppl"]
                 existing_holding.fx_ppl = holding["fxPpl"] or 0
-                existing_holding.market_cap = yahoo_data.get("marketCap")  # deprecated
-                existing_holding.pe_ratio = yahoo_data.get("trailingPE")  # deprecated
-                existing_holding.beta = yahoo_data.get("beta")  # deprecated
-                existing_holding.institutional = yahoo_data.get("heldPercentInstitutions")  # deprecated
                 existing_holding.updated_at = datetime.now(TIMEZONE)
                 result.append(existing_holding)
                 updated += 1
@@ -330,10 +323,6 @@ def update_holdings(
                     current_price=holding["currentPrice"],
                     ppl=holding["ppl"],
                     fx_ppl=holding["fxPpl"] or 0,
-                    market_cap=yahoo_data.get("marketCap"),  # deprecated
-                    pe_ratio=yahoo_data.get("trailingPE"),  # deprecated
-                    institutional=yahoo_data.get("heldPercentInstitutions"),  # deprecated
-                    beta=yahoo_data.get("beta"),  # deprecated
                     date=current_date,
                 )
                 session.add(new_holding)

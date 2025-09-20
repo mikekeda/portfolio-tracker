@@ -4,7 +4,7 @@ SQLAlchemy models for Trading212 Portfolio Manager
 Defines the database schema using SQLAlchemy ORM.
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import Any, Dict, List
 
 from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
@@ -67,12 +67,6 @@ class Instrument(Base):
     sector: Mapped[str] = mapped_column(String(100), nullable=True)
     country: Mapped[str] = mapped_column(String(100), nullable=True)
 
-    # TODO: Remove this later
-    # Yahoo Finance data cache (legacy in-table storage; consider using InstrumentYahoo)
-    yahoo_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)  # deprecated
-    yahoo_cashflow: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)  # deprecated
-    yahoo_earnings: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)  # deprecated
-
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
     updated_at: Mapped[datetime] = mapped_column(
@@ -107,12 +101,6 @@ class HoldingDaily(Base):
     current_price: Mapped[float] = mapped_column(Float, nullable=False)
     ppl: Mapped[float] = mapped_column(Float, nullable=False)  # profit/loss
     fx_ppl: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # FX profit/loss
-
-    # Market data (changes daily)
-    market_cap: Mapped[float] = mapped_column(Float, nullable=True)
-    pe_ratio: Mapped[float] = mapped_column(Float, nullable=True)
-    institutional: Mapped[float] = mapped_column(Float, nullable=True)
-    beta: Mapped[float] = mapped_column(Float, nullable=True)
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
