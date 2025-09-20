@@ -71,6 +71,7 @@ class YahooData(TypedDict):
     earnings: Dict[str, Any]
     recommendations: Dict[str, Any]
     analyst_price_targets: Dict[str, Any]
+    splits: Dict[str, Any]
 
 
 TRADING212_API_RESPONSE: TypeAlias = List[Union[T212Instrument, T212Position]]
@@ -241,9 +242,9 @@ def update_holdings(
                 .values(
                     sector=yahoo_data.get("sector"),
                     country=yahoo_data.get("country"),
-                    yahoo_data=yahoo_data,
-                    yahoo_cashflow=yahoo_datas["cashflow"][yahoo_symbol],
-                    yahoo_earnings=yahoo_datas["earnings"][yahoo_symbol],
+                    yahoo_data=yahoo_data,  # TODO: Remove this
+                    yahoo_cashflow=yahoo_datas["cashflow"][yahoo_symbol],  # TODO: Remove this
+                    yahoo_earnings=yahoo_datas["earnings"][yahoo_symbol],  # TODO: Remove this
                     updated_at=datetime.now(TIMEZONE),
                 )
                 .returning(Instrument.id)
@@ -258,6 +259,7 @@ def update_holdings(
                 yahoo_row.earnings = yahoo_datas["earnings"][yahoo_symbol]
                 yahoo_row.recommendations = yahoo_datas["recommendations"][yahoo_symbol]
                 yahoo_row.analyst_price_targets = yahoo_datas["analyst_price_targets"][yahoo_symbol]
+                yahoo_row.splits = yahoo_datas["splits"][yahoo_symbol]
                 yahoo_row.updated_at = datetime.now(TIMEZONE)
             else:
                 session.add(
@@ -268,6 +270,7 @@ def update_holdings(
                         earnings=yahoo_datas["earnings"][yahoo_symbol],
                         recommendations=yahoo_datas["recommendations"][yahoo_symbol],
                         analyst_price_targets=yahoo_datas["analyst_price_targets"][yahoo_symbol],
+                        splits=yahoo_datas["splits"][yahoo_symbol],
                     )
                 )
 
@@ -482,6 +485,7 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
         "earnings": {},
         "recommendations": {},
         "analyst_price_targets": {},
+        "splits": {},
     }
 
     # Fetch in batches
@@ -512,6 +516,10 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
             yahoo_data["recommendations"][symbol] = scrub_for_json(data)
 
             yahoo_data["analyst_price_targets"][symbol] = tickers.tickers[symbol].analyst_price_targets
+
+            # Fetch and store splits
+            splits_data = tickers.tickers[symbol].splits.to_dict()
+            yahoo_data["splits"][symbol] = scrub_for_json(splits_data)
 
     return yahoo_data
 

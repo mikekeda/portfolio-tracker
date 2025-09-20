@@ -146,6 +146,7 @@ class InstrumentYahoo(Base):
     earnings: Mapped[Dict[str, Any]] = mapped_column(JSONB)
     recommendations: Mapped[Dict[str, Any]] = mapped_column(JSONB)
     analyst_price_targets: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    splits: Mapped[Dict[str, Any]] = mapped_column(JSONB)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
