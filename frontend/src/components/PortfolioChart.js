@@ -19,6 +19,7 @@ const PortfolioChart = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState('30'); // days
+  const [benchmarkName, setBenchmarkName] = useState('Benchmark');
 
   const timeRanges = [
     { label: '1 Month', value: '30' },
@@ -37,6 +38,11 @@ const PortfolioChart = () => {
       setLoading(true);
       const days = timeRange === 'all' ? 365 : parseInt(timeRange);
       const historyData = await portfolioAPI.getHistory(days);
+
+      // Store benchmark name from API response
+      if (historyData.benchmark) {
+        setBenchmarkName(historyData.benchmark);
+      }
 
       if (historyData.history && historyData.history.length > 0) {
         // Process the data for charts
@@ -171,7 +177,13 @@ const PortfolioChart = () => {
               <XAxis dataKey="date" />
               <YAxis />
               <Tooltip
-                content={<SharedTooltip valueFormatter={(v) => `${Number(v).toFixed(2)}%`} />}
+                content={<SharedTooltip
+                  valueFormatter={(v) => `${Number(v).toFixed(2)}%`}
+                  nameMap={{
+                    totalReturn: 'Portfolio',
+                    benchmarkReturn: benchmarkName
+                  }}
+                />}
               />
               <Line
                 type="monotone"
