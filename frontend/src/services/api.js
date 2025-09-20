@@ -16,7 +16,6 @@ const apiClient = axios.create({
 // Request interceptor for logging
 apiClient.interceptors.request.use(
   (config) => {
-    console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
     return config;
   },
   (error) => {
@@ -100,8 +99,8 @@ export const portfolioAPI = {
   },
 
   // Get detailed instrument data
-  getInstrument: async (symbol) => {
-    const response = await apiClient.get(`/api/instrument/${encodeURIComponent(symbol)}`);
+  getInstrument: async (symbol, days = 30) => {
+    const response = await apiClient.get(`/api/instrument/${encodeURIComponent(symbol)}?days=${days}`);
     return response.data;
   },
 };

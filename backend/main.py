@@ -22,9 +22,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, Asyn
 from sqlalchemy.orm import selectinload
 
 from backend.screener_config import get_screener_config
+from backend.utils.dcf import get_dcf_prices
+from backend.utils.pe import get_pe_history
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
-from backend.utils.dcf import get_dcf_prices
 
 # Local imports
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH
@@ -384,12 +385,11 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
                     "sector_allocation": snapshot.sector_allocation,
                     "currency_allocation": snapshot.currency_allocation,
                     "etf_equity_split": snapshot.etf_equity_split,
-                    "benchmark": BENCH,
                     "benchmark_return_pct": bench,
                 }
             )
 
-        return {"history": history_data, "days": days}
+        return {"history": history_data, "days": days, "benchmark": BENCH}
     except Exception as e:
         logger.error(f"Error fetching portfolio history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -421,16 +421,35 @@ async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> Di
 
 
 @app.get("/api/instrument/{symbol}")
-async def get_instrument(symbol: str, session: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
+async def get_instrument(
+    symbol: str, days: int = 30, session: AsyncSession = Depends(get_db_session)
+) -> Dict[str, Any]:
     """Get detailed data for a specific stock by Yahoo symbol"""
     try:
-        result = await session.execute(
+        end_date = datetime.now(TIMEZONE).date()
+        start_date = end_date - timedelta(days=days)
+
+        instrument_result = await session.execute(
             select(Instrument).filter(Instrument.yahoo_symbol == symbol).options(selectinload(Instrument.yahoo))
         )
-        instrument = result.scalars().first()
+        instrument = instrument_result.scalars().first()
+
+        # Get price data for the period
+        prices_result = await session.execute(
+            select(PricesDaily)
+            .where(PricesDaily.symbol == symbol, PricesDaily.date >= start_date, PricesDaily.date <= end_date)
+            .order_by(PricesDaily.date.asc())
+        )
+
+        chart_price_data: Dict[str, float] = {}
+        price_data = prices_result.scalars().all()
+        for row in price_data:
+            chart_price_data[row.date.isoformat()] = getattr(row, PRICE_FIELD.lower().replace(" ", "_") + "_price")
 
         if not instrument:
             raise HTTPException(status_code=404, detail="Instrument not found")
+
+        pe_history = await get_pe_history(instrument, price_data)
 
         yd = instrument.yahoo.info or {}
 
@@ -480,6 +499,8 @@ async def get_instrument(symbol: str, session: AsyncSession = Depends(get_db_ses
             "fundamentals": fundamentals,
             "earnings": instrument.yahoo.earnings or {},
             "cashflow": instrument.yahoo.cashflow or {},
+            "prices": chart_price_data,
+            "pe_history": pe_history,
             "recommendations": instrument.yahoo.recommendations or {},
         }
     except HTTPException:
