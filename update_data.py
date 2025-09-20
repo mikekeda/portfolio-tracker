@@ -254,7 +254,11 @@ def update_holdings(
                 yahoo_row.info = yahoo_data
                 yahoo_row.cashflow = yahoo_datas["cashflow"][yahoo_symbol]
                 yahoo_row.earnings = yahoo_datas["earnings"][yahoo_symbol]
-                yahoo_row.recommendations = yahoo_datas["recommendations"][yahoo_symbol]
+                # TODO: Keep only 12 - 24 recommendations
+                yahoo_row.recommendations = {
+                    **yahoo_row.recommendations,
+                    **yahoo_datas["recommendations"][yahoo_symbol],
+                }
                 yahoo_row.analyst_price_targets = yahoo_datas["analyst_price_targets"][yahoo_symbol]
                 yahoo_row.splits = yahoo_datas["splits"][yahoo_symbol]
                 yahoo_row.updated_at = datetime.now(TIMEZONE)
@@ -499,7 +503,7 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
 
             data = tickers.tickers[symbol].recommendations.to_dict(orient="index")
             data = {
-                datetime.now(TIMEZONE).date() + relativedelta(months=int(v.pop("period").rstrip("m"))): v
+                datetime.now(TIMEZONE).date().replace(day=1) + relativedelta(months=int(v.pop("period").rstrip("m"))): v
                 for k, v in data.items()
             }
             yahoo_data["recommendations"][symbol] = scrub_for_json(data)
