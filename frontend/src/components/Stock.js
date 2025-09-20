@@ -543,10 +543,10 @@ const Stock = () => {
           <h3>Analyst Recommendations</h3>
           {recommendationsSeries.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={recommendationsSeries} stackOffset="expand">
+              <BarChart data={recommendationsSeries}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
-                <YAxis domain={[0, 1]} tickFormatter={(v) => `${(v * 100).toFixed(0)}%`} />
+                <YAxis tickFormatter={(v) => `${v}`} />
                 <Tooltip
                   content={<SharedTooltip
                     valueFormatter={(v) => `${v} analysts`}
