@@ -136,3 +136,44 @@
   color: #dc3545;
 }
 
+/* Split line styling */
+.recharts-reference-line {
+  stroke: #ff6b6b !important;
+  stroke-width: 2 !important;
+  stroke-dasharray: 5 5 !important;
+}
+
+.recharts-reference-line-label {
+  fill: #ff6b6b !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+}
+
+/* Custom tooltip styling */
+.custom-tooltip {
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  padding: 8px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.tooltip-label {
+  font-weight: 600;
+  margin: 0 0 4px 0;
+  color: #212529;
+}
+
+.tooltip-item {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.color-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}

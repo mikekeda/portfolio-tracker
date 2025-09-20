@@ -10,7 +10,7 @@ import os
 # Standard library imports
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import lru_cache
 from typing import Any, AsyncGenerator, Dict, List
 
@@ -501,6 +501,7 @@ async def get_instrument(
             "cashflow": instrument.yahoo.cashflow or {},
             "prices": chart_price_data,
             "pe_history": pe_history,
+            "splits": {k: v for k, v in instrument.yahoo.splits.items() if date.fromisoformat(k) >= start_date},
             "recommendations": instrument.yahoo.recommendations or {},
         }
     except HTTPException:

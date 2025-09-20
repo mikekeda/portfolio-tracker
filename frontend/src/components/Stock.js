@@ -34,10 +34,10 @@ const PRICE_METRICS = [
 
 // Utility functions
 const formatDate = (dateString) => {
-  return new Date(dateString).toLocaleDateString('en-US', { 
-    month: 'short', 
-    day: 'numeric', 
-    year: '2-digit' 
+  return new Date(dateString).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: '2-digit'
   });
 };
 
@@ -59,10 +59,10 @@ const Stock = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showFullSummary, setShowFullSummary] = useState(false);
-  const [chartDays, setChartDays] = useState(() => 
+  const [chartDays, setChartDays] = useState(() =>
     Number(localStorage.getItem('stock_chart_days') || 365)
   );
-  const [priceMetric, setPriceMetric] = useState(() => 
+  const [priceMetric, setPriceMetric] = useState(() =>
     localStorage.getItem('stock_price_metric') || 'price'
   );
 
@@ -98,6 +98,21 @@ const Stock = () => {
     };
     load();
   }, [symbol, chartDays]);
+
+  // Process splits data
+  const splitsData = useMemo(() => {
+    const splits = data?.splits || {};
+    const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff'];
+    return Object.entries(splits)
+      .map(([date, ratio], index) => ({
+        originalDate: date,
+        date: formatDate(date),
+        ratio: ratio,
+        label: `${ratio}:1 Split`,
+        color: colors[index % colors.length]
+      }))
+      .sort((a, b) => new Date(a.originalDate) - new Date(b.originalDate));
+  }, [data?.splits]);
 
   const epsSeries = useMemo(() => {
     const earnings = data?.earnings || {};
@@ -142,7 +157,7 @@ const Stock = () => {
   const priceData = useMemo(() => {
     const prices = data?.prices || {};
     const entries = Object.entries(prices).map(([date, value]) => ({ date, value }));
-    
+
     if (priceMetric === 'price_pct_change') {
       const sorted = [...entries].sort((a, b) => new Date(a.date) - new Date(b.date));
       if (sorted.length === 0) return [];
@@ -176,26 +191,26 @@ const Stock = () => {
   // Calculate smart Y-axis domain for PE chart
   const peDomain = useMemo(() => {
     if (peData.length === 0) return [0, 100];
-    
+
     const peValues = peData.map(d => d.pe).filter(v => v != null && !isNaN(v));
     if (peValues.length === 0) return [0, 100];
-    
+
     const minPe = Math.min(...peValues);
     const maxPe = Math.max(...peValues);
     const currentPe = peValues[peValues.length - 1]; // Most recent PE
-    
+
     // Calculate padding as percentage of range
     const range = maxPe - minPe;
     const padding = Math.max(range * 0.1, 5); // 10% padding, minimum 5 points
-    
+
     // Ensure current PE is always visible with some padding
     const domainMin = Math.max(0, Math.min(minPe - padding, currentPe - padding * 2));
     const domainMax = Math.max(maxPe + padding, currentPe + padding * 2);
-    
+
     // Round to nice numbers for better readability
     const niceMin = Math.floor(domainMin / 5) * 5;
     const niceMax = Math.ceil(domainMax / 5) * 5;
-    
+
     return [niceMin, niceMax];
   }, [peData]);
 
@@ -205,7 +220,7 @@ const Stock = () => {
 
   const i = data.instrument;
   const f = data.fundamentals || {};
-  
+
   const kpis = [
     { label: 'Market Cap', value: formatShort(f.marketCap) },
     { label: 'PE', value: f.peRatio ?? '-' },
@@ -214,7 +229,7 @@ const Stock = () => {
     { label: 'Beta', value: f.beta ?? '-' },
     { label: 'Debt', value: formatShort(f.totalDebt) },
     { label: 'Cash', value: formatShort(f.totalCash) },
-    { label: 'FCF Yield', value: (f.freeCashflow && f.marketCap && f.marketCap > 0) 
+    { label: 'FCF Yield', value: (f.freeCashflow && f.marketCap && f.marketCap > 0)
       ? `${((f.freeCashflow / f.marketCap) * 100).toFixed(2)}%` : '-' },
   ];
 
@@ -224,12 +239,12 @@ const Stock = () => {
     { label: 'EV/Sales', value: formatRatio(f.enterpriseToRevenue) },
     { label: 'P/S (TTM)', value: formatRatio(f.priceToSalesTtm) },
     { label: 'P/B', value: formatRatio(f.priceToBook) },
-    { label: 'Net Debt', value: (f.totalDebt !== undefined && f.totalCash !== undefined) 
+    { label: 'Net Debt', value: (f.totalDebt !== undefined && f.totalCash !== undefined)
       ? formatShort((f.totalDebt || 0) - (f.totalCash || 0)) : '-' },
-    { label: 'Net Debt/EBITDA', value: (f.ebitda && f.ebitda !== 0 && 
-      (f.totalDebt !== undefined && f.totalCash !== undefined)) 
+    { label: 'Net Debt/EBITDA', value: (f.ebitda && f.ebitda !== 0 &&
+      (f.totalDebt !== undefined && f.totalCash !== undefined))
       ? formatRatio(((f.totalDebt || 0) - (f.totalCash || 0)) / f.ebitda) : '-' },
-    { label: 'Price/FCF', value: (f.marketCap && f.freeCashflow) 
+    { label: 'Price/FCF', value: (f.marketCap && f.freeCashflow)
       ? formatRatio(f.marketCap / f.freeCashflow) : '-' },
   ];
 
@@ -288,26 +303,26 @@ const Stock = () => {
               <LineChart data={priceData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
-                <YAxis 
-                  tickFormatter={(v) => 
-                    priceMetric === 'price_pct_change' 
-                      ? `${v.toFixed?.(1)}%` 
-                      : (typeof v === 'number' 
-                          ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) 
+                <YAxis
+                  tickFormatter={(v) =>
+                    priceMetric === 'price_pct_change'
+                      ? `${v.toFixed?.(1)}%`
+                      : (typeof v === 'number'
+                          ? v.toLocaleString(undefined, { maximumFractionDigits: 2 })
                           : v)
-                  } 
+                  }
                 />
-                <Tooltip 
+                <Tooltip
                   content={({ active, payload, label }) => {
                     if (active && payload && payload.length) {
                       const data = payload[0].payload;
                       const displayName = priceMetric === 'price_pct_change' ? 'Price %' : 'Price';
-                      const formattedValue = priceMetric === 'price_pct_change' 
-                        ? `${data.value.toFixed(2)}%` 
-                        : (typeof data.value === 'number' 
-                            ? data.value.toLocaleString(undefined, { maximumFractionDigits: 2 }) 
+                      const formattedValue = priceMetric === 'price_pct_change'
+                        ? `${data.value.toFixed(2)}%`
+                        : (typeof data.value === 'number'
+                            ? data.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
                             : data.value);
-                      
+
                       return (
                         <div className="custom-tooltip">
                           <p className="tooltip-label">{label}</p>
@@ -322,14 +337,47 @@ const Stock = () => {
                   }}
                 />
                 <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="value" 
-                  name={priceMetric === 'price_pct_change' ? 'Price %' : 'Price'} 
-                  stroke="#6f42c1" 
-                  strokeWidth={2} 
-                  dot={false} 
+                <Line
+                  type="monotone"
+                  dataKey="value"
+                  name={priceMetric === 'price_pct_change' ? 'Price %' : 'Price'}
+                  stroke="#6f42c1"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={false}
                 />
+                {/* Add split markers as ReferenceLines */}
+                {splitsData.map((split, index) => (
+                  <ReferenceLine
+                    key={`price-split-${index}`}
+                    x={split.date}
+                    stroke={split.color}
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    dot={false}
+                    label={{
+                      value: `${split.ratio}:1`,
+                      position: "top",
+                      style: { fontSize: 10, fill: split.color }
+                    }}
+                  />
+                ))}
+                {/* Add invisible lines for legend */}
+                {splitsData.map((split, index) => (
+                  <Line
+                    key={`price-legend-${index}`}
+                    type="monotone"
+                    dataKey={() => null}
+                    data={[]}
+                    stroke={split.color}
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    dot={false}
+                    activeDot={false}
+                    name={`${split.ratio}:1 Split`}
+                    connectNulls={false}
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           ) : <div className="empty">No price data</div>}
@@ -350,14 +398,15 @@ const Stock = () => {
               <LineChart data={peData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
-                <YAxis 
+                <YAxis
                   domain={peDomain}
-                  tickFormatter={(v) => typeof v === 'number' ? v.toFixed(1) : v} 
+                  tickFormatter={(v) => typeof v === 'number' ? v.toFixed(1) : v}
                 />
-                <Tooltip 
+                <Tooltip
                   content={({ active, payload, label }) => {
                     if (active && payload && payload.length) {
                       const data = payload[0].payload;
+
                       return (
                         <div className="custom-tooltip">
                           <p className="tooltip-label">{label}</p>
@@ -372,14 +421,47 @@ const Stock = () => {
                   }}
                 />
                 <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="pe" 
-                  name="PE Ratio" 
-                  stroke="#e74c3c" 
-                  strokeWidth={2} 
-                  dot={false} 
+                <Line
+                  type="monotone"
+                  dataKey="pe"
+                  name="PE Ratio"
+                  stroke="#e74c3c"
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={false}
                 />
+                {/* Add split markers as ReferenceLines */}
+                {splitsData.map((split, index) => (
+                  <ReferenceLine
+                    key={`pe-split-${index}`}
+                    x={split.date}
+                    stroke={split.color}
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    dot={false}
+                    label={{
+                      value: `${split.ratio}:1`,
+                      position: "top",
+                      style: { fontSize: 10, fill: split.color }
+                    }}
+                  />
+                ))}
+                {/* Add invisible lines for legend */}
+                {splitsData.map((split, index) => (
+                  <Line
+                    key={`pe-legend-${index}`}
+                    type="monotone"
+                    dataKey={() => null}
+                    data={[]}
+                    stroke={split.color}
+                    strokeWidth={2}
+                    strokeDasharray="5 5"
+                    dot={false}
+                    activeDot={false}
+                    name={`${split.ratio}:1 Split`}
+                    connectNulls={false}
+                  />
+                ))}
               </LineChart>
             </ResponsiveContainer>
           ) : <div className="empty">No PE data</div>}
@@ -393,27 +475,33 @@ const Stock = () => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis yAxisId="left" />
-                <YAxis 
-                  yAxisId="right" 
-                  orientation="right" 
-                  tickFormatter={(v) => `${v?.toFixed?.(0)}%`} 
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  tickFormatter={(v) => `${v?.toFixed?.(0)}%`}
                 />
-                <Tooltip 
-                  content={
-                    <SharedTooltip 
-                      valueFormatter={(v) => (typeof v === 'number' ? v.toFixed(2) : v)} 
-                      nameMap={{
-                        eps_est: 'EPS Estimate', 
-                        eps_rep: 'Reported EPS', 
-                        surprise: 'Surprise %'
-                      }} 
-                    />
-                  } 
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (active && payload && payload.length) {
+                      return (
+                        <div className="custom-tooltip">
+                          <p className="tooltip-label">{label}</p>
+                          {payload.map((entry, index) => (
+                            <p key={index} className="tooltip-item" style={{ color: entry.color }}>
+                              <span className="color-indicator" style={{ backgroundColor: entry.color }}></span>
+                              {entry.name}: {typeof entry.value === 'number' ? entry.value.toFixed(2) : entry.value}
+                            </p>
+                          ))}
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
                 />
                 <Legend />
                 <Bar yAxisId="left" dataKey="eps_est" name="EPS Estimate" fill="#adb5bd" />
                 <Bar yAxisId="left" dataKey="eps_rep" name="Reported EPS" fill="#2a9d8f" />
-                <Line yAxisId="right" type="monotone" dataKey="surprise" name="Surprise %" stroke="#f4a261" strokeWidth={3} dot={{ r: 3 }} />
+                <Line yAxisId="right" type="monotone" dataKey="surprise" name="Surprise %" stroke="#f4a261" strokeWidth={3} dot={false} />
                 <ReferenceLine yAxisId="right" y={0} stroke="#ccc" />
               </BarChart>
             </ResponsiveContainer>
@@ -427,19 +515,19 @@ const Stock = () => {
               <BarChart data={cashflowSeries}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
-                <YAxis 
-                  tickFormatter={(v) => 
+                <YAxis
+                  tickFormatter={(v) =>
                     typeof v === 'number' ? (v / 1e9).toFixed(1) + 'B' : v
-                  } 
+                  }
                 />
-                <Tooltip 
+                <Tooltip
                   content={
-                    <SharedTooltip 
-                      valueFormatter={(v) => 
+                    <SharedTooltip
+                      valueFormatter={(v) =>
                         typeof v === 'number' ? (v / 1e9).toFixed(2) + 'B' : v
-                      } 
+                      }
                     />
-                  } 
+                  }
                 />
                 <Legend />
                 <ReferenceLine y={0} stroke="#ccc" />
