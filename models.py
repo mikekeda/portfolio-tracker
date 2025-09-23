@@ -63,10 +63,6 @@ class Instrument(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     yahoo_symbol: Mapped[str] = mapped_column(String(20), nullable=True, index=True)
 
-    # Static metadata (doesn't change frequently)
-    sector: Mapped[str] = mapped_column(String(100), nullable=True)
-    country: Mapped[str] = mapped_column(String(100), nullable=True)
-
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
     updated_at: Mapped[datetime] = mapped_column(

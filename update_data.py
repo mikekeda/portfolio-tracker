@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from functools import lru_cache
-from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, TypedDict, Union, cast
+from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, TypedDict, Union, Optional, cast
 
 import pandas as pd
 import requests
@@ -206,7 +206,7 @@ def request_json(url: str, headers: Dict[str, str], retries: int = REQUEST_RETRY
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
 
 
-def fetch_holdings() -> List[T212Position]:
+def fetch_holdings() -> Dict[str, T212Position]:
     """Fetch portfolio holdings from Trading212 API."""
     logging.info("Fetching portfolio from Trading212 API")
     url = "https://live.trading212.com/api/v0/equity/portfolio"
@@ -214,13 +214,13 @@ def fetch_holdings() -> List[T212Position]:
         List[T212Position],
         request_json(url, {"Authorization": TRADING212_API_KEY}),
     )
-    holdings = [h for h in raw if h["ticker"] not in STOCKS_DELISTED]
+    holdings = {h["ticker"]: h for h in raw if h["ticker"] not in STOCKS_DELISTED}
 
     return holdings
 
 
 def update_holdings(
-    holdings: List[T212Position],
+    holdings: Dict[str, Optional[T212Position]],
     instruments: List[Instrument],
     yahoo_datas: YahooData,
 ) -> List[HoldingDaily]:
@@ -232,24 +232,13 @@ def update_holdings(
     instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
 
     with get_session() as session:
-        for holding in holdings:
-            yahoo_symbol = instruments_dict[holding["ticker"]].yahoo_symbol
+        for t212_code, holding in holdings.items():
+            instrument = instruments_dict[t212_code]
+            yahoo_symbol = instrument.yahoo_symbol
             yahoo_data = yahoo_datas["info"][yahoo_symbol]
 
-            stmt = (
-                update(Instrument)
-                .where(Instrument.t212_code == holding["ticker"])
-                .values(
-                    sector=yahoo_data.get("sector"),
-                    country=yahoo_data.get("country"),
-                    updated_at=datetime.now(TIMEZONE),
-                )
-                .returning(Instrument.id)
-            )
-            instrument_id = session.execute(stmt).scalar_one()
-
             # Upsert InstrumentYahoo (detached Yahoo blobs)
-            yahoo_row = session.get(InstrumentYahoo, instrument_id)
+            yahoo_row = session.get(InstrumentYahoo, instrument.id)
             if yahoo_row:
                 yahoo_row.info = yahoo_data
                 yahoo_row.cashflow = yahoo_datas["cashflow"][yahoo_symbol]
@@ -265,7 +254,7 @@ def update_holdings(
             else:
                 session.add(
                     InstrumentYahoo(
-                        instrument_id=instrument_id,
+                        instrument_id=instrument.id,
                         info=yahoo_data,
                         cashflow=yahoo_datas["cashflow"][yahoo_symbol],
                         earnings=yahoo_datas["earnings"][yahoo_symbol],
@@ -279,7 +268,7 @@ def update_holdings(
             metrics_row = (
                 session.query(InstrumentMetricsDaily)
                 .filter(
-                    InstrumentMetricsDaily.instrument_id == instrument_id,
+                    InstrumentMetricsDaily.instrument_id == instrument.id,
                     InstrumentMetricsDaily.date == current_date,
                 )
                 .first()
@@ -293,7 +282,7 @@ def update_holdings(
             else:
                 session.add(
                     InstrumentMetricsDaily(
-                        instrument_id=instrument_id,
+                        instrument_id=instrument.id,
                         date=current_date,
                         market_cap=yahoo_data.get("marketCap"),
                         pe_ratio=yahoo_data.get("trailingPE"),
@@ -302,36 +291,37 @@ def update_holdings(
                     )
                 )
 
-            existing_holding = (
-                session.query(HoldingDaily)
-                .filter(HoldingDaily.instrument_id == instrument_id, HoldingDaily.date == current_date)
-                .first()
-            )
-
-            if existing_holding:
-                # Update existing holding
-                existing_holding.quantity = holding["quantity"]
-                existing_holding.avg_price = holding["averagePrice"]
-                existing_holding.current_price = holding["currentPrice"]
-                existing_holding.ppl = holding["ppl"]
-                existing_holding.fx_ppl = holding["fxPpl"] or 0
-                existing_holding.updated_at = datetime.now(TIMEZONE)
-                result.append(existing_holding)
-                updated += 1
-            else:
-                # Create new holding record
-                new_holding = HoldingDaily(
-                    instrument_id=instrument_id,
-                    quantity=holding["quantity"],
-                    avg_price=holding["averagePrice"],
-                    current_price=holding["currentPrice"],
-                    ppl=holding["ppl"],
-                    fx_ppl=holding["fxPpl"] or 0,
-                    date=current_date,
+            if holding:
+                existing_holding = (
+                    session.query(HoldingDaily)
+                    .filter(HoldingDaily.instrument_id == instrument.id, HoldingDaily.date == current_date)
+                    .first()
                 )
-                session.add(new_holding)
-                result.append(new_holding)
-                created += 1
+
+                if existing_holding:
+                    # Update existing holding
+                    existing_holding.quantity = holding["quantity"]
+                    existing_holding.avg_price = holding["averagePrice"]
+                    existing_holding.current_price = holding["currentPrice"]
+                    existing_holding.ppl = holding["ppl"]
+                    existing_holding.fx_ppl = holding["fxPpl"] or 0
+                    existing_holding.updated_at = datetime.now(TIMEZONE)
+                    result.append(existing_holding)
+                    updated += 1
+                else:
+                    # Create new holding record
+                    new_holding = HoldingDaily(
+                        instrument_id=instrument.id,
+                        quantity=holding["quantity"],
+                        avg_price=holding["averagePrice"],
+                        current_price=holding["currentPrice"],
+                        ppl=holding["ppl"],
+                        fx_ppl=holding["fxPpl"] or 0,
+                        date=current_date,
+                    )
+                    session.add(new_holding)
+                    result.append(new_holding)
+                    created += 1
 
     logging.info(f"Created {created} holdings, updated {updated} holdings")
 
@@ -553,6 +543,7 @@ def save_portfolio_snapshots(
         else:
             raise ValueError(f"Unknown quoteType '{info['quoteType']}' for {yahoo_symbol}")
 
+    currency_allocation["GBP"] += currency_allocation.pop("GBX", 0.0)
     return_pct = total_profit / (total_value - total_profit) * 100.0 if total_value != total_profit else 0.0
     for country in country_allocation:
         country_allocation[country] = round(100 * country_allocation[country] / total_value, 2)
@@ -562,8 +553,6 @@ def save_portfolio_snapshots(
         currency_allocation[currency] = round(100 * currency_allocation[currency] / total_value, 2)
     for quote_type in etf_equity_allocation:
         etf_equity_allocation[quote_type] = round(100 * etf_equity_allocation[quote_type] / total_value, 2)
-
-    currency_allocation["GBP"] += currency_allocation.pop("GBX", 0.0)
 
     with get_session() as session:
         # Check if snapshot already exists for this date
@@ -594,10 +583,11 @@ def save_portfolio_snapshots(
             session.add(snapshot)
 
 
-def update_holdings_and_instruments(rates: Dict[str, float]) -> None:
+def update_holdings_and_instruments(additional_t212_codes: Set[str], rates: Dict[str, float]) -> None:
     """Update holdings and instruments in the database."""
-    holdings_from_api = fetch_holdings()
-    t212_codes = set(h["ticker"] for h in holdings_from_api)
+    holdings_from_api: Dict[str, Optional[T212Position]] = {t212_code: None for t212_code in additional_t212_codes}
+    holdings_from_api.update(fetch_holdings())
+    t212_codes = set(holdings_from_api.keys())
 
     # Update instruments
     instruments = update_instruments(t212_codes)
@@ -621,4 +611,5 @@ if __name__ == "__main__":
     _rates = get_currency_table(CURRENCIES)
 
     # 2. Update holdings and instruments
-    update_holdings_and_instruments(_rates)
+    _additional_t212_codes = set()  # "ARM_US_EQ", "TSM_US_EQ", "QCOM_US_EQ"
+    update_holdings_and_instruments(_additional_t212_codes, _rates)

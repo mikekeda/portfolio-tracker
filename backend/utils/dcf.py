@@ -182,7 +182,7 @@ def _estimate_dcf_inputs(instrument: Instrument) -> DcfInputs:
     """Estimates all necessary inputs for a DCF valuation from instrument data."""
     info = instrument.yahoo.info or {}
     cashflow = instrument.yahoo.cashflow or {}
-    sector = instrument.sector
+    sector = info.get("sector")
 
     current_fcf, fcf_cagr = _extract_trailing_fcf(cashflow)
 
