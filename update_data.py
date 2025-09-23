@@ -611,5 +611,5 @@ if __name__ == "__main__":
     _rates = get_currency_table(CURRENCIES)
 
     # 2. Update holdings and instruments
-    _additional_t212_codes = set()  # "ARM_US_EQ", "TSM_US_EQ", "QCOM_US_EQ"
+    _additional_t212_codes: Set[str] = set()  # "ARM_US_EQ", "TSM_US_EQ", "QCOM_US_EQ"
     update_holdings_and_instruments(_additional_t212_codes, _rates)
