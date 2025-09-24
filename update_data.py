@@ -18,8 +18,8 @@ from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, T
 import pandas as pd
 import requests
 import yfinance as yf  # type: ignore[import-untyped]
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker, selectinload
 from sqlalchemy.sql import func
 
 from config import BATCH_SIZE_YF, CURRENCIES, HISTORY_YEARS, PATTERN_MULTI, REQUEST_RETRY, TRADING212_API_KEY, TIMEZONE
@@ -63,6 +63,17 @@ class T212Position(TypedDict):
     ppl: float
     quantity: float
     ticker: str
+
+
+# GET /api/v0/equity/account/cash
+class T212Portfolio(TypedDict):
+    blocked: float
+    free: float
+    invested: float
+    pieCash: float
+    ppl: float
+    result: float
+    total: float
 
 
 class YahooData(TypedDict):
@@ -155,7 +166,7 @@ def _fetch_rates_batch(currencies: Tuple[str, ...]) -> Dict[str, float]:
     return rates
 
 
-def get_currency_table(currencies: Tuple[str, ...]) -> Dict[str, float]:
+def update_currency_rates(currencies: Tuple[str, ...]) -> Dict[str, float]:
     """Get currency exchange rates to GBP with database caching."""
     today = datetime.now(TIMEZONE).date()
 
@@ -233,9 +244,11 @@ def update_holdings(
 
     with get_session() as session:
         # Delete sold holdings
-        deleted = session.query(HoldingDaily).filter(
-            HoldingDaily.instrument_id.notin_({i.id for i in instruments}), HoldingDaily.date == current_date
-        ).delete(synchronize_session=False)
+        deleted = (
+            session.query(HoldingDaily)
+            .filter(HoldingDaily.instrument_id.notin_({i.id for i in instruments}), HoldingDaily.date == current_date)
+            .delete(synchronize_session=False)
+        )
         if deleted:
             logging.warning("Deleted %s HoldingDaily", deleted)
 
@@ -514,83 +527,7 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
     return yahoo_data
 
 
-def save_portfolio_snapshots(
-    holdings: List[HoldingDaily], instruments: List[Instrument], rates: Dict[str, float], yahoo_data: Dict[str, Any]
-) -> None:
-    """Save portfolio snapshot to database."""
-    snapshot_date = datetime.now(TIMEZONE).date()
-    total_value = 0.0
-    total_profit = 0.0
-    country_allocation: Dict[str, float] = defaultdict(float)
-    sector_allocation: Dict[str, float] = defaultdict(float)
-    currency_allocation: Dict[str, float] = defaultdict(float)
-    etf_equity_allocation: Dict[str, float] = defaultdict(float)
-
-    instruments_dict = {i.id: i for i in instruments}
-
-    for h in holdings:
-        instrument = instruments_dict[h.instrument_id]
-        yahoo_symbol = instrument.yahoo_symbol
-        info = yahoo_data[yahoo_symbol]
-
-        gbp_value = h.quantity * h.current_price * rates[instrument.currency]
-        total_value += gbp_value
-        total_profit += h.ppl
-        etf_equity_allocation[info["quoteType"]] += gbp_value
-        currency_allocation[instrument.currency] += gbp_value
-
-        if info["quoteType"] == "EQUITY":
-            country_allocation[info.get("country") or "Other"] += gbp_value
-            sector_allocation[info.get("sector") or "Other"] += gbp_value
-        elif info["quoteType"] == "ETF":
-            for country, percent in ETF_COUNTRY_ALLOCATION[yahoo_symbol].items():
-                country_allocation[country] += gbp_value * percent / 100
-            for sector, percent in ETF_SECTOR_ALLOCATION[yahoo_symbol].items():
-                sector_allocation[sector] += gbp_value * percent / 100
-        else:
-            raise ValueError(f"Unknown quoteType '{info['quoteType']}' for {yahoo_symbol}")
-
-    currency_allocation["GBP"] += currency_allocation.pop("GBX", 0.0)
-    return_pct = total_profit / (total_value - total_profit) * 100.0 if total_value != total_profit else 0.0
-    for country in country_allocation:
-        country_allocation[country] = round(100 * country_allocation[country] / total_value, 2)
-    for sector in sector_allocation:
-        sector_allocation[sector] = round(100 * sector_allocation[sector] / total_value, 2)
-    for currency in currency_allocation:
-        currency_allocation[currency] = round(100 * currency_allocation[currency] / total_value, 2)
-    for quote_type in etf_equity_allocation:
-        etf_equity_allocation[quote_type] = round(100 * etf_equity_allocation[quote_type] / total_value, 2)
-
-    with get_session() as session:
-        # Check if snapshot already exists for this date
-        existing_snapshot = session.query(PortfolioDaily).filter(PortfolioDaily.date == snapshot_date).first()
-
-        if existing_snapshot:
-            # Update existing snapshot
-            existing_snapshot.total_value_gbp = total_value
-            existing_snapshot.total_profit_gbp = total_profit
-            existing_snapshot.total_return_pct = return_pct
-            existing_snapshot.country_allocation = country_allocation
-            existing_snapshot.sector_allocation = sector_allocation
-            existing_snapshot.currency_allocation = currency_allocation
-            existing_snapshot.etf_equity_split = etf_equity_allocation
-            existing_snapshot.updated_at = datetime.now(TIMEZONE)
-        else:
-            # Create new snapshot
-            snapshot = PortfolioDaily(
-                date=snapshot_date,
-                total_value_gbp=total_value,
-                total_profit_gbp=total_profit,
-                total_return_pct=return_pct,
-                country_allocation=country_allocation,
-                sector_allocation=sector_allocation,
-                currency_allocation=currency_allocation,
-                etf_equity_split=etf_equity_allocation,
-            )
-            session.add(snapshot)
-
-
-def update_holdings_and_instruments(additional_t212_codes: Set[str], rates: Dict[str, float]) -> None:
+def update_holdings_and_instruments(additional_t212_codes: Set[str]) -> None:
     """Update holdings and instruments in the database."""
     holdings_from_api: Dict[str, Optional[T212Position]] = {t212_code: None for t212_code in additional_t212_codes}
     holdings_from_api.update(fetch_holdings())
@@ -604,9 +541,131 @@ def update_holdings_and_instruments(additional_t212_codes: Set[str], rates: Dict
     get_and_update_prices(yahoo_symbols)
 
     yahoo_data = get_yahoo_ticker_data(list(yahoo_symbols))
-    holdings = update_holdings(holdings_from_api, instruments, yahoo_data)
+    update_holdings(holdings_from_api, instruments, yahoo_data)
 
-    save_portfolio_snapshots(holdings, instruments, rates, yahoo_data["info"])
+
+def get_rates(session: Session) -> Dict[str, float]:
+    """Get current currency exchange rates to GBP."""
+    table = {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01}
+
+    result = session.execute(
+        select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate).filter(
+            CurrencyRateDaily.from_currency.in_(CURRENCIES),
+            CurrencyRateDaily.to_currency == "GBP",
+            CurrencyRateDaily.date == datetime.now(TIMEZONE).date(),
+        )
+    )
+    rates = result.all()
+    for currency, rate in rates:
+        table[currency] = rate
+
+    return table
+
+
+def get_portfolio_allocation(
+    session: Session, portfolio_value: float, snapshot_date: date
+) -> Dict[str, Dict[str, float]]:
+    """Get portfolio allocation per country, sector, currency and etf/equity split"""
+    allocations: Dict[str, Dict[str, float]] = {
+        "country": defaultdict(float),
+        "sector": defaultdict(float),
+        "currency": defaultdict(float),
+        "etf_equity": defaultdict(float),
+    }
+
+    rates = get_rates(session)
+
+    holdings_result = session.execute(
+        select(HoldingDaily)
+        .join(Instrument)
+        .filter(HoldingDaily.date == snapshot_date)
+        .order_by(Instrument.name)
+        .options(selectinload(HoldingDaily.instrument).selectinload(Instrument.yahoo))
+    )
+    holdings = holdings_result.scalars().all()
+
+    for h in holdings:
+        instrument = h.instrument
+        yahoo_symbol = instrument.yahoo_symbol
+        info = instrument.yahoo.info
+
+        gbp_value = h.quantity * h.current_price * rates[instrument.currency]
+        allocations["etf_equity"][info["quoteType"]] += gbp_value
+        allocations["currency"][instrument.currency] += gbp_value
+
+        if info["quoteType"] == "EQUITY":
+            allocations["country"][info.get("country") or "Other"] += gbp_value
+            allocations["sector"][info.get("sector") or "Other"] += gbp_value
+        elif info["quoteType"] == "ETF":
+            for country, percent in ETF_COUNTRY_ALLOCATION[yahoo_symbol].items():
+                allocations["country"][country] += gbp_value * percent / 100
+            for sector, percent in ETF_SECTOR_ALLOCATION[yahoo_symbol].items():
+                allocations["sector"][sector] += gbp_value * percent / 100
+        else:
+            raise ValueError(f"Unknown quoteType '{info['quoteType']}' for {yahoo_symbol}")
+
+    allocations["currency"]["GBP"] += allocations["currency"].pop("GBX", 0.0)
+    for country in allocations["country"]:
+        allocations["country"][country] = round(100 * allocations["country"][country] / portfolio_value, 2)
+    for sector in allocations["sector"]:
+        allocations["sector"][sector] = round(100 * allocations["sector"][sector] / portfolio_value, 2)
+    for currency in allocations["currency"]:
+        allocations["currency"][currency] = round(100 * allocations["currency"][currency] / portfolio_value, 2)
+    for quote_type in allocations["etf_equity"]:
+        allocations["etf_equity"][quote_type] = round(100 * allocations["etf_equity"][quote_type] / portfolio_value, 2)
+
+    return allocations
+
+
+def update_portfolio():
+    """Update portfolio."""
+    logging.info("Fetching portfolio from Trading212 API")
+    snapshot_date = datetime.now(TIMEZONE).date()
+    url = "https://live.trading212.com/api/v0/equity/account/cash"
+    portfolio_from_api = cast(
+        T212Portfolio,
+        request_json(url, {"Authorization": TRADING212_API_KEY}),
+    )
+    cash = sum(
+        [
+            portfolio_from_api["free"] or 0,
+            portfolio_from_api["pieCash"] or 0,
+            portfolio_from_api["blocked"] or 0,
+        ]
+    )
+
+    with get_session() as session:
+        # Check if snapshot already exists for this date
+        existing_snapshot = session.query(PortfolioDaily).filter(PortfolioDaily.date == snapshot_date).first()
+        allocations = get_portfolio_allocation(session, portfolio_from_api["total"] - cash, snapshot_date)
+
+        if existing_snapshot:
+            # Update existing snapshot
+            existing_snapshot.value = portfolio_from_api["total"]
+            existing_snapshot.unrealised_profit = portfolio_from_api["ppl"]
+            existing_snapshot.realised_profit = portfolio_from_api["result"]
+            existing_snapshot.cash = cash
+            existing_snapshot.invested = portfolio_from_api["invested"]
+            existing_snapshot.country_allocation = allocations["country"]
+            existing_snapshot.sector_allocation = allocations["sector"]
+            existing_snapshot.currency_allocation = allocations["currency"]
+            existing_snapshot.etf_equity_split = allocations["etf_equity"]
+            existing_snapshot.updated_at = datetime.now(TIMEZONE)
+        else:
+            # Create new snapshot
+            snapshot = PortfolioDaily(
+                date=snapshot_date,
+                value=portfolio_from_api["total"],
+                unrealised_profit=portfolio_from_api["ppl"],
+                realised_profit=portfolio_from_api["result"],
+                cash=cash,
+                invested=portfolio_from_api["invested"],
+                country_allocation=allocations["country"],
+                sector_allocation=allocations["sector"],
+                currency_allocation=allocations["currency"],
+                etf_equity_split=allocations["etf_equity"],
+            )
+            session.add(snapshot)
 
 
 if __name__ == "__main__":
@@ -615,8 +674,11 @@ if __name__ == "__main__":
     logging.info("Starting data update process")
 
     # 1. Update rates
-    _rates = get_currency_table(CURRENCIES)
+    update_currency_rates(CURRENCIES)
 
     # 2. Update holdings and instruments
     _additional_t212_codes: Set[str] = set()  # "ARM_US_EQ", "TSM_US_EQ", "QCOM_US_EQ"
-    update_holdings_and_instruments(_additional_t212_codes, _rates)
+    update_holdings_and_instruments(_additional_t212_codes)
+
+    # 3. Update portfolio
+    update_portfolio()

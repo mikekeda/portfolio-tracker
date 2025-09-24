@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 
 from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from config import TIMEZONE
@@ -203,9 +204,11 @@ class PortfolioDaily(Base):
     date: Mapped[date] = mapped_column(Date, nullable=False, unique=True, index=True)
 
     # Portfolio metrics
-    total_value_gbp: Mapped[float] = mapped_column(Float, nullable=False)
-    total_profit_gbp: Mapped[float] = mapped_column(Float, nullable=False)
-    total_return_pct: Mapped[float] = mapped_column(Float, nullable=False)
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    unrealised_profit: Mapped[float] = mapped_column(Float, nullable=False)
+    realised_profit: Mapped[float] = mapped_column(Float, nullable=False)
+    cash: Mapped[float] = mapped_column(Float, nullable=False)
+    invested: Mapped[float] = mapped_column(Float, nullable=False)
 
     # Allocation data (stored as JSON for flexibility)
     country_allocation: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
@@ -218,5 +221,9 @@ class PortfolioDaily(Base):
         DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
     )
 
+    @hybrid_property
+    def return_pct(self) -> float:
+        return (self.unrealised_profit + self.realised_profit) / self.invested * 100.0
+
     def __repr__(self) -> str:
-        return f"<PortfolioSnapshot(date='{self.date}', value={self.total_value_gbp})>"
+        return f"<PortfolioSnapshot(date='{self.date}', value={self.value})>"

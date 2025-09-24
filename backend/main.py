@@ -304,16 +304,13 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             else:
                 losing_count += 1
 
-        win_rate = (profitable_count / len(holdings) * 100) if holdings else 0
-
         return {
-            "total_value": round(latest_snapshot.total_value_gbp, 2),
-            "total_profit": round(latest_snapshot.total_profit_gbp, 2),
-            "total_return_pct": round(latest_snapshot.total_return_pct, 2),
+            "total_value": latest_snapshot.value,
+            "total_profit": latest_snapshot.unrealised_profit,
+            "total_return_pct": latest_snapshot.return_pct,
             "total_holdings": len(holdings),
             "profitable_holdings": profitable_count,
             "losing_holdings": losing_count,
-            "win_rate": round(win_rate, 2),
             "last_updated": latest_snapshot.date.isoformat(),
         }
     except Exception as e:
@@ -337,7 +334,7 @@ async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_sessi
             "country_allocation": latest_snapshot.country_allocation,
             "currency_allocation": latest_snapshot.currency_allocation,
             "etf_equity_split": latest_snapshot.etf_equity_split,
-            "total_value": latest_snapshot.total_value_gbp,
+            "total_value": latest_snapshot.value,
         }
     except Exception as e:
         logger.error(f"Error fetching allocations: {e}")
@@ -365,7 +362,7 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
         bench_rows = bench_res.all()
         daily_bench = {bench.date: bench.price for bench in bench_rows}
         bench_base_price = bench_rows[0].price
-        bench_start = snapshots[0].total_return_pct
+        bench_start = snapshots[0].return_pct
         bench = bench_start + (bench_rows[0].price / bench_base_price - 1) * 100
 
         history_data = []
@@ -378,9 +375,9 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
             history_data.append(
                 {
                     "date": snapshot.date.isoformat(),
-                    "total_value": snapshot.total_value_gbp,
-                    "total_profit": snapshot.total_profit_gbp,
-                    "total_return_pct": snapshot.total_return_pct,
+                    "total_value": snapshot.value,
+                    "total_profit": snapshot.unrealised_profit,
+                    "total_return_pct": snapshot.return_pct,
                     "country_allocation": snapshot.country_allocation,
                     "sector_allocation": snapshot.sector_allocation,
                     "currency_allocation": snapshot.currency_allocation,
