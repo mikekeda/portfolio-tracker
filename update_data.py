@@ -18,7 +18,7 @@ from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, T
 import pandas as pd
 import requests
 import yfinance as yf  # type: ignore[import-untyped]
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql import func
 
@@ -232,6 +232,13 @@ def update_holdings(
     instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
 
     with get_session() as session:
+        # Delete sold holdings
+        deleted = session.query(HoldingDaily).filter(
+            HoldingDaily.instrument_id.notin_({i.id for i in instruments}), HoldingDaily.date == current_date
+        ).delete(synchronize_session=False)
+        if deleted:
+            logging.warning("Deleted %s HoldingDaily", deleted)
+
         for t212_code, holding in holdings.items():
             instrument = instruments_dict[t212_code]
             yahoo_symbol = instrument.yahoo_symbol
