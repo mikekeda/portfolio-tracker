@@ -232,10 +232,14 @@ const Holdings = () => {
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="pe"></span>;
-          const isPositive = value < 30;
-          const isNegative = value > 100;
-          const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`pe ${className}`}>{Math.round(value)}</span>;
+          const avgPe = info.row?.original?.avg_pe;
+          let className = '';
+          if (avgPe !== null && avgPe !== undefined) {
+            if (value < avgPe) className = 'positive';
+            else if (value > avgPe) className = 'negative';
+          }
+          const title = avgPe !== null && avgPe !== undefined ? `Avg PE: ${Math.round(avgPe)}` : undefined;
+          return <span className={`pe ${className}`} title={title}>{Math.round(value)}</span>;
         },
         enableSorting: true,
         enableGlobalFilter: false,

@@ -5,8 +5,9 @@ Defines the database schema using SQLAlchemy ORM.
 """
 
 from datetime import date, datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -132,6 +133,7 @@ class InstrumentYahoo(Base):
     recommendations: Mapped[Dict[str, Any]] = mapped_column(JSONB)
     analyst_price_targets: Mapped[Dict[str, Any]] = mapped_column(JSONB)
     splits: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    pes: Mapped[Dict[str, Any]] = mapped_column(JSONB)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -142,6 +144,31 @@ class InstrumentYahoo(Base):
 
     def __repr__(self) -> str:
         return f"<InstrumentYahoo(instrument_id={self.instrument_id})>"
+
+    @hybrid_property
+    def avg_pe_5y(self) -> Optional[float]:
+        """Return the average PE ratio over the last 5 years"""
+
+        if not self.pes:
+            return None
+
+        start = datetime.now(TIMEZONE).date() + relativedelta(years=-5)
+
+        values: List[float] = []
+        for k, v in self.pes.items():
+            d = datetime.strptime(k, "%Y-%m-%d").date()
+
+            if d < start:
+                continue
+
+            pe = float(v["pe_ratio"])
+            if pe > 0:
+                values.append(pe)
+
+        if not values:
+            return None
+
+        return float(sum(values) / len(values))
 
 
 class InstrumentMetricsDaily(Base):

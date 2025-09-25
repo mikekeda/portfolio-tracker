@@ -193,6 +193,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "fx_ppl": holding.fx_ppl,
                     "market_cap": metrics.market_cap,
                     "pe_ratio": metrics.pe_ratio,
+                    "avg_pe": holding.instrument.yahoo.avg_pe_5y,
                     "beta": metrics.beta,
                     "date": holding.date.isoformat(),
                     "market_value": market_value_gbp,  # Now in GBP
