@@ -233,7 +233,6 @@ def fetch_holdings() -> Dict[str, T212Position]:
 def update_holdings(
     holdings: Dict[str, Optional[T212Position]],
     instruments: List[Instrument],
-    yahoo_datas: YahooData,
 ) -> List[HoldingDaily]:
     """Update holdings in the database."""
     created = 0
@@ -241,6 +240,8 @@ def update_holdings(
     result = []
     current_date = datetime.now(TIMEZONE).date()
     instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
+
+    yahoo_datas = get_yahoo_ticker_data([i.yahoo_symbol for i in instruments])
 
     with get_session() as session:
         # Delete sold holdings
@@ -439,11 +440,13 @@ def update_prices(session: Session, tickers: List[str], start: date) -> None:
                     session.add(prices)
 
 
-def get_and_update_prices(tickers: Set[str]) -> None:
+def get_and_update_prices() -> None:
     """Get and update price data for all tickers."""
     today = datetime.now(TIMEZONE).date()
 
     with get_session() as session:
+        tickers = set(session.scalars(select(Instrument.yahoo_symbol)).all())
+
         existing_prices = (
             session.query(
                 PricesDaily.symbol,
@@ -535,13 +538,7 @@ def update_holdings_and_instruments(additional_t212_codes: Set[str]) -> None:
 
     # Update instruments
     instruments = update_instruments(t212_codes)
-    yahoo_symbols = set(i.yahoo_symbol for i in instruments)
-
-    # Update prices
-    get_and_update_prices(yahoo_symbols)
-
-    yahoo_data = get_yahoo_ticker_data(list(yahoo_symbols))
-    update_holdings(holdings_from_api, instruments, yahoo_data)
+    update_holdings(holdings_from_api, instruments)
 
 
 def get_rates(session: Session) -> Dict[str, float]:
@@ -680,5 +677,8 @@ if __name__ == "__main__":
     _additional_t212_codes: Set[str] = set()  # "ARM_US_EQ", "TSM_US_EQ", "QCOM_US_EQ"
     update_holdings_and_instruments(_additional_t212_codes)
 
-    # 3. Update portfolio
+    # 3. Update prices
+    get_and_update_prices()
+
+    # 4. Update portfolio
     update_portfolio()
