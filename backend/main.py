@@ -8,6 +8,7 @@ import logging
 import os
 
 # Standard library imports
+import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -23,12 +24,12 @@ from sqlalchemy.orm import selectinload
 
 from backend.screener_config import get_screener_config
 from backend.utils.dcf import get_dcf_prices
-from backend.utils.pe import get_pe_history
+from backend.utils.fear_greed_index import get_fear_greed_index
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 
 # Local imports
-from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH
+from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH, VIX
 from models import (
     CurrencyRateDaily,
     HoldingDaily,
@@ -292,7 +293,19 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             return {"error": "No portfolio data available"}
 
         # Get holdings for the same date to calculate win rate
-        holdings_result = await session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date))
+        holdings_result, vix_result, fear_greed_index = await asyncio.gather(
+            session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)),
+            session.execute(
+                select(PricesDaily.close_price)
+                .where(
+                    PricesDaily.symbol == VIX,
+                )
+                .order_by(PricesDaily.date.desc())
+                .limit(1)
+            ),
+            get_fear_greed_index(),
+        )
+
         holdings = holdings_result.scalars().all()
 
         profitable_count = 0
@@ -313,6 +326,8 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             "profitable_holdings": profitable_count,
             "losing_holdings": losing_count,
             "last_updated": latest_snapshot.date.isoformat(),
+            "vix": vix_result.scalar(),
+            "fear_greed_index": fear_greed_index,
         }
     except Exception as e:
         logger.error(f"Error fetching portfolio summary: {e}")
@@ -447,8 +462,6 @@ async def get_instrument(
         if not instrument:
             raise HTTPException(status_code=404, detail="Instrument not found")
 
-        pe_history = await get_pe_history(instrument, price_data)
-
         yd = instrument.yahoo.info or {}
 
         fundamentals = {
@@ -498,7 +511,9 @@ async def get_instrument(
             "earnings": instrument.yahoo.earnings or {},
             "cashflow": instrument.yahoo.cashflow or {},
             "prices": chart_price_data,
-            "pe_history": pe_history,
+            "pe_history": {
+                k: v["pe_ratio"] for k, v in instrument.yahoo.pes.items() if date.fromisoformat(k) >= start_date
+            },
             "splits": {k: v for k, v in instrument.yahoo.splits.items() if date.fromisoformat(k) >= start_date},
             "recommendations": instrument.yahoo.recommendations or {},
         }

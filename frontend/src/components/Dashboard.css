@@ -81,6 +81,28 @@
   color: #dc3545;
 }
 
+/* Fear & Greed Index colors */
+.card .value.extreme-fear {
+  color: #dc3545;
+}
+
+.card .value.fear {
+  color: #fd7e14;
+}
+
+.card .value.neutral {
+  color: #6c757d;
+}
+
+.card .value.greed {
+  color: #28a745;
+}
+
+.card .value.extreme-greed {
+  color: #20c997;
+}
+
+
 /* Allocations Section */
 .allocations-section {
   display: grid;
