@@ -440,7 +440,7 @@ def update_prices(session: Session, tickers: List[str], start: date) -> None:
                     session.add(prices)
 
 
-def get_and_update_prices() -> None:
+def get_and_update_prices(tickers_to_add: Set[str]) -> None:
     """Get and update price data for all tickers."""
     today = datetime.now(TIMEZONE).date()
 
@@ -466,7 +466,7 @@ def get_and_update_prices() -> None:
                 update_prices(session, list(existing_tickers), start)
 
         # Get prices for new tickers
-        new_tickers = list(tickers - existing_tickers)
+        new_tickers = list(tickers_to_add | tickers - existing_tickers)
         if new_tickers:
             start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
             update_prices(session, new_tickers, start)
@@ -678,7 +678,8 @@ if __name__ == "__main__":
     update_holdings_and_instruments(_additional_t212_codes)
 
     # 3. Update prices
-    get_and_update_prices()
+    _tickers_to_add: Set[str] = set()  # "^VIX"
+    get_and_update_prices(_tickers_to_add)
 
     # 4. Update portfolio
     update_portfolio()
