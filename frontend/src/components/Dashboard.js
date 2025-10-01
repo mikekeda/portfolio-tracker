@@ -20,7 +20,7 @@ const getFearGreedColor = (label) => {
 const getVixTooltip = (vix) => {
   let recommendation = '';
   let level = '';
-  
+
   if (vix < 15) {
     level = 'Low Volatility';
     recommendation = 'Market complacency - consider hedging or reducing risk';
@@ -34,7 +34,7 @@ const getVixTooltip = (vix) => {
     level = 'High Volatility';
     recommendation = 'Market panic - potential buying opportunity for contrarians';
   }
-  
+
   return `VIX: ${vix.toFixed(2)} (${level})\n\n${recommendation}\n\nScale: 0-15 (Low), 15-25 (Normal), 25-35 (Elevated), 35+ (High)`;
 };
 
@@ -42,7 +42,7 @@ const getVixTooltip = (vix) => {
 const getFearGreedTooltip = (fearGreed) => {
   const { value, label } = fearGreed;
   let recommendation = '';
-  
+
   switch (label.toLowerCase()) {
     case 'extreme fear':
       recommendation = '🎯 CONTRARIAN BUY SIGNAL - Market oversold, potential buying opportunity';
@@ -62,7 +62,7 @@ const getFearGreedTooltip = (fearGreed) => {
     default:
       recommendation = '📊 Market sentiment indicator';
   }
-  
+
   return `Fear & Greed: ${value.toFixed(1)} (${label})\n\n${recommendation}\n\nScale: 0-25 (Extreme Fear), 25-40 (Fear), 40-60 (Neutral), 60-75 (Greed), 75-100 (Extreme Greed)`;
 };
 
@@ -155,15 +155,29 @@ const Dashboard = () => {
         {summary.vix && (
           <div className="card" title={getVixTooltip(summary.vix)}>
             <h3>VIX</h3>
-            <p className="value">{summary.vix.toFixed(2)}</p>
+            <a
+              href="https://markets.businessinsider.com/index/vix"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="value-link"
+            >
+              <p className="value">{summary.vix.toFixed(2)}</p>
+            </a>
           </div>
         )}
         {summary.fear_greed_index && (
           <div className="card" title={getFearGreedTooltip(summary.fear_greed_index)}>
             <h3>Fear & Greed</h3>
-            <p className={`value ${getFearGreedColor(summary.fear_greed_index.label)}`}>
-              {summary.fear_greed_index.value.toFixed(1)}
-            </p>
+            <a
+              href="https://edition.cnn.com/markets/fear-and-greed"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="value-link"
+            >
+              <p className={`value ${getFearGreedColor(summary.fear_greed_index.label)}`}>
+                {summary.fear_greed_index.value.toFixed(1)}
+              </p>
+            </a>
           </div>
         )}
       </div>

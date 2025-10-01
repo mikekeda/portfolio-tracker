@@ -64,6 +64,22 @@
   color: #333;
 }
 
+.card .value-link {
+  text-decoration: none;
+  color: inherit;
+  display: block;
+  transition: opacity 0.2s ease;
+}
+
+.card .value-link:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+.card .value-link .value {
+  cursor: pointer;
+}
+
 .positions-breakdown {
   font-size: 24px;
   font-weight: 600;

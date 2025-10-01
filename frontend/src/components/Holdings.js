@@ -23,6 +23,7 @@ const Holdings = () => {
   const [selectedScreeners, setSelectedScreeners] = useState([]);
   const [availableScreeners, setAvailableScreeners] = useState([]);
   const [screenersLoading, setScreenersLoading] = useState(true);
+  const [quickRatioThresholds, setQuickRatioThresholds] = useState({});
 
   const columnHelper = createColumnHelper();
 
@@ -139,7 +140,7 @@ const Holdings = () => {
           const value = info.getValue();
           return (
             <span className={`return ${value >= 0 ? 'positive' : 'negative'}`}>
-              {value >= 0 ? '+' : ''}{value.toFixed(1)}%
+              {value >= 0 ? '+' : ''}{Math.round(value)}%
             </span>
           );
         },
@@ -169,7 +170,7 @@ const Holdings = () => {
           const isPositive = value > 20;
           const isNegative = value < 0;
           const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`prediction ${className}`}>{value >= 0 ? '+' : ''}{Math.round(value * 100) / 100}%</span>;
+          return <span className={`prediction ${className}`}>{value >= 0 ? '+' : ''}{Math.round(value)}%</span>;
         },
         enableSorting: true,
         enableGlobalFilter: false,
@@ -193,7 +194,7 @@ const Holdings = () => {
 
           return (
             <span className={`bar-column ${isNegative ? 'negative' : ''}`} style={barStyle}>
-              <span className={`institutional ${textClassName}`}>{Math.round(value * 100) / 100}%</span>
+              <span className={`institutional ${textClassName}`}>{Math.round(value)}%</span>
             </span>
           );
         },
@@ -221,7 +222,7 @@ const Holdings = () => {
           const isPositive = value < 1.5;
           const isNegative = value > 3.0;
           const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`peg ${className}`}>{value}</span>;
+          return <span className={`peg ${className}`}>{Math.round(value * 100) / 100}</span>;
         },
         enableSorting: true,
         enableGlobalFilter: false,
@@ -240,6 +241,29 @@ const Holdings = () => {
           }
           const title = avgPe !== null && avgPe !== undefined ? `Avg PE: ${Math.round(avgPe)}` : undefined;
           return <span className={`pe ${className}`} title={title}>{Math.round(value)}</span>;
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 50,
+      }),
+      columnHelper.accessor('ps_ratio', {
+        header: 'PS',
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="ps"></span>;
+
+          let className = '';
+          if (value < 1.5) {
+            className = 'positive'; // Green for PS < 1.5
+          } else if (value > 3) {
+            className = 'negative'; // Red for PS > 3
+          }
+
+          return (
+            <span className={`ps ${className}`} title={`Price-to-Sales Ratio: ${value.toFixed(2)}`}>
+              {value.toFixed(1)}
+            </span>
+          );
         },
         enableSorting: true,
         enableGlobalFilter: false,
@@ -267,7 +291,7 @@ const Holdings = () => {
           const isPositive = value > 30;
           const isNegative = value < 10;
           const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`margins ${className}`}>{value >= 0 ? '+' : ''}{Math.round(value * 100) / 100}%</span>;
+          return <span className={`margins ${className}`}>{value >= 0 ? '+' : ''}{Math.round(value)}%</span>;
         },
         enableSorting: true,
         enableGlobalFilter: false,
@@ -281,21 +305,30 @@ const Holdings = () => {
           const isPositive = value > 40;
           const isNegative = value < 15;
           const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`growth ${className}`}>{value >= 0 ? '+' : ''}{Math.round(value * 100) / 100}%</span>;
+          return <span className={`growth ${className}`}>{value >= 0 ? '+' : ''}{Math.round(value)}%</span>;
         },
         enableSorting: true,
         enableGlobalFilter: false,
         size: 80,
       }),
-      columnHelper.accessor('return_on_assets', {
-        header: 'ROA',
+      columnHelper.accessor('roic', {
+        header: 'ROIC',
         cell: (info) => {
           const value = info.getValue();
-          if (value === null || value === undefined) return <span className="roa"></span>;
-          const isPositive = value > 10;
-          const isNegative = value < 2;
-          const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`roa ${className}`}>{value >= 0 ? '+' : ''}{Math.round(value * 100) / 100}%</span>;
+          if (value === null || value === undefined) return <span className="roic"></span>;
+
+          let className = '';
+          if (value > 20) {
+            className = 'positive'; // Green for ROIC > 20%
+          } else if (value < 10) {
+            className = 'negative'; // Red for ROIC < 10%
+          }
+
+          return (
+            <span className={`roic ${className}`} title={`Return on Invested Capital: ${value.toFixed(2)}%`}>
+              {value >= 0 ? '+' : ''}{Math.round(value)}%
+            </span>
+          );
         },
         enableSorting: true,
         enableGlobalFilter: false,
@@ -314,6 +347,57 @@ const Holdings = () => {
         enableSorting: true,
         enableGlobalFilter: false,
         size: 80,
+      }),
+      columnHelper.accessor('quickRatio', {
+        header: 'Quick',
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="quick-ratio"></span>;
+
+          // Get sector-specific thresholds from the row data
+          const row = info.row.original;
+          const sector = row.sector || 'Other';
+          const thresholds = quickRatioThresholds[sector] || quickRatioThresholds['Other'];
+
+          let className = '';
+          if (value >= thresholds[1]) {
+            className = 'positive'; // Green for Quick Ratio >= green threshold
+          } else if (value < thresholds[0]) {
+            className = 'negative'; // Red for Quick Ratio < red threshold
+          }
+
+          return (
+            <span className={`quick-ratio ${className}`} title={`Quick Ratio: ${value.toFixed(2)} (${sector} sector)\nThresholds: Red < ${thresholds[0]}, Green ≥ ${thresholds[1]}`}>
+              {value.toFixed(1)}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 60,
+      }),
+      columnHelper.accessor('debtToEquity', {
+        header: 'D/E',
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="debt-equity"></span>;
+
+          let className = '';
+          if (value <= 50) {
+            className = 'positive'; // Green for D/E <= 30% (low debt)
+          } else if (value > 100) {
+            className = 'negative'; // Red for D/E > 100% (high debt)
+          }
+
+          return (
+            <span className={`debt-equity ${className}`} title={`Debt-to-Equity: ${value.toFixed(2)}\nGreen: ≤ 50% (Low debt), Red: > 100% (High debt)`}>
+              {Math.round(value)}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 60,
       }),
       columnHelper.accessor('recommendation_mean', {
         header: 'Rec',
@@ -391,7 +475,7 @@ const Holdings = () => {
 
           return (
             <span className={`bar-column ${isNegative ? 'negative' : ''}`} style={barStyle}>
-              <span className={`short ${textClassName}`}>{Math.round(value * 100) / 100}%</span>
+              <span className={`short ${textClassName}`}>{Math.round(value)}%</span>
             </span>
           );
         },
@@ -434,7 +518,7 @@ const Holdings = () => {
 
           return (
             <span className={`screener-score ${className}`}>
-              {value.toFixed(1)}
+              {value}
             </span>
           );
         },
@@ -559,8 +643,8 @@ const Holdings = () => {
           const className = isProfit ? 'positive' : isLoss ? 'negative' : '';
 
           return (
-            <span className={`dcf-diff ${className}`} title={dcfPrice ? `DCF: ${dcfPrice.toFixed(2)}` : undefined}>
-              {potentialProfitPct >= 0 ? '+' : ''}{potentialProfitPct.toFixed(1)}%
+            <span className={`dcf-diff ${className}`}>
+              {potentialProfitPct >= 0 ? '+' : ''}{Math.round(dcfPrice)}%
             </span>
           );
         },
@@ -616,6 +700,7 @@ const Holdings = () => {
         setLoading(true);
         const data = await portfolioAPI.getCurrentHoldings();
         setHoldings(data.holdings || []);
+        setQuickRatioThresholds(data.quick_ratio_thresholds || {});
         setError(null);
       } catch (err) {
         setError('Failed to fetch holdings data');

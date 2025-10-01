@@ -24,12 +24,14 @@ from sqlalchemy.orm import selectinload
 
 from backend.screener_config import get_screener_config
 from backend.utils.dcf import get_dcf_prices
-from backend.utils.fear_greed_index import get_fear_greed_index
+from backend.utils.fear_greed_index import gen_fear_greed_index
+from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 
 # Local imports
-from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCH, VIX
+from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCHES, VIX
+from data import QUICK_RATIO_THRESHOLDS
 from models import (
     CurrencyRateDaily,
     HoldingDaily,
@@ -194,18 +196,19 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "fx_ppl": holding.fx_ppl,
                     "market_cap": metrics.market_cap,
                     "pe_ratio": metrics.pe_ratio,
+                    "ps_ratio": holding.instrument.yahoo.info.get("priceToSalesTrailing12Months"),
                     "avg_pe": holding.instrument.yahoo.avg_pe_5y,
                     "beta": metrics.beta,
                     "date": holding.date.isoformat(),
                     "market_value": market_value_gbp,  # Now in GBP
                     "profit": holding.ppl,  # Total profit (same as terminal - ppl already includes FX)
-                    "return_pct": round((holding.ppl / (market_value_gbp - holding.ppl) * 100.0), 2)
+                    "return_pct": (holding.ppl / (market_value_gbp - holding.ppl) * 100.0)
                     if (market_value_gbp - holding.ppl) > 0
                     else 0.0,
                     "portfolio_pct": portfolio_pct,
                     "dividend_yield": info.get("dividendYield"),
                     "business_summary": info.get("longBusinessSummary"),
-                    "prediction": round((info["targetMedianPrice"] / holding.current_price - 1) * 100.0)
+                    "prediction": (info["targetMedianPrice"] / holding.current_price - 1) * 100.0
                     if info.get("targetMedianPrice")
                     else None,
                     "institutional_ownership": round(metrics.institutional * 100.0)
@@ -226,9 +229,14 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "return_on_equity": info["returnOnEquity"] * 100.0
                     if info.get("returnOnEquity")
                     else None,  # Keep full precision for screener evaluation
+                    "roic": get_roic(info),
                     "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100
                     if (info.get("freeCashflow") and info.get("marketCap", 0) > 0)
                     else None,
+                    "quickRatio": info.get("quickRatio")
+                    if holding.instrument.yahoo.info.get("sector") != "Financial Services"
+                    else None,
+                    "debtToEquity": info.get("debtToEquity"),
                     "recommendation_mean": round(info["recommendationMean"], 2)
                     if info.get("recommendationMean")
                     else None,
@@ -274,6 +282,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
         return {
             "holdings": portfolio_data,
             "total_holdings": len(portfolio_data),
+            "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS,
             "last_updated": latest_date.isoformat(),
         }
     except Exception as e:
@@ -303,7 +312,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
                 .order_by(PricesDaily.date.desc())
                 .limit(1)
             ),
-            get_fear_greed_index(),
+            gen_fear_greed_index(),
         )
 
         holdings = holdings_result.scalars().all()
@@ -368,26 +377,32 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
         snapshots = snap_res.scalars().all()
 
         bench_res = await session.execute(
-            select(PricesDaily.date, PRICE_COLUMN)
+            select(HoldingDaily.date, HoldingDaily.current_price, Instrument.yahoo_symbol)
+            .join(Instrument)
             .where(
-                PricesDaily.symbol == BENCH,
-                PricesDaily.date >= snapshots[0].date,  # latest date in the snapshots
+                Instrument.yahoo_symbol.in_(BENCHES),
+                HoldingDaily.date >= snapshots[0].date,  # latest date in the snapshots
             )
-            .order_by(PricesDaily.date)
+            .order_by(HoldingDaily.date)
         )
         bench_rows = bench_res.all()
-        daily_bench = {bench.date: bench.price for bench in bench_rows}
-        bench_base_price = bench_rows[0].price
+        daily_bench: Dict[str, Dict[date, float]] = defaultdict(lambda: defaultdict(float))
+        bench_prices = defaultdict(list)
+        for bench_row in bench_rows:
+            daily_bench[bench_row.yahoo_symbol][bench_row.date] = bench_row.current_price
+            bench_prices[bench_row.yahoo_symbol].append(bench_row.current_price)
+        benches_base_price = {symbol: bench_price[0] for symbol, bench_price in bench_prices.items()}
         bench_start = snapshots[0].return_pct
-        bench = bench_start + (bench_rows[0].price / bench_base_price - 1) * 100
+        bench = [100 for _bench_symbol in BENCHES]
 
         history_data = []
         for snapshot in snapshots:
-            bench = (
-                bench_start + (daily_bench[snapshot.date] / bench_base_price - 1) * 100
-                if daily_bench.get(snapshot.date)
-                else bench
-            )
+            bench = [
+                bench_start + (daily_bench[bench_symbol][snapshot.date] / benches_base_price[bench_symbol] - 1) * 100
+                if daily_bench[bench_symbol].get(snapshot.date)
+                else bench[i]
+                for i, bench_symbol in enumerate(BENCHES)
+            ]
             history_data.append(
                 {
                     "date": snapshot.date.isoformat(),
@@ -402,7 +417,7 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
                 }
             )
 
-        return {"history": history_data, "days": days, "benchmark": BENCH}
+        return {"history": history_data, "days": days, "benchmark": BENCHES}
     except Exception as e:
         logger.error(f"Error fetching portfolio history: {e}")
         raise HTTPException(status_code=500, detail=str(e))

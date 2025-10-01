@@ -29,7 +29,8 @@ HISTORY_YEARS = 10
 
 # Portfolio Configuration
 PATTERN_MULTI = re.compile(r"^(?P<sym>.+?)_(?P<tag>[A-Z]{2,3})$")
-BENCH = "VUAG.L"  # S&P500
+SPY = "VUAG.L"
+BENCHES = (SPY, "XNAS.L")  # VUAG.L - S&P500, XNAS.L - QQQ
 VIX = "^VIX"  # VIX index
 
 # Currency Configuration

@@ -8,7 +8,8 @@ import {
   Tooltip,
   ResponsiveContainer,
   Area,
-  AreaChart
+  AreaChart,
+  Legend
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import './PortfolioChart.css';
@@ -19,7 +20,7 @@ const PortfolioChart = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState('30'); // days
-  const [benchmarkName, setBenchmarkName] = useState('Benchmark');
+  const [benchmarkNames, setBenchmarkNames] = useState(['S&P 500', 'NASDAQ']);
 
   const timeRanges = [
     { label: '1 Month', value: '30' },
@@ -39,9 +40,15 @@ const PortfolioChart = () => {
       const days = timeRange === 'all' ? 365 : parseInt(timeRange);
       const historyData = await portfolioAPI.getHistory(days);
 
-      // Store benchmark name from API response
-      if (historyData.benchmark) {
-        setBenchmarkName(historyData.benchmark);
+      // Store benchmark names from API response
+      if (historyData.benchmark && Array.isArray(historyData.benchmark)) {
+        // Map benchmark symbols to readable names
+        const nameMap = {
+          'VUAG.L': 'S&P 500',
+          'XNAS.L': 'NASDAQ'
+        };
+        const names = historyData.benchmark.map(symbol => nameMap[symbol] || symbol);
+        setBenchmarkNames(names);
       }
 
       if (historyData.history && historyData.history.length > 0) {
@@ -57,6 +64,9 @@ const PortfolioChart = () => {
             totalProfit: item.total_profit || 0,
             totalReturn: item.total_return_pct || 0,
             benchmarkReturn: item.benchmark_return_pct ?? null,
+            // Handle multiple benchmarks
+            spyReturn: Array.isArray(item.benchmark_return_pct) ? item.benchmark_return_pct[0] : item.benchmark_return_pct,
+            nasdaqReturn: Array.isArray(item.benchmark_return_pct) ? item.benchmark_return_pct[1] : null,
           };
 
               // Derived fields for combined chart (invested base, profit/loss bands)
@@ -171,7 +181,7 @@ const PortfolioChart = () => {
 
         <div className="chart-panel">
           <h3>Total Return (%)</h3>
-          <ResponsiveContainer width="100%" height={200}>
+          <ResponsiveContainer width="100%" height={220}>
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
@@ -181,7 +191,8 @@ const PortfolioChart = () => {
                   valueFormatter={(v) => `${Number(v).toFixed(2)}%`}
                   nameMap={{
                     totalReturn: 'Portfolio',
-                    benchmarkReturn: benchmarkName
+                    spyReturn: benchmarkNames[0],
+                    nasdaqReturn: benchmarkNames[1]
                   }}
                 />}
               />
@@ -195,12 +206,19 @@ const PortfolioChart = () => {
               />
               <Line
                 type="monotone"
-                dataKey="benchmarkReturn"
-                name="Benchmark"
+                dataKey="spyReturn"
+                name={benchmarkNames[0]}
                 stroke="#2563eb"
                 strokeWidth={2}
                 dot={false}
-                isAnimationActive={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="nasdaqReturn"
+                name={benchmarkNames[1]}
+                stroke="#dc2626"
+                strokeWidth={2}
+                dot={false}
               />
             </LineChart>
           </ResponsiveContainer>

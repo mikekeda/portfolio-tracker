@@ -189,3 +189,18 @@ ETF_SECTOR_ALLOCATION = {
         "Communication Services": 4.97,
     },
 }
+
+
+QUICK_RATIO_THRESHOLDS = {
+    "Technology": (1.5, 2.5),
+    "Industrials": (0.8, 1.2),
+    "Healthcare": (1.3, 1.8),
+    "Communication Services": (1.2, 1.8),
+    "Consumer Cyclical": (0.8, 1.5),
+    "Consumer Defensive": (0.8, 1.2),
+    "Utilities": (0.5, 0.8),
+    "Real Estate": (1, 1.5),
+    "Basic Materials": (0.6, 1),
+    "Energy": (0.6, 1),
+    "Other": (1, 2),
+}

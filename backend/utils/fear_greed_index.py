@@ -5,7 +5,7 @@ from typing import Dict, Optional, Union
 import aiohttp
 
 
-async def get_fear_greed_index() -> Optional[Dict[str, Union[str, float]]]:
+async def gen_fear_greed_index() -> Optional[Dict[str, Union[str, float]]]:
     """Scrape Fear & Greed Index from CNN"""
     url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
 

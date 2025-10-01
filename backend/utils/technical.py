@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import BENCH, PRICE_FIELD, TIMEZONE
+from config import SPY, PRICE_FIELD, TIMEZONE
 from models import PricesDaily
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
@@ -295,9 +295,7 @@ async def calculate_technical_indicators_for_symbols(
         # Get SPY data
         spy_result = await session.execute(
             select(PRICE_COLUMN)
-            .filter(
-                PricesDaily.symbol == BENCH, PricesDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420)
-            )
+            .filter(PricesDaily.symbol == SPY, PricesDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420))
             .order_by(PricesDaily.date)
         )
         spy_prices = [row.price for row in spy_result.all()]
