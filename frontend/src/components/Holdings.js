@@ -643,8 +643,8 @@ const Holdings = () => {
           const className = isProfit ? 'positive' : isLoss ? 'negative' : '';
 
           return (
-            <span className={`dcf-diff ${className}`}>
-              {potentialProfitPct >= 0 ? '+' : ''}{Math.round(dcfPrice)}%
+            <span className={`dcf-diff ${className}`} title={dcfPrice ? `DCF: ${dcfPrice.toFixed(2)}` : undefined}>
+              {potentialProfitPct >= 0 ? '+' : ''}{Math.round(potentialProfitPct)}%
             </span>
           );
         },
