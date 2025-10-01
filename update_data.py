@@ -511,7 +511,6 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
                 # ETFs don't have earnings
                 yahoo_data["earnings"][symbol] = {}
             else:
-                data = data[data["Event Type"] == "Earnings"].drop("Event Type", axis=1).dropna()
                 yahoo_data["earnings"][symbol] = scrub_for_json(data.to_dict(orient="index"))
 
             data = tickers.tickers[symbol].recommendations.to_dict(orient="index")
