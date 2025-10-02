@@ -100,8 +100,10 @@
 .inline-controls {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   margin-bottom: 8px;
+  flex-wrap: wrap;
 }
 
 .inline-controls label {
@@ -125,6 +127,46 @@
   outline: none;
   border-color: #86b7fe;
   box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.25);
+}
+
+.radio-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+}
+
+.radio-label {
+  position: relative;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #6c757d;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  margin: 0;
+  user-select: none;
+}
+
+.radio-label input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.radio-label:has(input[type="radio"]:checked) {
+  background-color: #212529;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+.radio-label:not(:has(input[type="radio"]:checked)):hover {
+  background-color: #e9ecef;
+  color: #495057;
 }
 
 .empty {

@@ -281,6 +281,7 @@ const Chart = () => {
             <option value={180}>180 days</option>
             <option value={365}>1 year</option>
             <option value={1827}>5 year</option>
+            <option value={3652}>10 year</option>
           </select>
         </div>
       </div>

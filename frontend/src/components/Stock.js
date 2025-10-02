@@ -19,12 +19,15 @@ import './Stock.css';
 
 // Constants
 const CHART_DAYS_OPTIONS = [
-  { value: 30, label: '30d' },
-  { value: 90, label: '90d' },
-  { value: 180, label: '6m' },
-  { value: 365, label: '1y' },
-  { value: 1827, label: '5y' },
-  { value: 3652, label: '10y' }
+  { value: 1, label: '1D' },
+  { value: 5, label: '5D' },
+  { value: 30, label: '1M' },
+  { value: 90, label: '3M' },
+  { value: 180, label: '6M' },
+  { value: 'ytd', label: 'YTD' },
+  { value: 365, label: '1Y' },
+  { value: 1825, label: '5Y' },
+  { value: 3652, label: '10Y' }
 ];
 
 const PRICE_METRICS = [
@@ -59,9 +62,10 @@ const Stock = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showFullSummary, setShowFullSummary] = useState(false);
-  const [chartDays, setChartDays] = useState(() =>
-    Number(localStorage.getItem('stock_chart_days') || 365)
-  );
+  const [chartDays, setChartDays] = useState(() => {
+    const stored = localStorage.getItem('stock_chart_days') || '365';
+    return stored === 'ytd' ? 'ytd' : Number(stored);
+  });
   const [priceMetric, setPriceMetric] = useState(() =>
     localStorage.getItem('stock_price_metric') || 'price'
   );
@@ -74,20 +78,33 @@ const Stock = () => {
   };
 
   const handleChartDaysChange = (e) => {
-    const value = Number(e.target.value);
-    setChartDays(value);
-    localStorage.setItem('stock_chart_days', String(value));
+    const value = e.target.value;
+    // Convert to number if it's not 'ytd'
+    const parsedValue = value === 'ytd' ? value : Number(value);
+    setChartDays(parsedValue);
+    localStorage.setItem('stock_chart_days', String(parsedValue));
   };
 
   const toggleSummary = () => {
     setShowFullSummary(prev => !prev);
   };
 
+  // Helper function to calculate YTD days
+  const calculateYTDDays = () => {
+    const now = new Date();
+    const startOfYear = new Date(now.getFullYear(), 0, 1);
+    const diffTime = Math.abs(now - startOfYear);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  };
+
   useEffect(() => {
     const load = async () => {
       try {
         setLoading(true);
-        const res = await portfolioAPI.getInstrument(symbol, chartDays);
+        // Convert chartDays to number for API call
+        const daysParam = chartDays === 'ytd' ? calculateYTDDays() : chartDays;
+        const res = await portfolioAPI.getInstrument(symbol, daysParam);
         setData(res);
       } catch (e) {
         console.error(e);
@@ -285,18 +302,31 @@ const Stock = () => {
         <div className="panel">
           <h3>Price {priceMetric === 'price_pct_change' ? '(%)' : ''}</h3>
           <div className="inline-controls">
-            <label>Metric: </label>
-            <select aria-label="Price metric" value={priceMetric} onChange={handlePriceMetricChange}>
-              {PRICE_METRICS.map(metric => (
-                <option key={metric.value} value={metric.value}>{metric.label}</option>
-              ))}
-            </select>
-            <label style={{ marginLeft: 8 }}>Range: </label>
-            <select aria-label="Chart range" value={chartDays} onChange={handleChartDaysChange}>
-              {CHART_DAYS_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <label>Metric: </label>
+              <select aria-label="Price metric" value={priceMetric} onChange={handlePriceMetricChange}>
+                {PRICE_METRICS.map(metric => (
+                  <option key={metric.value} value={metric.value}>{metric.label}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <label>Range: </label>
+              <div className="radio-group">
+                {CHART_DAYS_OPTIONS.map(option => (
+                  <label key={option.value} className="radio-label">
+                    <input
+                      type="radio"
+                      name="chart-range"
+                      value={option.value}
+                      checked={chartDays === option.value}
+                      onChange={handleChartDaysChange}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
           {priceData.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
@@ -386,12 +416,24 @@ const Stock = () => {
         <div className="panel">
           <h3>PE Ratio</h3>
           <div className="inline-controls">
-            <label>Range: </label>
-            <select aria-label="PE chart range" value={chartDays} onChange={handleChartDaysChange}>
-              {CHART_DAYS_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+            <div></div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <label>Range: </label>
+              <div className="radio-group">
+                {CHART_DAYS_OPTIONS.map(option => (
+                  <label key={option.value} className="radio-label">
+                    <input
+                      type="radio"
+                      name="pe-chart-range"
+                      value={option.value}
+                      checked={chartDays === option.value}
+                      onChange={handleChartDaysChange}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+            </div>
           </div>
           {peData.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
