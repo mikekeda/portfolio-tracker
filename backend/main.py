@@ -12,8 +12,9 @@ import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from dateutil.relativedelta import relativedelta
 from functools import lru_cache
-from typing import Any, AsyncGenerator, Dict, List
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-party imports
 from fastapi import Depends, FastAPI, HTTPException
@@ -113,6 +114,62 @@ async def get_rates(session: AsyncSession) -> Dict[str, float]:
     return table
 
 
+def calculate_historical_trends(holding: HoldingDaily) -> Dict[str, Optional[float]]:
+    """Calculates trend metrics from historical data stored in the yahoo object"""
+    trends: Dict[str, Optional[float]] = {
+        "recommendation_trend": None,
+        "pe_1y_trend_pct": None,
+        "pe_5y_avg_vs_current_pct": None,
+    }
+
+    # --- 1. Recommendation Trend ---
+    recs = holding.instrument.yahoo.recommendations
+    if recs and len(recs) >= 2:
+        sorted_dates = sorted(recs.keys(), reverse=True)
+
+        # Current period
+        current_data = recs[sorted_dates[0]]
+        current_total = sum(current_data.values())
+        current_buy_ratio = (
+            (current_data.get("buy", 0) + current_data.get("strongBuy", 0)) / current_total * 100
+            if current_total > 0
+            else 0
+        )
+
+        # 3-6 months ago
+        three_months_ago = (datetime.now() - relativedelta(months=3)).strftime("%Y-%m-%d")
+        past_date = next((d for d in sorted_dates if d <= three_months_ago), sorted_dates[-1])
+        past_data = recs[past_date]
+        past_total = sum(past_data.values())
+        past_buy_ratio = (
+            (past_data.get("buy", 0) + past_data.get("strongBuy", 0)) / past_total * 100 if past_total > 0 else 0
+        )
+
+        trends["recommendation_trend"] = current_buy_ratio - past_buy_ratio
+
+    # --- 2. PE Trend and PE vs History ---
+    pes = holding.instrument.yahoo.pes
+    current_pe = holding.instrument.yahoo.info.get("trailingPE")
+
+    if pes and current_pe and current_pe > 0:
+        one_year_ago = (datetime.now() - relativedelta(years=1)).strftime("%Y-%m-%d")
+        five_years_ago = (datetime.now() - relativedelta(years=5)).strftime("%Y-%m-%d")
+
+        # PE 1 Year Trend
+        past_pe_date = next((d for d in sorted(pes.keys(), reverse=True) if d <= one_year_ago), None)
+        if past_pe_date and pes[past_pe_date].get("pe_ratio", 0) > 0:
+            past_pe = pes[past_pe_date]["pe_ratio"]
+            trends["pe_1y_trend_pct"] = (current_pe / past_pe - 1) * 100
+
+        # PE vs 5Y Average
+        pe_values_5y = [v["pe_ratio"] for k, v in pes.items() if k >= five_years_ago and v.get("pe_ratio", 0) > 0]
+        if pe_values_5y:
+            avg_pe_5y = sum(pe_values_5y) / len(pe_values_5y)
+            trends["pe_5y_avg_vs_current_pct"] = (avg_pe_5y / current_pe - 1) * 100
+
+    return trends
+
+
 @app.get("/")
 async def root() -> Dict[str, str]:
     """Health check endpoint."""
@@ -177,6 +234,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
             # Yahoo Finance info for this instrument
             info = holding.instrument.yahoo.info
             metrics = metrics_by_instrument_id[holding.instrument_id]
+            trends = calculate_historical_trends(holding)
 
             portfolio_data.append(
                 {
@@ -270,6 +328,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     ),
                     "vol20_lt_vol60": technical_data.get(holding.instrument.yahoo_symbol, {}).get("vol20_lt_vol60"),
                     "volume_ratio": technical_data.get(holding.instrument.yahoo_symbol, {}).get("volume_ratio"),
+                    **trends,
                     "quote_type": info.get("quoteType", "Unknown"),
                     "passedScreeners": [],  # will be populated below
                     "screener_score": 0,  # will be populated below

@@ -117,7 +117,13 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=7,
-                combine_with=["r40_momentum", "momentum_pullback", "oversold_uptrend", "quality_growth_pullback"],
+                combine_with=[
+                    "r40_momentum",
+                    "momentum_pullback",
+                    "oversold_uptrend",
+                    "quality_growth_pullback",
+                    "pe_vs_history",
+                ],
             ),
             # Value + Quality
             "value_quality": ScreenerDefinition(
@@ -136,7 +142,7 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=5,
-                combine_with=["golden_cross", "oversold_uptrend", "momentum_pullback"],
+                combine_with=["golden_cross", "oversold_uptrend", "momentum_pullback", "pe_compression"],
             ),
             # Growth at Reasonable Price
             "growth_at_reasonable_price": ScreenerDefinition(
@@ -172,7 +178,13 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=7,
-                combine_with=["r40_momentum", "qarp", "growth_at_reasonable_price", "quality_growth_pullback"],
+                combine_with=[
+                    "r40_momentum",
+                    "qarp",
+                    "growth_at_reasonable_price",
+                    "quality_growth_pullback",
+                    "improving_sentiment",
+                ],
             ),
             # High Short Interest
             "high_short_interest": ScreenerDefinition(
@@ -209,7 +221,7 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=8,
-                combine_with=["r40_momentum", "qarp", "growth_at_reasonable_price"],
+                combine_with=["r40_momentum", "qarp", "growth_at_reasonable_price", "improving_sentiment"],
             ),
             # Golden Cross + First Pullback
             "golden_cross": ScreenerDefinition(
@@ -268,6 +280,7 @@ class ScreenerConfig:
                     "momentum_pullback",
                     "quality_growth_pullback",
                     "breakout_quiet_base",
+                    "pe_vs_history",
                 ],
             ),
             # 52-Week Breakout (Quiet Base + Volume)
@@ -306,9 +319,59 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=8,
-                combine_with=["r40_momentum", "qarp", "golden_cross"],
+                combine_with=["r40_momentum", "qarp", "golden_cross", "pe_compression"],
             ),
-            # --- SUGGESTION: New "Risk-Off" Screener ---
+            # Improving Analyst Sentiment
+            "improving_sentiment": ScreenerDefinition(
+                id="improving_sentiment",
+                name="Improving Analyst Sentiment",
+                description="Analyst 'Buy' ratio has improved over the last 3-6 months while PE remains reasonable.",
+                category=ScreenerCategory.FUNDAMENTALS,
+                criteria=[
+                    ScreenerCriteria("recommendation_trend", ">=", 5, "Buy Ratio improved by at least 5pp"),
+                    ScreenerCriteria("pe_ratio", "<=", 40, "Valuation is not excessive"),
+                    ScreenerCriteria("pe_ratio", ">", 0, "Company is profitable"),
+                ],
+                requires_historical_data=True,  # Requires recommendation history
+                requires_yahoo_data=True,
+                available=True,
+                weight=6,
+                combine_with=["qarp", "momentum_pullback"],
+            ),
+            # PE Compression
+            "pe_compression": ScreenerDefinition(
+                id="pe_compression",
+                name="PE Compression (Earnings > Price)",
+                description="The P/E ratio has declined over the last year as earnings grew faster than the stock price.",
+                category=ScreenerCategory.VALUE,
+                criteria=[
+                    ScreenerCriteria("pe_1y_trend_pct", "<=", -10, "P/E ratio has fallen by at least 10%"),
+                    ScreenerCriteria("revenue_growth", ">=", 5, "Still a growing business (not a value trap)"),
+                    ScreenerCriteria("pe_ratio", ">", 0, "Company is profitable"),
+                ],
+                requires_historical_data=True,  # Requires PE history
+                requires_yahoo_data=True,
+                available=True,
+                weight=8,
+                combine_with=["quality_growth_pullback", "golden_cross"],
+            ),
+            "pe_vs_history": ScreenerDefinition(
+                id="pe_vs_history",
+                name="PE Below 5-Year Average",
+                description="The current P/E ratio is trading below its own 5-year historical average.",
+                category=ScreenerCategory.VALUE,
+                criteria=[
+                    ScreenerCriteria("pe_5y_avg_vs_current_pct", ">=", 10, "Current PE is at least 10% below 5Y avg"),
+                    ScreenerCriteria("return_on_equity", ">=", 10, "Business quality remains high"),
+                    ScreenerCriteria("pe_ratio", ">", 0, "Company is profitable"),
+                ],
+                requires_historical_data=True,  # Requires PE history
+                requires_yahoo_data=True,
+                available=True,
+                weight=9,  # This is a very strong signal
+                combine_with=["r40_momentum", "qarp", "improving_sentiment"],
+            ),
+            # Negative screeners
             "death_cross": ScreenerDefinition(
                 id="death_cross",
                 name="Bearish: Death Cross",
@@ -325,6 +388,25 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,  # Disabled by default
                 weight=-5,  # Negative weight to penalize stocks in a downtrend
+                combine_with=[],
+            ),
+            "fundamental_red_flags": ScreenerDefinition(
+                id="fundamental_red_flags",
+                name="Fundamental Red Flags",
+                description="Identifies companies with weak profitability, high debt, and negative cash flow.",
+                category=ScreenerCategory.QUALITY,  # It's a filter for low-quality
+                criteria=[
+                    # Note: This screener passes if ALL the red flags are met.
+                    # This is different from positive screeners where ALL criteria must be met.
+                    # We will handle this logic in the evaluation step. For now, we define the flags.
+                    ScreenerCriteria("roic", "<", 5, "ROIC is very low (< 5%)"),
+                    ScreenerCriteria("debtToEquity", ">", 150, "Debt is high (>150% of equity)"),
+                    ScreenerCriteria("free_cashflow_yield", "<", 0, "Company is burning cash"),
+                ],
+                requires_historical_data=False,
+                requires_yahoo_data=True,
+                available=True,
+                weight=-10,  # A strong negative penalty
                 combine_with=[],
             ),
         }
@@ -364,6 +446,11 @@ class ScreenerConfig:
             "vol20_lt_vol60",
             "rs_6m_vs_spy",
             "fifty_two_week_high_distance",
+            "recommendation_trend",
+            "pe_1y_trend_pct",
+            "pe_5y_avg_vs_current_pct",
+            "roic",
+            "debtToEquity",
         ]
 
     def validate(self) -> None:
