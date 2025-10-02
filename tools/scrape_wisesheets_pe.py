@@ -267,17 +267,12 @@ def _parse_date(date_text: str) -> Optional[str]:
 
 if __name__ == "__main__":
     with get_session() as session:
-        rows = (
-            session.query(InstrumentYahoo)
-            .where(InstrumentYahoo.pes == {})
-            .options(selectinload(InstrumentYahoo.instrument))
-            .all()
-        )
+        rows = session.query(InstrumentYahoo).options(selectinload(InstrumentYahoo.instrument)).all()
 
         for row in rows:
             ticker = row.instrument.yahoo_symbol
             url = build_url(ticker)
-            print(f"Scraping {url} for {row.instrument_id}")
+            print(f"Scraping {url} for instrument_id={row.instrument_id}")
 
             try:
                 html = fetch_html(url)

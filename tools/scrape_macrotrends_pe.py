@@ -168,21 +168,19 @@ def parse_pe_table(html: str) -> Dict[str, Dict[str, Optional[float]]]:
 
 if __name__ == "__main__":
     with get_session() as session:
-        rows = (
-            session.query(InstrumentYahoo)
-            .where(InstrumentYahoo.pes.is_(None))
-            .options(selectinload(InstrumentYahoo.instrument))
-            .all()
-        )
+        rows = session.query(InstrumentYahoo).options(selectinload(InstrumentYahoo.instrument)).all()
 
         for row in rows:
             ticker = row.instrument.yahoo_symbol
             slug = row.instrument.name.lower().replace(" ", "-")
             url = f"https://macrotrends.net/stocks/charts/{ticker}/{slug}/pe-ratio"
             print(url, row.instrument_id)
-            row.pes = parse_pe_table(fetch_html(url))
-            row.updated_at = datetime.now(TIMEZONE)
-            session.commit()
-            # json.dump(row.pes, sys.stdout, indent=2)
+            pes = parse_pe_table(fetch_html(url))
+            if pes:
+                row.pes = pes
+                row.updated_at = datetime.now(TIMEZONE)
+                session.commit()
+                # import sys, json
+                # json.dump(row.pes, sys.stdout, indent=2)
 
             sleep(15)
