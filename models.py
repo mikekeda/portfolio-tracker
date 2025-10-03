@@ -243,6 +243,10 @@ class PortfolioDaily(Base):
     currency_allocation: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
     etf_equity_split: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
 
+    sharpe_ratio: Mapped[float] = mapped_column(Float, nullable=True)
+    sortino_ratio: Mapped[float] = mapped_column(Float, nullable=True)
+    beta: Mapped[float] = mapped_column(Float, nullable=True)
+
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)

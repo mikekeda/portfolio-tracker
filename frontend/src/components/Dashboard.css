@@ -97,25 +97,25 @@
   color: #dc3545;
 }
 
-/* Fear & Greed Index colors */
+/* Fear & Greed Index colors - Contrarian view for long-term investors */
 .card .value.extreme-fear {
-  color: #dc3545;
+  color: #28a745; /* Green - buying opportunity */
 }
 
 .card .value.fear {
-  color: #fd7e14;
+  color: #20c997; /* Light green - potential opportunity */
 }
 
 .card .value.neutral {
-  color: #6c757d;
+  color: #6c757d; /* Gray - neutral */
 }
 
 .card .value.greed {
-  color: #28a745;
+  color: #fd7e14; /* Orange - caution */
 }
 
 .card .value.extreme-greed {
-  color: #20c997;
+  color: #dc3545; /* Red - high caution, potential overvaluation */
 }
 
 

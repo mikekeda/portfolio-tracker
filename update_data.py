@@ -15,6 +15,7 @@ from dateutil.relativedelta import relativedelta
 from functools import lru_cache
 from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, TypedDict, Union, Optional, cast
 
+import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf  # type: ignore[import-untyped]
@@ -22,7 +23,16 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker, selectinload
 from sqlalchemy.sql import func
 
-from config import BATCH_SIZE_YF, CURRENCIES, HISTORY_YEARS, PATTERN_MULTI, REQUEST_RETRY, TRADING212_API_KEY, TIMEZONE
+from config import (
+    BATCH_SIZE_YF,
+    CURRENCIES,
+    HISTORY_YEARS,
+    PATTERN_MULTI,
+    REQUEST_RETRY,
+    TRADING212_API_KEY,
+    TIMEZONE,
+    SPY,
+)
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
 from models import (
     CurrencyRateDaily,
@@ -634,6 +644,7 @@ def update_portfolio():
         # Check if snapshot already exists for this date
         existing_snapshot = session.query(PortfolioDaily).filter(PortfolioDaily.date == snapshot_date).first()
         allocations = get_portfolio_allocation(session, portfolio_from_api["total"] - cash, snapshot_date)
+        risk_metrics = calculate_portfolio_risk_metrics(session, snapshot_date)
 
         if existing_snapshot:
             # Update existing snapshot
@@ -646,6 +657,9 @@ def update_portfolio():
             existing_snapshot.sector_allocation = allocations["sector"]
             existing_snapshot.currency_allocation = allocations["currency"]
             existing_snapshot.etf_equity_split = allocations["etf_equity"]
+            existing_snapshot.sharpe_ratio = risk_metrics["sharpe"]
+            existing_snapshot.sortino_ratio = risk_metrics["sortino"]
+            existing_snapshot.beta = risk_metrics["beta"]
             existing_snapshot.updated_at = datetime.now(TIMEZONE)
         else:
             # Create new snapshot
@@ -660,8 +674,94 @@ def update_portfolio():
                 sector_allocation=allocations["sector"],
                 currency_allocation=allocations["currency"],
                 etf_equity_split=allocations["etf_equity"],
+                sharpe_ratio=risk_metrics["sharpe"],
+                sortino_ratio=risk_metrics["sortino"],
+                beta=risk_metrics["beta"],
             )
             session.add(snapshot)
+
+
+def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> Dict[str, Optional[float]]:
+    """Calculates Sharpe, Sortino, and Beta for the portfolio."""
+
+    # Look back up to 1 year for calculations
+    start_date = snapshot_date - timedelta(days=365)
+
+    # 1. Get historical portfolio values
+    portfolio_history = (
+        session.query(PortfolioDaily.date, PortfolioDaily.value)
+        .filter(PortfolioDaily.date >= start_date, PortfolioDaily.date <= snapshot_date)
+        .order_by(PortfolioDaily.date)
+        .all()
+    )
+
+    if len(portfolio_history) < 2:
+        return {"sharpe": None, "sortino": None, "beta": None}
+
+    portfolio_df = pd.DataFrame(portfolio_history, columns=["date", "value"]).set_index("date")
+    portfolio_returns = portfolio_df["value"].pct_change().dropna()
+
+    # 2. Get historical benchmark prices (e.g., S&P 500)
+    benchmark_symbol = SPY  # Make sure this is a string
+    benchmark_prices = (
+        session.query(PricesDaily.date, PricesDaily.close_price)
+        .filter(
+            PricesDaily.symbol == benchmark_symbol, PricesDaily.date >= start_date, PricesDaily.date <= snapshot_date
+        )
+        .order_by(PricesDaily.date)
+        .all()
+    )
+
+    if len(benchmark_prices) < 2:
+        return {"sharpe": None, "sortino": None, "beta": None}
+
+    benchmark_df = pd.DataFrame(benchmark_prices, columns=["date", "price"]).set_index("date")
+    benchmark_returns = benchmark_df["price"].pct_change().dropna()
+
+    # Align the two return series by date
+    aligned_portfolio, aligned_benchmark = portfolio_returns.align(benchmark_returns, join="inner")
+    # TODO: We have portfolio data every day, but we don't have SPY prices on weekends
+
+    if aligned_portfolio.empty or len(aligned_portfolio) < 2:
+        return {"sharpe": None, "sortino": None, "beta": None}
+
+    # --- DYNAMIC ANNUALIZATION FACTOR ---
+    trading_days_per_year = 252
+    num_days = len(aligned_portfolio)
+    # Only annualize if we have a reasonable amount of data (e.g., > 3 months)
+    # Otherwise, the annualized number can be misleadingly large.
+    annualization_factor = np.sqrt(trading_days_per_year) if num_days > 60 else 1.0
+
+    # Assume a risk-free rate (e.g., 4% annually for UK)
+    risk_free_rate_annual = 0.04
+    risk_free_rate_daily = (1 + risk_free_rate_annual) ** (1 / trading_days_per_year) - 1
+
+    excess_returns = aligned_portfolio - risk_free_rate_daily
+
+    # --- CALCULATIONS ---
+
+    # Sharpe Ratio
+    sharpe_ratio = (
+        float((excess_returns.mean() / excess_returns.std()) * annualization_factor)
+        if excess_returns.std() != 0
+        else None
+    )
+
+    # Sortino Ratio
+    downside_returns = excess_returns[excess_returns < 0]
+    downside_std = downside_returns.std()
+    sortino_ratio = (
+        float((excess_returns.mean() / downside_std) * annualization_factor)
+        if downside_std != 0 and downside_std is not np.nan
+        else None
+    )
+
+    # Beta
+    covariance = aligned_portfolio.cov(aligned_benchmark)
+    variance = aligned_benchmark.var()
+    beta = float(covariance / variance) if variance != 0 else None
+
+    return {"sharpe": sharpe_ratio, "sortino": sortino_ratio, "beta": beta}
 
 
 if __name__ == "__main__":

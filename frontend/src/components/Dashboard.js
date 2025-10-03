@@ -16,6 +16,58 @@ const getFearGreedColor = (label) => {
   }
 };
 
+// Helper function to get Sortino Ratio color
+const getSortinoColor = (sortino) => {
+  if (sortino < 1.0) return 'negative';
+  if (sortino > 2.0) return 'positive';
+  return '';
+};
+
+// Helper function to get Beta color
+const getBetaColor = (beta) => {
+  if (beta < 0.9) return 'negative';
+  if (beta > 1.3) return 'positive';
+  return '';
+};
+
+// Helper function to generate Sortino Ratio tooltip
+const getSortinoTooltip = (sortino) => {
+  let recommendation = '';
+  let level = '';
+
+  if (sortino < 1.0) {
+    level = 'Poor';
+    recommendation = 'Review your holdings: Your stock selections may be underperforming or exhibiting too much unrewarded downside risk. Use your screener and ROIC analysis to identify the weakest companies in your portfolio—those with declining fundamentals or poor screener scores.\n\nAction: Consider trimming or selling the laggards and reallocating the capital to your high-conviction, high-ROIC "compounder" stocks. The goal is to increase your portfolio\'s overall quality and return potential.';
+  } else if (sortino <= 2.0) {
+    level = 'Acceptable';
+    recommendation = 'Your portfolio shows acceptable downside protection. Continue monitoring and consider optimizing your holdings for better risk-adjusted returns.';
+  } else {
+    level = 'Excellent';
+    recommendation = 'Excellent downside protection! Your portfolio is well-positioned to handle market volatility while maintaining strong returns.';
+  }
+
+  return `Sortino Ratio: ${sortino.toFixed(2)} (${level})\n\n${recommendation}\n\nScale: < 1.0 (Poor), 1.0-2.0 (Acceptable), > 2.0 (Excellent)`;
+};
+
+// Helper function to generate Beta tooltip
+const getBetaTooltip = (beta) => {
+  let recommendation = '';
+  let level = '';
+
+  if (beta < 0.9) {
+    level = 'Low';
+    recommendation = 'Review your allocations: A low Beta suggests your portfolio is not positioned aggressively enough to meet your growth objectives. You may be overly diversified or have too much invested in lower-volatility sectors.\n\nAction: Check your sector and country allocations. If you are underweight in growth sectors like Technology or have a high allocation to a broad-market ETF like VUSA, consider increasing your exposure to individual growth stocks to increase your portfolio\'s market sensitivity.';
+  } else if (beta <= 1.3) {
+    level = 'Acceptable';
+    recommendation = 'Your portfolio shows acceptable market sensitivity. Continue monitoring and consider optimizing your allocations for better growth potential.';
+  } else {
+    level = 'High';
+    recommendation = 'High market sensitivity detected. Consider diversifying your portfolio to reduce volatility and improve risk-adjusted returns.';
+  }
+
+  return `Beta: ${beta.toFixed(2)} (${level})\n\n${recommendation}\n\nScale: < 0.9 (Low), 0.9-1.3 (Acceptable), > 1.3 (High)`;
+};
+
 // Helper function to generate VIX tooltip
 const getVixTooltip = (vix) => {
   let recommendation = '';
@@ -152,6 +204,22 @@ const Dashboard = () => {
             )}
           </p>
         </div>
+        {summary.sortino_ratio && (
+          <div className="card" title={getSortinoTooltip(summary.sortino_ratio)}>
+            <h3>Sortino</h3>
+            <p className={`value ${getSortinoColor(summary.sortino_ratio)}`}>
+              {summary.sortino_ratio.toFixed(2)}
+            </p>
+          </div>
+        )}
+        {summary.beta && (
+          <div className="card" title={getBetaTooltip(summary.beta)}>
+            <h3>Beta</h3>
+            <p className={`value ${getBetaColor(summary.beta)}`}>
+              {summary.beta.toFixed(2)}
+            </p>
+          </div>
+        )}
         {summary.vix && (
           <div className="card" title={getVixTooltip(summary.vix)}>
             <h3>VIX</h3>
