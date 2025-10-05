@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
 import './TopMovers.css';
 
@@ -104,7 +105,9 @@ const TopMovers = () => {
               {data.gainers && data.gainers.length > 0 ? (
                 data.gainers.map((stock, index) => (
                   <tr key={stock.symbol}>
-                    <td className="symbol">{stock.symbol}</td>
+                    <td className="symbol">
+                      <Link className="symbol" to={`/stock/${encodeURIComponent(stock.symbol)}`}>{stock.symbol}</Link>
+                    </td>
                     <td className="name" title={stock.name}>
                       {stock.name.length > 25 ? `${stock.name.substring(0, 25)}...` : stock.name}
                     </td>
@@ -142,7 +145,9 @@ const TopMovers = () => {
               {data.losers && data.losers.length > 0 ? (
                 data.losers.map((stock, index) => (
                   <tr key={stock.symbol}>
-                    <td className="symbol">{stock.symbol}</td>
+                    <td className="symbol">
+                      <Link className="symbol" to={`/stock/${encodeURIComponent(stock.symbol)}`}>{stock.symbol}</Link>
+                    </td>
                     <td className="name" title={stock.name}>
                       {stock.name.length > 25 ? `${stock.name.substring(0, 25)}...` : stock.name}
                     </td>
