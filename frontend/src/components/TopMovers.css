@@ -152,7 +152,7 @@
   height: 100%;
   width: var(--bar-width, 0%);
   background: linear-gradient(90deg, #e8f5e8 0%, #c8e6c9 100%);
-  border-radius: 4px;
+  border-radius: 0 4px 4px 0;
   z-index: 1;
   transition: width 0.3s ease;
 }
@@ -161,6 +161,7 @@
   left: auto;
   right: 0;
   background: linear-gradient(90deg, #ffebee 0%, #ffcdd2 100%);
+  border-radius: 4px 0 0 4px;
 }
 
 .movers-table .change-cell span {

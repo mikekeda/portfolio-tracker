@@ -115,7 +115,7 @@ const getFearGreedTooltip = (fearGreed) => {
       recommendation = '📊 Market sentiment indicator';
   }
 
-  return `Fear & Greed: ${value.toFixed(1)} (${label})\n\n${recommendation}\n\nScale: 0-25 (Extreme Fear), 25-40 (Fear), 40-60 (Neutral), 60-75 (Greed), 75-100 (Extreme Greed)`;
+  return `Fear & Greed: ${value.toFixed(1)} (${label})\n\n${recommendation}\n\nScale: 0-25 (Extreme Fear), 25-45 (Fear), 45-55 (Neutral), 55-75 (Greed), 75-100 (Extreme Greed)`;
 };
 
 const Dashboard = () => {

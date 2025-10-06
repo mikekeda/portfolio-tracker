@@ -260,7 +260,7 @@
   /* lighter, higher-contrast bar */
   background: linear-gradient(90deg, rgba(37,99,235,0.20), rgba(37,99,235,0.60));
   width: var(--bar-width, 0%);
-  border-radius: 4px;
+  border-radius: 0 4px 4px 0;
   z-index: 1;
 }
 
