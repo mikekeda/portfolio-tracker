@@ -134,6 +134,7 @@ const PortfolioChart = () => {
       return (
         <div className="custom-tooltip">
           <p className="tooltip-label">{label}</p>
+          <p className="tooltip-item">Total: {fmt(invested + profit)}</p>
           <p className="tooltip-item" style={{ color: profitColor }}>Profit: {fmt(profit)}</p>
           <p className="tooltip-item" style={{ color: '#8884d8' }}>Base Cost: {fmt(invested)}</p>
         </div>

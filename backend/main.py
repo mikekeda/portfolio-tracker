@@ -740,13 +740,18 @@ async def get_top_movers(
         today = datetime.now(TIMEZONE).date()
         start_date = today - timedelta(days=days)
 
+        currency_rates = await get_rates(session)
+
         result = await session.execute(
             select(
                 Instrument.yahoo_symbol,
                 Instrument.name,
                 Instrument.t212_code,
+                Instrument.currency,
                 HoldingDaily.date,
                 HoldingDaily.current_price,
+                HoldingDaily.ppl,
+                HoldingDaily.quantity,
             )
             .join(HoldingDaily)
             .filter(HoldingDaily.date >= start_date)
@@ -769,13 +774,22 @@ async def get_top_movers(
 
                 if first_price > 0:
                     change_pct = ((last_price - first_price) / first_price) * 100
+
+                    market_value_gbp = (
+                        symbol_data[-1].quantity
+                        * symbol_data[-1].current_price
+                        * currency_rates[symbol_data[-1].currency]
+                    )
+                    gain_pct = symbol_data[-1].ppl / (market_value_gbp - symbol_data[-1].ppl) * 100.0
+
                     movers.append(
                         {
                             "symbol": symbol,
                             "name": symbol_data[0].name,
-                            "change_pct": round(change_pct, 2),
-                            "current_price": round(last_price, 2),
+                            "change_pct": change_pct,
+                            "current_price": last_price,
                             "t212_code": symbol_data[0].t212_code,
+                            "gain_pct": gain_pct,
                         }
                     )
 

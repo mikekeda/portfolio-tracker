@@ -43,6 +43,16 @@ const TopMovers = () => {
     );
   };
 
+  const formatGain = (gain) => {
+    if (gain === null || gain === undefined) return '-';
+    const isPositive = gain >= 0;
+    return (
+      <span className={`change ${isPositive ? 'positive' : 'negative'}`}>
+        {isPositive ? '+' : ''}{gain.toFixed(2)}%
+      </span>
+    );
+  };
+
   const formatPrice = (price) => {
     return `$${price.toFixed(2)}`;
   };
@@ -97,6 +107,7 @@ const TopMovers = () => {
               <tr>
                 <th>Symbol</th>
                 <th>Name</th>
+                <th>Gain</th>
                 <th>Price</th>
                 <th>Change</th>
               </tr>
@@ -111,6 +122,12 @@ const TopMovers = () => {
                     <td className="name" title={stock.name}>
                       {stock.name.length > 25 ? `${stock.name.substring(0, 25)}...` : stock.name}
                     </td>
+                    <td
+                      className={`change-cell ${stock.gain_pct < 0 ? 'neg' : 'pos'}`}
+                      style={{ '--bar-width': `${Math.min(Math.abs(stock.gain_pct || 0), 100)}%` }}
+                    >
+                      <span>{formatGain(stock.gain_pct)}</span>
+                    </td>
                     <td className="price">{formatPrice(stock.current_price)}</td>
                     <td
                       className={`change-cell ${stock.change_pct < 0 ? 'neg' : 'pos'}`}
@@ -122,7 +139,7 @@ const TopMovers = () => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="4" className="no-data">No gainers data available</td>
+                  <td colSpan="5" className="no-data">No gainers data available</td>
                 </tr>
               )}
             </tbody>
@@ -137,6 +154,7 @@ const TopMovers = () => {
               <tr>
                 <th>Symbol</th>
                 <th>Name</th>
+                <th>Gain</th>
                 <th>Price</th>
                 <th>Change</th>
               </tr>
@@ -151,6 +169,12 @@ const TopMovers = () => {
                     <td className="name" title={stock.name}>
                       {stock.name.length > 25 ? `${stock.name.substring(0, 25)}...` : stock.name}
                     </td>
+                    <td
+                      className={`change-cell ${stock.gain_pct < 0 ? 'neg' : 'pos'}`}
+                      style={{ '--bar-width': `${Math.min(Math.abs(stock.gain_pct || 0), 100)}%` }}
+                    >
+                      <span>{formatGain(stock.gain_pct)}</span>
+                    </td>
                     <td className="price">{formatPrice(stock.current_price)}</td>
                     <td
                       className={`change-cell ${stock.change_pct < 0 ? 'neg' : 'pos'}`}
@@ -162,7 +186,7 @@ const TopMovers = () => {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="4" className="no-data">No losers data available</td>
+                  <td colSpan="5" className="no-data">No losers data available</td>
                 </tr>
               )}
             </tbody>
