@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
 import {
@@ -14,6 +14,19 @@ import { calculateBarWidth, getBarColorScheme, calculateMinMax, getBarStyle, sho
 import { getAvailableScreeners } from '../services/screeners';
 import './Holdings.css';
 
+// This component will only re-render if its own props change
+const HoldingRow = React.memo(({ row, isSelected }) => {
+  return (
+    <tr className={isSelected ? 'selected-row' : ''}>
+      {row.getVisibleCells().map((cell) => (
+        <td key={cell.id}>
+          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+        </td>
+      ))}
+    </tr>
+  );
+});
+
 const Holdings = () => {
   const [holdings, setHoldings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,6 +37,8 @@ const Holdings = () => {
   const [availableScreeners, setAvailableScreeners] = useState([]);
   const [screenersLoading, setScreenersLoading] = useState(true);
   const [quickRatioThresholds, setQuickRatioThresholds] = useState({});
+  const [selectedStocks, setSelectedStocks] = useState(new Set());
+  const [showOnlySelected, setShowOnlySelected] = useState(false);
 
   const columnHelper = createColumnHelper();
 
@@ -45,8 +60,113 @@ const Holdings = () => {
     return holdings; // Backend already includes passedScreeners field
   }, [holdings]);
 
+  // Selection handlers (wrapped in useCallback for performance)
+  const toggleStockSelection = useCallback((symbol) => {
+    setSelectedStocks(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(symbol)) {
+        newSet.delete(symbol);
+      } else {
+        newSet.add(symbol);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => {
+    setSelectedStocks(new Set());
+    setShowOnlySelected(false);
+  }, []);
+
+  const toggleShowSelected = useCallback(() => {
+    setShowOnlySelected(prev => !prev);
+  }, []);
+
+  // Get filtered holdings based on screener selection and stock selection
+  const filteredHoldings = useMemo(() => {
+    let result = holdingsWithScreeners;
+
+    // Apply screener filter
+    if (selectedScreeners.length > 0) {
+      result = result.filter(holding =>
+        holding.passedScreeners &&
+        selectedScreeners.every(activeScreenerId =>
+          holding.passedScreeners.includes(activeScreenerId)
+        )
+      );
+    }
+
+    // Apply selection filter - only when actually showing selected stocks
+    if (showOnlySelected && selectedStocks.size > 0) {
+      result = result.filter(h => selectedStocks.has(h.yahoo_symbol || h.t212_code));
+    }
+
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    holdingsWithScreeners,
+    selectedScreeners,
+    showOnlySelected,
+    // Only recalculate when showing selected to avoid expensive filtering
+    showOnlySelected ? selectedStocks.size : 0
+  ]);
+
+  // Toggle select all based on currently filtered/visible rows
+  const toggleSelectAll = useCallback(() => {
+    // Get symbols from filteredHoldings at call time (not dependency time)
+    const visibleSymbols = filteredHoldings.map(h => h.yahoo_symbol || h.t212_code);
+    
+    setSelectedStocks(prev => {
+      const allSelected = visibleSymbols.length > 0 && 
+                          visibleSymbols.every(symbol => prev.has(symbol));
+      const newSet = new Set(prev);
+      
+      if (allSelected) {
+        // Deselect all visible rows
+        visibleSymbols.forEach(symbol => newSet.delete(symbol));
+      } else {
+        // Select all visible rows
+        visibleSymbols.forEach(symbol => newSet.add(symbol));
+      }
+      
+      return newSet;
+    });
+  }, [filteredHoldings]);
+
   const columns = useMemo(
     () => [
+      columnHelper.display({
+        id: 'select',
+        header: ({ table }) => {
+          const visibleRows = table.getRowModel().rows;
+          const visibleSymbols = visibleRows.map(row => 
+            row.original.yahoo_symbol || row.original.t212_code
+          );
+          const allSelected = visibleSymbols.length > 0 && 
+                              visibleSymbols.every(symbol => selectedStocks.has(symbol));
+          
+          return (
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={toggleSelectAll}
+              title="Select/Deselect all visible rows"
+            />
+          );
+        },
+        cell: (info) => {
+          const symbol = info.row.original.yahoo_symbol || info.row.original.t212_code;
+          const isChecked = selectedStocks.has(symbol);
+          return (
+            <input
+              type="checkbox"
+              checked={isChecked}
+              onChange={() => toggleStockSelection(symbol)}
+            />
+          );
+        },
+        size: 30,
+      }),
       columnHelper.accessor('yahoo_symbol', {
         header: 'Symbol',
         cell: (info) => {
@@ -691,7 +811,7 @@ const Holdings = () => {
         size: 80,
       }),
     ],
-    [columnHelper, barRanges]
+    [columnHelper, barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection]
   );
 
   useEffect(() => {
@@ -731,6 +851,7 @@ const Holdings = () => {
 
     fetchScreeners();
   }, []);
+
 
   // Handle screener filter change (multi-select functionality)
   const handleScreenerChange = (screenerId) => {
@@ -774,22 +895,6 @@ const Holdings = () => {
     return counts;
   }, [holdingsWithScreeners, availableScreeners, selectedScreeners]);
 
-  // Get filtered holdings based on screener selection
-  const filteredHoldings = useMemo(() => {
-    // If no screeners are selected, show all holdings
-    if (selectedScreeners.length === 0) {
-      return holdingsWithScreeners;
-    }
-
-    // If screeners are selected, filter holdings locally using passedScreeners (AND logic)
-    return holdingsWithScreeners.filter(holding =>
-      holding.passedScreeners &&
-      selectedScreeners.every(activeScreenerId =>
-        holding.passedScreeners.includes(activeScreenerId)
-      )
-    );
-  }, [holdingsWithScreeners, selectedScreeners]);
-
   const table = useReactTable({
     data: filteredHoldings,
     columns,
@@ -831,6 +936,7 @@ const Holdings = () => {
 
       {/* Search and Filter Controls */}
       <div className="table-controls">
+        <div className="search-screeners-row">
         <div className="search-box">
           <input
             type="text"
@@ -889,6 +995,7 @@ const Holdings = () => {
               </>
             )}
           </div>
+          </div>
         </div>
 
         <div className="table-info">
@@ -903,6 +1010,33 @@ const Holdings = () => {
             )}
           </span>
         </div>
+
+        {/* Comparison Controls */}
+        {selectedStocks.size > 0 && (
+          <div className="comparison-controls">
+            <div className="comparison-buttons">
+              <button
+                className={`btn-compare ${showOnlySelected ? 'active' : ''}`}
+                onClick={toggleShowSelected}
+                title={showOnlySelected ? 'Show all holdings' : 'Show only selected stocks'}
+              >
+                {showOnlySelected ? '📋 Show All' : '🔍 Show Only Selected'}
+              </button>
+              <button
+                className="btn-clear"
+                onClick={clearSelection}
+                title="Clear selection"
+              >
+                ✕ Clear Selection
+              </button>
+            </div>
+            <div className="selection-info">
+              <span className="selection-count">
+                {selectedStocks.size} stock{selectedStocks.size !== 1 ? 's' : ''} selected
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -938,15 +1072,17 @@ const Holdings = () => {
           </thead>
           <tbody>
             {table.getRowModel().rows.length > 0 ? (
-              table.getRowModel().rows.map((row) => (
-                <tr key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
-                </tr>
-              ))
+              table.getRowModel().rows.map((row) => {
+                const symbol = row.original.yahoo_symbol || row.original.t212_code;
+                const isSelected = selectedStocks.has(symbol);
+                return (
+                  <HoldingRow
+                    key={row.id}
+                    row={row}
+                    isSelected={isSelected}
+                  />
+                );
+              })
             ) : (
               <tr>
                 <td colSpan={columns.length} className="no-results">

@@ -6,7 +6,7 @@
 
 .holdings-container h2 {
   color: #333;
-  margin-bottom: 30px;
+  margin-bottom: 10px;
   text-align: center;
   font-size: 32px;
   font-weight: 700;
@@ -15,16 +15,25 @@
 /* Table Controls */
 .table-controls {
   display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 20px;
+}
+
+.search-screeners-row {
+  display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: 10px;
   gap: 20px;
   flex-wrap: wrap;
 }
 
 .search-box {
   flex: 1;
-  max-width: 300px;
+  min-width: 300px;
+  max-width: 500px;
+  margin-top: auto;
 }
 
 .search-input {
@@ -243,9 +252,7 @@
 .table-info {
   color: #6c757d;
   font-size: 14px;
-  white-space: nowrap;
-  min-width: 150px;
-  text-align: right;
+  text-align: left;
 }
 
 .filter-status {
@@ -598,14 +605,11 @@
 .holdings-table .institutional.positive,
 .holdings-table .peg.positive,
 .holdings-table .pe.positive,
-.holdings-table .ps.positive,
 .holdings-table .beta.positive,
 .holdings-table .margins.positive,
 .holdings-table .growth.positive,
-.holdings-table .roic.positive,
+.holdings-table .roa.positive,
 .holdings-table .fcf-yield.positive,
-.holdings-table .quick-ratio.positive,
-.holdings-table .debt-equity.positive,
 .holdings-table .recommendation.positive,
 .holdings-table .short.positive,
 .holdings-table .rsi.positive {
@@ -616,14 +620,11 @@
 .holdings-table .institutional.negative,
 .holdings-table .peg.negative,
 .holdings-table .pe.negative,
-.holdings-table .ps.negative,
 .holdings-table .beta.negative,
 .holdings-table .margins.negative,
 .holdings-table .growth.negative,
-.holdings-table .roic.negative,
+.holdings-table .roa.negative,
 .holdings-table .fcf-yield.negative,
-.holdings-table .quick-ratio.negative,
-.holdings-table .debt-equity.negative,
 .holdings-table .recommendation.negative,
 .holdings-table .short.negative,
 .holdings-table .rsi.negative {
@@ -652,14 +653,11 @@
 .holdings-table .market-cap,
 .holdings-table .peg,
 .holdings-table .pe,
-.holdings-table .ps,
 .holdings-table .beta,
 .holdings-table .margins,
 .holdings-table .growth,
-.holdings-table .roic,
+.holdings-table .roa,
 .holdings-table .fcf-yield,
-.holdings-table .quick-ratio,
-.holdings-table .debt-equity,
 .holdings-table .recommendation,
 .holdings-table .short,
 .holdings-table .rsi,
@@ -746,7 +744,7 @@
   height: 100%;
   width: var(--bar-width, 0%);
   background: var(--bar-background, linear-gradient(90deg, #e8f5e8 0%, #c8e6c9 100%));
-  border-radius: 0 4px 4px 0;
+  border-radius: 4px;
   z-index: 1;
   transition: all 0.3s ease;
 }
@@ -755,7 +753,6 @@
 .holdings-table .bar-column.negative::before {
   left: auto;
   right: 0;
-  border-radius: 4px 0 0 4px;
 }
 
 .holdings-table .bar-column span {
@@ -806,11 +803,6 @@
     text-align: center;
   }
 
-  .holdings-container h2 {
-    font-size: 24px;
-    margin-bottom: 20px;
-  }
-
   .screener-badges-section {
     min-width: auto;
   }
@@ -854,4 +846,113 @@
 
 .dcf-diff.negative {
   color: #F44336; /* Red for loss potential (DCF price below current price) */
+}
+
+/* Comparison Controls */
+.comparison-controls {
+  background: #f8f9fa;
+  border: 2px solid #007bff;
+  border-radius: 8px;
+  padding: 10px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.selection-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.selection-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: #007bff;
+  background: #e3f2fd;
+  padding: 6px 12px;
+  border-radius: 20px;
+}
+
+.comparison-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.btn-compare,
+.btn-clear {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-compare {
+  background: #007bff;
+  color: white;
+}
+
+.btn-compare:hover {
+  background: #0056b3;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+}
+
+.btn-compare.active {
+  background: #28a745;
+}
+
+.btn-compare.active:hover {
+  background: #218838;
+}
+
+.btn-clear {
+  background: #6c757d;
+  color: white;
+}
+
+.btn-clear:hover {
+  background: #5a6268;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(108, 117, 125, 0.3);
+}
+
+/* Checkbox styling */
+.holdings-table input[type="checkbox"] {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+  accent-color: #007bff;
+}
+
+.holdings-table thead input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+/* Highlight selected rows */
+.holdings-table tbody tr:has(input[type="checkbox"]:checked) {
+  background-color: #e3f2fd !important;
+  border-left: 3px solid #007bff;
+}
+
+.holdings-table tbody tr:has(input[type="checkbox"]:checked):hover {
+  background-color: #bbdefb !important;
 }
