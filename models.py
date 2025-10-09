@@ -258,3 +258,85 @@ class PortfolioDaily(Base):
 
     def __repr__(self) -> str:
         return f"<PortfolioSnapshot(date='{self.date}', value={self.value})>"
+
+
+class Pie(Base):
+    """Trading212 pie data for portfolio tracking."""
+
+    __tablename__ = "pies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    cash: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    progress: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=None)
+    status: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, default=None)
+
+    # Pie settings data (from second API call)
+    name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    creation_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    end_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    dividend_cash_action: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    goal: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Pie summary data (from first API call)
+    dividend_details: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    # Raw settings data (keep for debugging/completeness)
+    settings: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    # Metadata
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
+    )
+
+    # Relationships
+    instruments: Mapped[List["PieInstrument"]] = relationship("PieInstrument", back_populates="pie", cascade="all, delete-orphan")
+
+    # Table constraints
+    __table_args__ = (
+        Index("idx_pie_id", "id"),
+        Index("idx_pie_name", "name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Pie(id={self.id}, name={self.name}, cash={self.cash})>"
+
+
+class PieInstrument(Base):
+    """Individual instruments within a Trading212 pie."""
+
+    __tablename__ = "pie_instruments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pie_id: Mapped[int] = mapped_column(Integer, ForeignKey("pies.id"), nullable=False)
+    t212_code: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # Instrument allocation data
+    expected_share: Mapped[float] = mapped_column(Float, nullable=False)
+    current_share: Mapped[float] = mapped_column(Float, nullable=False)
+    owned_quantity: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Instrument result data
+    result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    # Issues/notes
+    issues: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True)
+
+    # Metadata
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
+    )
+
+    # Relationships
+    pie: Mapped["Pie"] = relationship("Pie", back_populates="instruments")
+    instrument: Mapped[Optional["Instrument"]] = relationship("Instrument", foreign_keys=[t212_code], primaryjoin="PieInstrument.t212_code == Instrument.t212_code")
+
+    # Table constraints
+    __table_args__ = (
+        Index("idx_pie_instrument_pie_id", "pie_id"),
+        Index("idx_pie_instrument_t212_code", "t212_code"),
+        UniqueConstraint("pie_id", "t212_code", name="uq_pie_t212_code"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<PieInstrument(pie_id={self.pie_id}, t212_code={self.t212_code}, current_share={self.current_share})>"

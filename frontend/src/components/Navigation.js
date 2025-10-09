@@ -31,6 +31,12 @@ const Navigation = () => {
             Holdings
           </Link>
           <Link
+            to="/pies"
+            className={location.pathname === '/pies' ? 'active' : ''}
+          >
+            Pies
+          </Link>
+          <Link
             to="/chart"
             className={location.pathname === '/chart' ? 'active' : ''}
           >

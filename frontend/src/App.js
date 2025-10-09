@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import Navigation from './components/Navigation';
 import Dashboard from './components/Dashboard';
 import Holdings from './components/Holdings';
+import Pies from './components/Pies';
 import Chart from './components/Chart';
 import Stock from './components/Stock';
 import Allocations from './components/Allocations';
@@ -18,6 +19,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/allocations" element={<Allocations />} />
             <Route path="/holdings" element={<Holdings />} />
+            <Route path="/pies" element={<Pies />} />
             <Route path="/chart" element={<Chart />} />
             <Route path="/stock/:symbol" element={<Stock />} />
           </Routes>

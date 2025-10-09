@@ -40,6 +40,8 @@ from models import (
     PortfolioDaily,
     PricesDaily,
     InstrumentMetricsDaily,
+    Pie,
+    PieInstrument,
 )
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
@@ -630,11 +632,11 @@ async def get_available_screeners() -> Dict[str, Any]:
 
 async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncSession) -> Dict[str, Any]:
     """Get chart data for a specific metric."""
-    # Parse symbols from comma-separated string
-    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
-
     if not symbols:
         raise HTTPException(status_code=400, detail="No symbols provided")
+
+    # Parse symbols from comma-separated string
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
 
     # Calculate date range
     start_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
@@ -811,6 +813,57 @@ async def get_top_movers(
 
     except Exception as e:
         logger.error(f"Error fetching top movers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/pies")
+async def get_pies(session: AsyncSession = Depends(get_db_session)):
+    """Get all pies with their instruments."""
+    try:
+        # Fetch all pies with their instruments and related instrument data
+        result = await session.execute(
+            select(Pie)
+            .options(selectinload(Pie.instruments).selectinload(PieInstrument.instrument))
+            .order_by(Pie.name)
+        )
+        pies = result.scalars().all()
+
+        # Format the response
+        pies_data = [
+            {
+                "id": pie.id,
+                "name": pie.name,
+                "cash": pie.cash,
+                "progress": pie.progress,
+                "status": pie.status,
+                "creation_date": pie.creation_date.isoformat() if pie.creation_date else None,
+                "end_date": pie.end_date.isoformat() if pie.end_date else None,
+                "dividend_cash_action": pie.dividend_cash_action,
+                "goal": pie.goal,
+                "dividend_details": pie.dividend_details,
+                "result": pie.result,
+                "instruments": [
+                    {
+                        "t212_code": instrument.t212_code,
+                        "instrument_name": instrument.instrument.name if instrument.instrument else None,
+                        "yahoo_symbol": instrument.instrument.yahoo_symbol if instrument.instrument else None,
+                        "expected_share": instrument.expected_share,
+                        "current_share": instrument.current_share,
+                        "owned_quantity": instrument.owned_quantity,
+                        "result": instrument.result,
+                        "issues": instrument.issues
+                    }
+                    for instrument in sorted(pie.instruments, key=lambda i: i.current_share, reverse=True)
+                ]
+            }
+            for pie in pies
+        ]
+
+        return pies_data
+
+
+    except Exception as e:
+        logger.error(f"Error fetching pies: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

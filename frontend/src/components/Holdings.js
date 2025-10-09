@@ -115,12 +115,12 @@ const Holdings = () => {
   const toggleSelectAll = useCallback(() => {
     // Get symbols from filteredHoldings at call time (not dependency time)
     const visibleSymbols = filteredHoldings.map(h => h.yahoo_symbol || h.t212_code);
-    
+
     setSelectedStocks(prev => {
-      const allSelected = visibleSymbols.length > 0 && 
+      const allSelected = visibleSymbols.length > 0 &&
                           visibleSymbols.every(symbol => prev.has(symbol));
       const newSet = new Set(prev);
-      
+
       if (allSelected) {
         // Deselect all visible rows
         visibleSymbols.forEach(symbol => newSet.delete(symbol));
@@ -128,7 +128,7 @@ const Holdings = () => {
         // Select all visible rows
         visibleSymbols.forEach(symbol => newSet.add(symbol));
       }
-      
+
       return newSet;
     });
   }, [filteredHoldings]);
@@ -139,12 +139,12 @@ const Holdings = () => {
         id: 'select',
         header: ({ table }) => {
           const visibleRows = table.getRowModel().rows;
-          const visibleSymbols = visibleRows.map(row => 
+          const visibleSymbols = visibleRows.map(row =>
             row.original.yahoo_symbol || row.original.t212_code
           );
-          const allSelected = visibleSymbols.length > 0 && 
+          const allSelected = visibleSymbols.length > 0 &&
                               visibleSymbols.every(symbol => selectedStocks.has(symbol));
-          
+
           return (
             <input
               type="checkbox"

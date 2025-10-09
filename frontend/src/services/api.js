@@ -103,4 +103,10 @@ export const portfolioAPI = {
     const response = await apiClient.get(`/api/instrument/${encodeURIComponent(symbol)}?days=${days}`);
     return response.data;
   },
+
+  // Get all pies
+  getPies: async () => {
+    const response = await apiClient.get('/api/pies');
+    return response.data;
+  },
 };
