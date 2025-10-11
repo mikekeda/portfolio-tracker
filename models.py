@@ -6,6 +6,7 @@ Defines the database schema using SQLAlchemy ORM.
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional
+from enum import Enum
 
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
@@ -14,6 +15,33 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from config import TIMEZONE
+
+
+class TransactionAction(Enum):
+    """Enumeration of all action types from Trading212 CSV exports."""
+
+    # Buy orders
+    MARKET_BUY = "Market buy"
+    LIMIT_BUY = "Limit buy"
+
+    # Sell orders
+    MARKET_SELL = "Market sell"
+    LIMIT_SELL = "Limit sell"
+
+    # Dividends
+    DIVIDEND = "Dividend (Dividend)"
+    DIVIDEND_PROPERTY = "Dividend (Property income distribution)"
+    DIVIDEND_TAX_EXEMPT = "Dividend (Tax exempted)"
+
+    # Cash movements
+    DEPOSIT = "Deposit"
+    WITHDRAWAL = "Withdrawal"
+    INTEREST = "Interest on cash"
+
+    # Administrative
+    STOCK_SPLIT_OPEN = "Stock split open"
+    STOCK_SPLIT_CLOSE = "Stock split close"
+    RESULT_ADJUSTMENT = "Result adjustment"
 
 
 class Base(DeclarativeBase):
@@ -77,6 +105,12 @@ class Instrument(Base):
     yahoo: Mapped["InstrumentYahoo"] = relationship(back_populates="instrument", uselist=False)
     # Time-series of market metrics (market_cap, pe, etc.)
     metrics: Mapped[List["InstrumentMetricsDaily"]] = relationship(back_populates="instrument")
+    # Transaction history from CSV exports
+    transactions: Mapped[List["TransactionHistory"]] = relationship(
+        back_populates="instrument",
+        foreign_keys="[TransactionHistory.ticker]",
+        primaryjoin="Instrument.t212_code == TransactionHistory.ticker",
+    )
 
     def __repr__(self) -> str:
         return f"<Instrument(t212_code='{self.t212_code}', name='{self.name}')>"
@@ -290,7 +324,9 @@ class Pie(Base):
     )
 
     # Relationships
-    instruments: Mapped[List["PieInstrument"]] = relationship("PieInstrument", back_populates="pie", cascade="all, delete-orphan")
+    instruments: Mapped[List["PieInstrument"]] = relationship(
+        "PieInstrument", back_populates="pie", cascade="all, delete-orphan"
+    )
 
     # Table constraints
     __table_args__ = (
@@ -329,7 +365,9 @@ class PieInstrument(Base):
 
     # Relationships
     pie: Mapped["Pie"] = relationship("Pie", back_populates="instruments")
-    instrument: Mapped[Optional["Instrument"]] = relationship("Instrument", foreign_keys=[t212_code], primaryjoin="PieInstrument.t212_code == Instrument.t212_code")
+    instrument: Mapped[Optional["Instrument"]] = relationship(
+        "Instrument", foreign_keys=[t212_code], primaryjoin="PieInstrument.t212_code == Instrument.t212_code"
+    )
 
     # Table constraints
     __table_args__ = (
@@ -340,3 +378,94 @@ class PieInstrument(Base):
 
     def __repr__(self) -> str:
         return f"<PieInstrument(pie_id={self.pie_id}, t212_code={self.t212_code}, current_share={self.current_share})>"
+
+
+class TransactionHistory(Base):
+    """Trading212 transaction history for tracking orders, dividends, interest, and deposits."""
+
+    __tablename__ = "transaction_history"
+
+    # Primary key (auto-generated, since CSV IDs are unreliable)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Core transaction details (CSV columns: "Time", "Ticker", "Action")
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    ticker: Mapped[Optional[str]] = mapped_column(
+        String(20), nullable=True, index=True
+    )  # Nullable for deposits/interest
+    action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # From TransactionAction enum
+
+    # Original CSV ID (for reference, nullable since some transactions don't have IDs)
+    csv_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+
+    # Quantity (CSV "No. of shares")
+    # Note: For orders - signed (positive for buys, negative for sells)
+    #       For dividends - quantity of shares that earned the dividend
+    #       For deposits/interest - 0.0
+    quantity: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Pricing (CSV columns: "Price / share", "Total", "Exchange rate", "Result")
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    total: Mapped[float] = mapped_column(Float, nullable=False)  # Total value (GBP)
+    exchange_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # GBP per original currency
+    result: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Realized P&L for sells (GBP)
+
+    # Notes field from CSV
+    notes: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+
+    # Fees (CSV fee columns: "Currency conversion fee", "Stamp duty reserve tax", etc.)
+    # Structure: [{"name": "CURRENCY_CONVERSION_FEE", "quantity": -0.05, "timeCharged": "2024-04-18 18:03:20"}, ...]
+    fees: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True)
+
+    # Metadata
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
+    )
+
+    # Relationships
+    instrument: Mapped[Optional["Instrument"]] = relationship(
+        "Instrument", foreign_keys=[ticker], primaryjoin="TransactionHistory.ticker == Instrument.t212_code"
+    )
+
+    # Table constraints
+    __table_args__ = (
+        # Compound index for stock transaction history queries
+        Index("idx_transaction_ticker_time", "ticker", "timestamp"),
+        # Unique constraint on CSV ID to prevent duplicates
+        UniqueConstraint("csv_id", name="uq_transaction_csv_id"),
+    )
+
+    @hybrid_property
+    def total_fees(self) -> float:
+        """Calculate total fees from fees array."""
+        if not self.fees:
+            return 0.0
+        return abs(sum(fee.get("quantity", 0) for fee in self.fees))
+
+    @hybrid_property
+    def net_cost(self) -> float:
+        """Net cost including all fees (adjusted cost basis)."""
+        fee_total = self.total_fees
+
+        if self.action in {TransactionAction.MARKET_BUY, TransactionAction.LIMIT_BUY}:
+            return self.total + fee_total
+        elif self.action in {TransactionAction.MARKET_SELL, TransactionAction.LIMIT_SELL}:
+            return -self.total - fee_total
+        else:
+            # Dividends, interest, deposits are all positive cash flows
+            return self.total - fee_total
+
+    def __repr__(self) -> str:
+        if self.action in {
+            TransactionAction.MARKET_BUY,
+            TransactionAction.LIMIT_BUY,
+            TransactionAction.MARKET_SELL,
+            TransactionAction.LIMIT_SELL,
+        }:
+            qty = abs(self.quantity)
+            price_str = f" @ £{self.price:.2f}" if self.price else ""
+            return (
+                f"<TransactionHistory({self.action} {qty:.4f} {self.ticker}{price_str}, net_cost=£{self.net_cost:.2f})>"
+            )
+        else:
+            return f"<TransactionHistory({self.action} {self.ticker or 'N/A'} £{self.total:.2f}, net_cost=£{self.net_cost:.2f})>"

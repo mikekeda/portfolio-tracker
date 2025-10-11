@@ -42,6 +42,7 @@ from models import (
     InstrumentMetricsDaily,
     Pie,
     PieInstrument,
+    TransactionHistory,
 )
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
@@ -525,21 +526,33 @@ async def get_instrument(
             select(Instrument).filter(Instrument.yahoo_symbol == symbol).options(selectinload(Instrument.yahoo))
         )
         instrument = instrument_result.scalars().first()
+        if not instrument:
+            raise HTTPException(status_code=404, detail="Instrument not found")
 
         # Get price data for the period
         prices_result = await session.execute(
             select(PricesDaily)
-            .where(PricesDaily.symbol == symbol, PricesDaily.date >= start_date, PricesDaily.date <= end_date)
+            .where(PricesDaily.symbol == symbol, PricesDaily.date >= start_date)
             .order_by(PricesDaily.date.asc())
         )
 
         chart_price_data: Dict[str, float] = {}
-        price_data = prices_result.scalars().all()
-        for row in price_data:
-            chart_price_data[row.date.isoformat()] = getattr(row, PRICE_FIELD.lower().replace(" ", "_") + "_price")
+        prices = prices_result.scalars().all()
+        for price in prices:
+            chart_price_data[price.date.isoformat()] = getattr(price, PRICE_FIELD.lower().replace(" ", "_") + "_price")
 
-        if not instrument:
-            raise HTTPException(status_code=404, detail="Instrument not found")
+        chart_orders_data: Dict[str, Dict[str, float | str]] = {}
+        orders_result = await session.execute(
+            select(TransactionHistory)
+            .where(TransactionHistory.ticker == symbol, TransactionHistory.timestamp >= start_date)
+            .order_by(TransactionHistory.timestamp)
+        )
+        orders = orders_result.scalars().all()
+        for order in orders:
+            chart_orders_data[order.timestamp.isoformat()] = {
+                "action": order.action,
+                "total": order.total,
+            }
 
         yd = instrument.yahoo.info or {}
 
@@ -590,6 +603,7 @@ async def get_instrument(
             "earnings": instrument.yahoo.earnings or {},
             "cashflow": instrument.yahoo.cashflow or {},
             "prices": chart_price_data,
+            "orders": chart_orders_data,
             "pe_history": {
                 k: v["pe_ratio"] for k, v in instrument.yahoo.pes.items() if date.fromisoformat(k) >= start_date
             },
@@ -822,9 +836,7 @@ async def get_pies(session: AsyncSession = Depends(get_db_session)):
     try:
         # Fetch all pies with their instruments and related instrument data
         result = await session.execute(
-            select(Pie)
-            .options(selectinload(Pie.instruments).selectinload(PieInstrument.instrument))
-            .order_by(Pie.name)
+            select(Pie).options(selectinload(Pie.instruments).selectinload(PieInstrument.instrument)).order_by(Pie.name)
         )
         pies = result.scalars().all()
 
@@ -851,16 +863,15 @@ async def get_pies(session: AsyncSession = Depends(get_db_session)):
                         "current_share": instrument.current_share,
                         "owned_quantity": instrument.owned_quantity,
                         "result": instrument.result,
-                        "issues": instrument.issues
+                        "issues": instrument.issues,
                     }
                     for instrument in sorted(pie.instruments, key=lambda i: i.current_share, reverse=True)
-                ]
+                ],
             }
             for pie in pies
         ]
 
         return pies_data
-
 
     except Exception as e:
         logger.error(f"Error fetching pies: {e}")

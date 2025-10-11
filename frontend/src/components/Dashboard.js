@@ -182,7 +182,7 @@ const Dashboard = () => {
           <p className="value">£{summary.total_value.toLocaleString()}</p>
         </div>
         <div className="card">
-          <h3>Total Profit/Loss</h3>
+          <h3>Total Profit</h3>
           <p className={`value ${summary.total_profit >= 0 ? 'positive' : 'negative'}`}>
             £{summary.total_profit.toLocaleString()}
           </p>

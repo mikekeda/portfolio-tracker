@@ -26,6 +26,7 @@ const CHART_DAYS_OPTIONS = [
   { value: 180, label: '6M' },
   { value: 'ytd', label: 'YTD' },
   { value: 365, label: '1Y' },
+  { value: 731, label: '2Y' },
   { value: 1825, label: '5Y' },
   { value: 3652, label: '10Y' }
 ];
@@ -35,6 +36,59 @@ const PRICE_METRICS = [
   { value: 'price_pct_change', label: 'Price % Change' }
 ];
 
+// Transaction types enum
+const TRANSACTION_TYPES = {
+  // Buy orders
+  MARKET_BUY: 'Market buy',
+  LIMIT_BUY: 'Limit buy',
+
+  // Sell orders
+  MARKET_SELL: 'Market sell',
+  LIMIT_SELL: 'Limit sell',
+
+  // Dividends
+  DIVIDEND: 'Dividend (Dividend)',
+  DIVIDEND_PROPERTY: 'Dividend (Property income distribution)',
+  DIVIDEND_TAX_EXEMPT: 'Dividend (Tax exempted)',
+
+  // Cash movements
+  DEPOSIT: 'Deposit',
+  WITHDRAWAL: 'Withdrawal',
+  INTEREST: 'Interest on cash',
+
+  // Administrative
+  STOCK_SPLIT_OPEN: 'Stock split open',
+  STOCK_SPLIT_CLOSE: 'Stock split close',
+  RESULT_ADJUSTMENT: 'Result adjustment'
+};
+
+// Transaction categories for color coding
+const TRANSACTION_CATEGORIES = {
+  BUY: ['Market buy', 'Limit buy'],
+  SELL: ['Market sell', 'Limit sell'],
+  DIVIDEND: ['Dividend (Dividend)', 'Dividend (Property income distribution)', 'Dividend (Tax exempted)'],
+  CASH: ['Deposit', 'Withdrawal', 'Interest on cash'],
+  ADMIN: ['Stock split open', 'Stock split close', 'Result adjustment']
+};
+
+// Transaction colors
+const TRANSACTION_COLORS = {
+  BUY: '#28a745',      // Green
+  SELL: '#dc3545',     // Red
+  DIVIDEND: '#fd7e14', // Orange
+  CASH: '#17a2b8',     // Blue
+  ADMIN: '#6c757d'     // Gray
+};
+
+// Common dot properties for legends
+const LEGEND_DOT_PROPS = {
+  r: 8,
+  fillOpacity: 0.8,
+  stroke: '#fff',
+  strokeWidth: 2,
+  strokeOpacity: 0.8
+};
+
 // Utility functions
 const formatDate = (dateString) => {
   return new Date(dateString).toLocaleDateString('en-US', {
@@ -42,6 +96,23 @@ const formatDate = (dateString) => {
     day: 'numeric',
     year: '2-digit'
   });
+};
+
+const formatActionName = (action) => {
+  return action
+    .replace('MARKET_', '')
+    .replace('LIMIT_', '')
+    .replace('_(DIVIDEND)', '')
+    .replace('DIVIDEND', 'Dividend');
+};
+
+const getTransactionCategory = (action) => {
+  if (TRANSACTION_CATEGORIES.BUY.includes(action)) return 'BUY';
+  if (TRANSACTION_CATEGORIES.SELL.includes(action)) return 'SELL';
+  if (TRANSACTION_CATEGORIES.DIVIDEND.includes(action)) return 'DIVIDEND';
+  if (TRANSACTION_CATEGORIES.CASH.includes(action)) return 'CASH';
+  if (TRANSACTION_CATEGORIES.ADMIN.includes(action)) return 'ADMIN';
+  return 'SELL'; // Default fallback
 };
 
 const formatShort = (n) => {
@@ -193,6 +264,57 @@ const Stock = () => {
     }
   }, [data?.prices, priceMetric]);
 
+  // Combine price data with order data for the chart
+  const chartData = useMemo(() => {
+    const orders = data?.orders || {};
+
+    // Calculate min/max order amounts for scaling
+    const orderAmounts = Object.values(orders).map(o => o.total);
+    const minAmount = Math.min(...orderAmounts, 0);
+    const maxAmount = Math.max(...orderAmounts, 0);
+    const amountRange = maxAmount - minAmount;
+
+    // Start with price data
+    let combinedData = [...priceData];
+
+    // Add order information to price data points
+    combinedData = combinedData.map(pricePoint => {
+      // Find if there's an order for this date
+      const orderDate = pricePoint.originalDate;
+      const orderEntry = Object.entries(orders).find(([timestamp]) =>
+        timestamp.split('T')[0] === orderDate
+      );
+
+      if (orderEntry) {
+        const [timestamp, order] = orderEntry;
+        const category = getTransactionCategory(order.action);
+
+        // Calculate dynamic radius (min 4, max 12)
+        const normalizedAmount = amountRange > 0 ? (order.total - minAmount) / amountRange : 0;
+        const radius = Math.max(4, 4 + (normalizedAmount * 8)); // 4-12px range
+
+        // Calculate opacity (larger amounts are more transparent)
+        const opacity = Math.max(0.6, 1 - (normalizedAmount * 0.3)); // 0.7-1.0 range
+
+        return {
+          ...pricePoint,
+          order: {
+            action: order.action,
+            total: order.total,
+            category,
+            color: TRANSACTION_COLORS[category],
+            radius,
+            opacity
+          }
+        };
+      }
+
+      return pricePoint;
+    });
+
+    return combinedData;
+  }, [priceData, data?.orders]);
+
   // Process PE history data from the new API response
   const peData = useMemo(() => {
     const peHistory = data?.pe_history || {};
@@ -328,9 +450,9 @@ const Stock = () => {
               </div>
             </div>
           </div>
-          {priceData.length > 0 ? (
+          {chartData.length > 0 ? (
             <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={priceData}>
+              <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis
@@ -348,18 +470,35 @@ const Stock = () => {
                       const data = payload[0].payload;
                       const displayName = priceMetric === 'price_pct_change' ? 'Price %' : 'Price';
                       const formattedValue = priceMetric === 'price_pct_change'
-                        ? `${data.value.toFixed(2)}%`
+                        ? `${data.value?.toFixed(2)}%`
                         : (typeof data.value === 'number'
                             ? data.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
                             : data.value);
 
+                      // Check if this is an order dot
+                      const isOrder = data.order !== undefined;
+
                       return (
                         <div className="custom-tooltip">
                           <p className="tooltip-label">{label}</p>
-                          <p className="tooltip-item" style={{ color: '#6f42c1' }}>
-                            <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
-                            {displayName}: {formattedValue}
-                          </p>
+                          {!isOrder && (
+                            <p className="tooltip-item" style={{ color: '#6f42c1' }}>
+                              <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
+                              {displayName}: {formattedValue}
+                            </p>
+                          )}
+                          {isOrder && (
+                            <>
+                              <p className="tooltip-item" style={{ color: data.order.color, fontWeight: 'bold' }}>
+                                <span className="color-indicator" style={{ backgroundColor: data.order.color }}></span>
+                                {formatActionName(data.order.action)}: £{data.order.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                              </p>
+                              <p className="tooltip-item" style={{ color: '#6f42c1' }}>
+                                <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
+                                {displayName}: {formattedValue}
+                              </p>
+                            </>
+                          )}
                         </div>
                       );
                     }
@@ -373,9 +512,56 @@ const Stock = () => {
                   name={priceMetric === 'price_pct_change' ? 'Price %' : 'Price'}
                   stroke="#6f42c1"
                   strokeWidth={2}
-                  dot={false}
+                  dot={(props) => {
+                    const { payload } = props;
+                    if (payload?.order) {
+                      return (
+                        <circle
+                          cx={props.cx}
+                          cy={props.cy}
+                          r={payload.order.radius}
+                          fill={payload.order.color}
+                          fillOpacity={payload.order.opacity}
+                          stroke="#fff"
+                          strokeWidth={2}
+                          strokeOpacity={payload.order.opacity}
+                        />
+                      );
+                    }
+                    return null;
+                  }}
                   activeDot={false}
                 />
+                {/* Add invisible lines for order legends */}
+                {['BUY', 'SELL', 'DIVIDEND', 'CASH', 'ADMIN'].map(category => {
+                  const hasTransactions = chartData.some(d => d.order?.category === category);
+                  if (!hasTransactions) return null;
+
+                  const categoryNames = {
+                    BUY: 'Buy Orders',
+                    SELL: 'Sell Orders',
+                    DIVIDEND: 'Dividends',
+                    CASH: 'Cash Movements',
+                    ADMIN: 'Administrative'
+                  };
+
+                  return (
+                    <Line
+                      key={category}
+                      type="monotone"
+                      dataKey={() => null}
+                      data={[]}
+                      stroke="none"
+                      name={categoryNames[category]}
+                      dot={{
+                        ...LEGEND_DOT_PROPS,
+                        fill: TRANSACTION_COLORS[category]
+                      }}
+                      connectNulls={false}
+                      activeDot={false}
+                    />
+                  );
+                })}
                 {/* Add split markers as ReferenceLines */}
                 {splitsData.map((split, index) => (
                   <ReferenceLine

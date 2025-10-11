@@ -214,8 +214,11 @@
 }
 
 .color-indicator {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   display: inline-block;
+  flex-shrink: 0;
+  min-width: 10px;
+  min-height: 10px;
 }
