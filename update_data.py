@@ -380,6 +380,7 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
                     existing.name = instrument["name"]
                     existing.currency = instrument["currencyCode"]
                     existing.yahoo_symbol = convert_ticker(instrument["ticker"])
+                    existing.isin = instrument["isin"]
                     existing.updated_at = datetime.now(TIMEZONE)
                     instruments.append(existing)
                     updated += 1
@@ -390,6 +391,7 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
                         name=instrument["name"],
                         currency=instrument["currencyCode"],
                         yahoo_symbol=convert_ticker(instrument["ticker"]),
+                        isin=instrument["isin"]
                     )
                     session.add(new_instrument)
                     instruments.append(new_instrument)
