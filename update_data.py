@@ -110,6 +110,9 @@ def _get_session_factory() -> sessionmaker:
     )
     engine = create_engine(db_url, echo=False, pool_pre_ping=True)
 
+    # from models import Pie, PieInstrument, TransactionHistory
+    # TransactionHistory.__table__.create(bind=engine, checkfirst=True)
+
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 
 
@@ -141,8 +144,10 @@ def convert_ticker(t212: str) -> str:
     m = PATTERN_MULTI.match(core)
     if m:
         sym, tag = m.group("sym"), m.group("tag")
-    elif core[-1].islower():  # single‑letter tag
+    elif core[-1].islower() or core[-1].isnumeric():  # single‑letter tag
         sym, tag = core[:-1], core[-1]
+    elif t212 == "IITU_EQ":
+        return core
     else:
         raise ValueError(f"Cannot parse: {t212}")
 
@@ -241,7 +246,7 @@ def fetch_holdings() -> Dict[str, T212Position]:
 
 
 def update_holdings(
-    holdings: Dict[str, Optional[T212Position]],
+    holdings: Dict[str, T212Position],
     instruments: List[Instrument],
 ) -> List[HoldingDaily]:
     """Update holdings in the database."""
@@ -271,6 +276,10 @@ def update_holdings(
             # Upsert InstrumentYahoo (detached Yahoo blobs)
             yahoo_row = session.get(InstrumentYahoo, instrument.id)
             if yahoo_row:
+                if yahoo_row.updated_at > datetime.now() - timedelta(days=1):
+                    logging.info("Skipping InstrumentYahoo update for %s, it was updated less than 24h ago")
+                    continue
+
                 yahoo_row.info = yahoo_data
                 yahoo_row.cashflow = yahoo_datas["cashflow"][yahoo_symbol]
                 yahoo_row.earnings = yahoo_datas["earnings"][yahoo_symbol]
@@ -359,7 +368,7 @@ def update_holdings(
     return result
 
 
-def update_instruments(tickers: Set[str]) -> List[Instrument]:
+def update_instruments(tickers: Set[str], isins: Set[str]) -> List[Instrument]:
     """Update instruments in the database from Trading212 API."""
     logging.info("Fetching instruments from Trading212 API")
     instruments = []
@@ -373,29 +382,33 @@ def update_instruments(tickers: Set[str]) -> List[Instrument]:
         created = 0
         updated = 0
         for instrument in instruments_from_api:
-            if instrument["ticker"] in tickers:
+            if instrument["ticker"] in tickers or instrument["isin"] in isins:
                 existing = session.query(Instrument).filter(Instrument.t212_code == instrument["ticker"]).first()
 
-                if existing:
-                    existing.name = instrument["name"]
-                    existing.currency = instrument["currencyCode"]
-                    existing.yahoo_symbol = convert_ticker(instrument["ticker"])
-                    existing.isin = instrument["isin"]
-                    existing.updated_at = datetime.now(TIMEZONE)
-                    instruments.append(existing)
-                    updated += 1
-                else:
-                    # Create new instrument only
-                    new_instrument = Instrument(
-                        t212_code=instrument["ticker"],
-                        name=instrument["name"],
-                        currency=instrument["currencyCode"],
-                        yahoo_symbol=convert_ticker(instrument["ticker"]),
-                        isin=instrument["isin"]
-                    )
-                    session.add(new_instrument)
-                    instruments.append(new_instrument)
-                    created += 1
+                try:
+                    if existing:
+                        existing.name = instrument["name"]
+                        existing.currency = instrument["currencyCode"]
+                        existing.yahoo_symbol = convert_ticker(instrument["ticker"])
+                        existing.isin = instrument["isin"]
+                        existing.updated_at = datetime.now(TIMEZONE)
+                        instruments.append(existing)
+                        updated += 1
+                    else:
+                        # Create new instrument only
+                        new_instrument = Instrument(
+                            t212_code=instrument["ticker"],
+                            name=instrument["name"],
+                            currency=instrument["currencyCode"],
+                            yahoo_symbol=convert_ticker(instrument["ticker"]),
+                            isin=instrument["isin"],
+                        )
+                        session.add(new_instrument)
+                        instruments.append(new_instrument)
+                        created += 1
+                except Exception as e:
+                    print(instrument["isin"], instrument["ticker"])
+                    raise e
 
     logging.info(f"Created {created} instruments, updated {updated} instruments")
 
@@ -513,42 +526,45 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
         # Use yfinance's batch download capability
         tickers = yf.Tickers(" ".join(batch))
         for symbol in batch:
-            yahoo_data["info"][symbol] = tickers.tickers[symbol].info
+            try:
+                yahoo_data["info"][symbol] = tickers.tickers[symbol].info
 
-            data = tickers.tickers[symbol].cashflow.to_dict()
-            yahoo_data["cashflow"][symbol] = scrub_for_json(data)
+                data = tickers.tickers[symbol].cashflow.to_dict()
+                yahoo_data["cashflow"][symbol] = scrub_for_json(data)
 
-            data = tickers.tickers[symbol].get_earnings_dates(limit=40)
-            if data is None:
-                # ETFs don't have earnings
-                yahoo_data["earnings"][symbol] = {}
-            else:
-                yahoo_data["earnings"][symbol] = scrub_for_json(data.to_dict(orient="index"))
+                data = tickers.tickers[symbol].get_earnings_dates(limit=40)
+                if data is None:
+                    # ETFs don't have earnings
+                    yahoo_data["earnings"][symbol] = {}
+                else:
+                    yahoo_data["earnings"][symbol] = scrub_for_json(data.to_dict(orient="index"))
 
-            data = tickers.tickers[symbol].recommendations.to_dict(orient="index")
-            data = {
-                datetime.now(TIMEZONE).date().replace(day=1) + relativedelta(months=int(v.pop("period").rstrip("m"))): v
-                for k, v in data.items()
-            }
-            yahoo_data["recommendations"][symbol] = scrub_for_json(data)
+                data = tickers.tickers[symbol].recommendations.to_dict(orient="index")
+                data = {
+                    datetime.now(TIMEZONE).date().replace(day=1)
+                    + relativedelta(months=int(v.pop("period").rstrip("m"))): v
+                    for k, v in data.items()
+                }
+                yahoo_data["recommendations"][symbol] = scrub_for_json(data)
 
-            yahoo_data["analyst_price_targets"][symbol] = tickers.tickers[symbol].analyst_price_targets
+                yahoo_data["analyst_price_targets"][symbol] = tickers.tickers[symbol].analyst_price_targets
 
-            # Fetch and store splits
-            splits_data = tickers.tickers[symbol].splits.to_dict()
-            yahoo_data["splits"][symbol] = scrub_for_json(splits_data)
+                # Fetch and store splits
+                splits_data = tickers.tickers[symbol].splits.to_dict()
+                yahoo_data["splits"][symbol] = scrub_for_json(splits_data)
+            except ValueError as e:
+                logging.warning(f"Problem with parsing DataFrame {symbol}: {e}")
 
     return yahoo_data
 
 
-def update_holdings_and_instruments(additional_t212_codes: Set[str]) -> None:
+def update_holdings_and_instruments(isins: Set[str]) -> None:
     """Update holdings and instruments in the database."""
-    holdings_from_api: Dict[str, Optional[T212Position]] = {t212_code: None for t212_code in additional_t212_codes}
-    holdings_from_api.update(fetch_holdings())
+    holdings_from_api = fetch_holdings()
     t212_codes = set(holdings_from_api.keys())
 
     # Update instruments
-    instruments = update_instruments(t212_codes)
+    instruments = update_instruments(t212_codes, isins)
     update_holdings(holdings_from_api, instruments)
 
 
@@ -760,7 +776,7 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> D
 
     # Beta
     covariance = aligned_portfolio.cov(aligned_benchmark)
-    variance = aligned_benchmark.var()
+    variance = cast(float, aligned_benchmark.var())
     beta = float(covariance / variance) if variance != 0 else None
 
     return {"sharpe": sharpe_ratio, "sortino": sortino_ratio, "beta": beta}
@@ -775,8 +791,25 @@ if __name__ == "__main__":
     update_currency_rates(CURRENCIES)
 
     # 2. Update holdings and instruments
-    _additional_t212_codes: Set[str] = set()  # "ARM_US_EQ", "TSM_US_EQ", "QCOM_US_EQ"
-    update_holdings_and_instruments(_additional_t212_codes)
+    with get_session() as _session:
+        existing_isins = {r[0] for r in _session.query(Instrument.isin).distinct()}
+
+    import csv
+
+    csv_dir = "csv"
+    isins = set()
+    csv_files = sorted([os.path.join(csv_dir, f) for f in os.listdir(csv_dir) if f.endswith(".csv")])
+    for csv_file in csv_files:
+        with open(csv_file, "r", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
+            for row_num, row in enumerate(reader, start=2):  # Start at 2 (1=header)
+                row["ISIN"] = row["ISIN"].strip()
+
+                if not row["ISIN"] or row["ISIN"] in existing_isins:
+                    continue
+                isins.add(row["ISIN"])
+
+    update_holdings_and_instruments(isins)
 
     # 3. Update prices
     _tickers_to_add: Set[str] = set()  # "^VIX"

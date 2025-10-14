@@ -398,6 +398,7 @@ class TransactionHistory(Base):
 
     # Original CSV ID (for reference, nullable since some transactions don't have IDs)
     csv_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    isin: Mapped[Optional[str]] = mapped_column(String(12), nullable=False, index=True)
 
     # Quantity (CSV "No. of shares")
     # Note: For orders - signed (positive for buys, negative for sells)

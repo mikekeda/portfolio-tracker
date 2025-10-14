@@ -130,6 +130,7 @@ def parse_csv_row(row: Dict[str, str], row_num: int, instruments_lookup: Dict[st
         "csv_id": row["ID"] if row["ID"].strip() else None,  # Handle empty IDs
         "action": action,
         "ticker": normalized_ticker,
+        "isin": row["ISIN"],
         "originalTicker": csv_ticker,  # Keep original for logging
         "originalName": csv_name,  # Keep original name for logging
         "was_normalized": was_normalized,  # Track if normalization was successful
@@ -184,6 +185,7 @@ def store_transaction(session, transaction_data: Dict[str, Any]) -> bool:
         csv_id=csv_id,
         timestamp=datetime.strptime(transaction_data["dateCreated"], "%Y-%m-%d %H:%M:%S"),
         ticker=transaction_data["ticker"],
+        isin=transaction_data["isin"],
         action=transaction_data["action"],
         quantity=transaction_data["quantity"],
         price=transaction_data["price"],
