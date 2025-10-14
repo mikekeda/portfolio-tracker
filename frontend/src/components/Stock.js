@@ -36,32 +36,6 @@ const PRICE_METRICS = [
   { value: 'price_pct_change', label: 'Price % Change' }
 ];
 
-// Transaction types enum
-const TRANSACTION_TYPES = {
-  // Buy orders
-  MARKET_BUY: 'Market buy',
-  LIMIT_BUY: 'Limit buy',
-
-  // Sell orders
-  MARKET_SELL: 'Market sell',
-  LIMIT_SELL: 'Limit sell',
-
-  // Dividends
-  DIVIDEND: 'Dividend (Dividend)',
-  DIVIDEND_PROPERTY: 'Dividend (Property income distribution)',
-  DIVIDEND_TAX_EXEMPT: 'Dividend (Tax exempted)',
-
-  // Cash movements
-  DEPOSIT: 'Deposit',
-  WITHDRAWAL: 'Withdrawal',
-  INTEREST: 'Interest on cash',
-
-  // Administrative
-  STOCK_SPLIT_OPEN: 'Stock split open',
-  STOCK_SPLIT_CLOSE: 'Stock split close',
-  RESULT_ADJUSTMENT: 'Result adjustment'
-};
-
 // Transaction categories for color coding
 const TRANSACTION_CATEGORIES = {
   BUY: ['Market buy', 'Limit buy'],

@@ -8,8 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   Area,
-  AreaChart,
-  Legend
+  AreaChart
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import './PortfolioChart.css';
