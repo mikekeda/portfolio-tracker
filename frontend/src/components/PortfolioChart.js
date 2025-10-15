@@ -52,20 +52,20 @@ const PortfolioChart = () => {
 
       if (historyData.history && historyData.history.length > 0) {
         // Process the data for charts
-            const processedData = historyData.history.map(item => {
+        const processedData = historyData.history.map(item => {
           const processedItem = {
             date: new Date(item.date).toLocaleDateString('en-US', {
               month: 'short',
-              day: 'numeric'
+              day: 'numeric',
+              year: '2-digit',
             }),
             fullDate: item.date,
             totalValue: item.total_value || 0,
             totalProfit: item.total_profit || 0,
             totalReturn: item.total_return_pct || 0,
-            benchmarkReturn: item.benchmark_return_pct ?? null,
             // Handle multiple benchmarks
-            spyReturn: Array.isArray(item.benchmark_return_pct) ? item.benchmark_return_pct[0] : item.benchmark_return_pct,
-            nasdaqReturn: Array.isArray(item.benchmark_return_pct) ? item.benchmark_return_pct[1] : null,
+            spyReturn: item.benchmark_return_pct[0],
+            nasdaqReturn: item.benchmark_return_pct[1],
           };
 
               // Derived fields for combined chart (invested base, profit/loss bands)
