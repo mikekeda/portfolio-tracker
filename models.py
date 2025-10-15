@@ -398,7 +398,7 @@ class TransactionHistory(Base):
 
     # Original CSV ID (for reference, nullable since some transactions don't have IDs)
     csv_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
-    isin: Mapped[Optional[str]] = mapped_column(String(12), nullable=False, index=True)
+    isin: Mapped[Optional[str]] = mapped_column(String(12), nullable=True, index=True)
 
     # Quantity (CSV "No. of shares")
     # Note: For orders - signed (positive for buys, negative for sells)
@@ -466,8 +466,6 @@ class TransactionHistory(Base):
         }:
             qty = abs(self.quantity)
             price_str = f" @ £{self.price:.2f}" if self.price else ""
-            return (
-                f"<TransactionHistory({self.action} {qty:.4f} {self.ticker}{price_str}, net_cost=£{self.net_cost:.2f})>"
-            )
+            return f"<TransactionHistory({self.timestamp.date().isoformat()} {self.action} {qty:.4f} {self.ticker}{price_str}, net_cost=£{self.net_cost:.2f})>"
         else:
-            return f"<TransactionHistory({self.action} {self.ticker or 'N/A'} £{self.total:.2f}, net_cost=£{self.net_cost:.2f})>"
+            return f"<TransactionHistory({self.timestamp.date().isoformat()} {self.action} {self.ticker or 'N/A'} £{self.total:.2f}, net_cost=£{self.net_cost:.2f})>"
