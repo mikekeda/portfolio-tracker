@@ -442,23 +442,22 @@ async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(
         snapshots = snap_res.scalars().all()
 
         bench_res = await session.execute(
-            select(HoldingDaily.date, HoldingDaily.current_price, Instrument.yahoo_symbol)
-            .join(Instrument)
+            select(PricesDaily.date, PRICE_COLUMN, PricesDaily.symbol)
             .where(
-                Instrument.yahoo_symbol.in_(BENCHES),
-                HoldingDaily.date >= snapshots[0].date,  # latest date in the snapshots
+                PricesDaily.symbol.in_(BENCHES),
+                PricesDaily.date >= snapshots[0].date,  # latest date in the snapshots
             )
-            .order_by(HoldingDaily.date)
+            .order_by(PricesDaily.date)
         )
         bench_rows = bench_res.all()
         daily_bench: Dict[str, Dict[date, float]] = defaultdict(lambda: defaultdict(float))
         bench_prices = defaultdict(list)
         for bench_row in bench_rows:
-            daily_bench[bench_row.yahoo_symbol][bench_row.date] = bench_row.current_price
-            bench_prices[bench_row.yahoo_symbol].append(bench_row.current_price)
+            daily_bench[bench_row.symbol][bench_row.date] = bench_row.price
+            bench_prices[bench_row.symbol].append(bench_row.price)
         benches_base_price = {symbol: bench_price[0] for symbol, bench_price in bench_prices.items()}
         bench_start = snapshots[0].return_pct
-        bench = [100 for _bench_symbol in BENCHES]
+        bench = [bench_start for _bench_symbol in BENCHES]
 
         history_data = []
         for snapshot in snapshots:
