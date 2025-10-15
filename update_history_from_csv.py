@@ -51,12 +51,8 @@ def parse_csv_row(row: Dict[str, str], row_num: int, instruments_lookup: Dict[st
         return None
 
     # Parse quantity based on action type
-    if "BUY" in action.upper():
+    if "BUY" in action.upper() or "SELL" in action.upper() or action.startswith("Dividend"):
         filled_quantity = float(row["No. of shares"])
-    elif "SELL" in action.upper():
-        filled_quantity = -float(row["No. of shares"])
-    elif action.startswith("Dividend"):
-        filled_quantity = float(row["No. of shares"])  # Quantity of shares that earned dividend
     elif action in ["Interest on cash", "Deposit", "Withdrawal"]:
         filled_quantity = 0.0  # No shares for cash movements
     else:
@@ -185,7 +181,7 @@ def store_transaction(session, transaction_data: Dict[str, Any]) -> bool:
         csv_id=csv_id,
         timestamp=datetime.strptime(transaction_data["dateCreated"], "%Y-%m-%d %H:%M:%S"),
         ticker=transaction_data["ticker"],
-        isin=transaction_data["isin"],
+        isin=transaction_data["isin"] or None,
         action=transaction_data["action"],
         quantity=transaction_data["quantity"],
         price=transaction_data["price"],
