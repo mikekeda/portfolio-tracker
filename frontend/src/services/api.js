@@ -67,8 +67,12 @@ export const portfolioAPI = {
   },
 
   // Get portfolio history
-  getHistory: async (days = 30) => {
-    const response = await apiClient.get(`/api/portfolio/history?days=${days}`);
+  getHistory: async (days = null) => {
+    let url = "/api/portfolio/history"
+    if (days !== null) {
+      url += `?days=${days}`;
+    }
+    const response = await apiClient.get(url);
     return response.data;
   },
 

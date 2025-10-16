@@ -432,13 +432,18 @@ async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_sessi
 
 
 @app.get("/api/portfolio/history")
-async def get_portfolio_history(days: int = 30, session: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
+async def get_portfolio_history(
+    days: Optional[int] = None, session: AsyncSession = Depends(get_db_session)
+) -> Dict[str, Any]:
     """Get portfolio history for the last N days."""
     try:
-        cutoff_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
-        snap_res = await session.execute(
-            select(PortfolioDaily).filter(PortfolioDaily.date >= cutoff_date).order_by(PortfolioDaily.date)
-        )
+        if days is not None:
+            cutoff_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
+            query = select(PortfolioDaily).filter(PortfolioDaily.date >= cutoff_date).order_by(PortfolioDaily.date)
+        else:
+            query = select(PortfolioDaily).order_by(PortfolioDaily.date)
+
+        snap_res = await session.execute(query)
         snapshots = snap_res.scalars().all()
 
         bench_res = await session.execute(
