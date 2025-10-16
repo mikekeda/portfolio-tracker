@@ -136,7 +136,7 @@ def parse_csv_row(row: Dict[str, str], row_num: int, instruments_lookup: Dict[st
         "price": fill_price,
         "total": filled_value,
         "exchangeRate": exchange_rate if exchange_rate else None,
-        "result": fill_result if "SELL" in action.upper() and fill_result else None,
+        "result": fill_result if "SELL" in action.upper() else None,
         "fees": fees if fees else None,
         "dateCreated": time_str,
     }
