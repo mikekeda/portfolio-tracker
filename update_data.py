@@ -256,6 +256,7 @@ def update_holdings(
     current_date = datetime.now(TIMEZONE).date()
     instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
 
+    # TODO: Update this data only once a day
     yahoo_datas = get_yahoo_ticker_data([i.yahoo_symbol for i in instruments])
 
     with get_session() as session:
@@ -276,10 +277,6 @@ def update_holdings(
             # Upsert InstrumentYahoo (detached Yahoo blobs)
             yahoo_row = session.get(InstrumentYahoo, instrument.id)
             if yahoo_row:
-                if yahoo_row.updated_at > datetime.now() - timedelta(days=1):
-                    logging.info("Skipping InstrumentYahoo update for %s, it was updated less than 24h ago")
-                    continue
-
                 yahoo_row.info = yahoo_data
                 yahoo_row.cashflow = yahoo_datas["cashflow"][yahoo_symbol]
                 yahoo_row.earnings = yahoo_datas["earnings"][yahoo_symbol]
@@ -477,6 +474,7 @@ def get_and_update_prices(tickers_to_add: Set[str]) -> None:
                 PricesDaily.symbol,
                 func.max(PricesDaily.date).label("max_date"),
             )
+            .where(PricesDaily.symbol.notin_(STOCKS_DELISTED))
             .group_by(PricesDaily.symbol)
             .all()
         )
@@ -491,7 +489,7 @@ def get_and_update_prices(tickers_to_add: Set[str]) -> None:
                 update_prices(session, list(existing_tickers), start)
 
         # Get prices for new tickers
-        new_tickers = list(tickers_to_add | tickers - existing_tickers)
+        new_tickers = list(tickers_to_add | tickers - existing_tickers - STOCKS_DELISTED)
         if new_tickers:
             start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
             update_prices(session, new_tickers, start)
@@ -512,11 +510,11 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
     logging.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
     yahoo_data: YahooData = {
         "info": {},
-        "cashflow": {},
-        "earnings": {},
-        "recommendations": {},
-        "analyst_price_targets": {},
-        "splits": {},
+        "cashflow": defaultdict(dict),
+        "earnings": defaultdict(dict),
+        "recommendations": defaultdict(dict),
+        "analyst_price_targets": defaultdict(dict),
+        "splits": defaultdict(dict),
     }
 
     # Fetch in batches
@@ -528,6 +526,10 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
         for symbol in batch:
             try:
                 yahoo_data["info"][symbol] = tickers.tickers[symbol].info
+
+                if yahoo_data["info"][symbol].get("quoteType") == "ETF":
+                    # ETF don't have cashflow, earnings, recommendations, analyst_price_targets, splits
+                    continue
 
                 data = tickers.tickers[symbol].cashflow.to_dict()
                 yahoo_data["cashflow"][symbol] = scrub_for_json(data)
