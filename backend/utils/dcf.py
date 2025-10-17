@@ -1,5 +1,5 @@
 import asyncio
-from typing import Dict, List, Optional, TypedDict, Any
+from typing import Optional, TypedDict, Any
 
 from models import Instrument
 
@@ -7,7 +7,7 @@ from models import Instrument
 # More conventional to set a standard terminal growth rate representing long-term economic growth.
 TERMINAL_GROWTH_RATE = 0.025  # 2.5%
 
-SECTOR_GROWTH_DEFAULTS: Dict[str, float] = {
+SECTOR_GROWTH_DEFAULTS: dict[str, float] = {
     "Technology": 0.15,
     "Healthcare": 0.07,
     "Industrials": 0.05,
@@ -75,7 +75,7 @@ def _safe_number(x: Any) -> Optional[float]:
     )
 
 
-def _median(xs: List[float]) -> float:
+def _median(xs: list[float]) -> float:
     """Calculates the median of a list of numbers."""
     xs_sorted = sorted(xs)
     n = len(xs_sorted)
@@ -95,7 +95,7 @@ def _calculate_cagr(first: float, last: float, periods: int) -> Optional[float]:
         return None
 
 
-def _extract_trailing_fcf(cashflow: Dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
+def _extract_trailing_fcf(cashflow: dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
     """
     Extracts a smoothed, forward-looking Free Cash Flow (FCF) from historical data.
     Also returns the historical FCF CAGR to inform the growth rate assumption.
@@ -108,7 +108,7 @@ def _extract_trailing_fcf(cashflow: Dict[str, Any]) -> tuple[Optional[float], Op
 
     # 1) Build a chronological series of historical FCF
     years = sorted(cashflow.keys())
-    series: List[float] = []
+    series: list[float] = []
     for y in years:
         row = cashflow.get(y) or {}
         fcf = _safe_number(row.get("Free Cash Flow"))
@@ -156,7 +156,7 @@ def _extract_trailing_fcf(cashflow: Dict[str, Any]) -> tuple[Optional[float], Op
     return final_fcf, fcf_cagr
 
 
-def _derive_shares_if_needed(info: Dict[str, Any], candidate_shares: Optional[float]) -> Optional[float]:
+def _derive_shares_if_needed(info: dict[str, Any], candidate_shares: Optional[float]) -> Optional[float]:
     """Uses market cap and price to derive or validate shares outstanding."""
     if not isinstance(candidate_shares, (int, float)) or candidate_shares <= 0:
         candidate_shares = None
@@ -219,12 +219,12 @@ def _estimate_dcf_inputs(instrument: Instrument) -> DcfInputs:
 
 
 async def get_dcf_prices(
-    instruments: List[Instrument],
+    instruments: list[Instrument],
     years: int = 10,
     wacc: Optional[float] = None,
     growth: Optional[float] = None,
     terminal: Optional[float] = None,
-) -> List[Optional[float]]:
+) -> list[Optional[float]]:
     """Calculates DCF prices for a list of instruments concurrently."""
     return await asyncio.gather(
         *[_get_dcf_price(instrument, years, wacc, growth, terminal) for instrument in instruments]
@@ -281,7 +281,7 @@ async def _get_dcf_price(
     g_list = [g0 + g_step * i for i in range(horizon_years)]
 
     fcf = est["current_fcf"]
-    projected_fcf: List[float] = []
+    projected_fcf: list[float] = []
     for g in g_list:
         fcf *= 1.0 + g
         projected_fcf.append(fcf)

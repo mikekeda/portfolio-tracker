@@ -131,10 +131,10 @@ def _clean_number(value: str) -> Optional[float]:
         return None
 
 
-def parse_pe_data(html: str) -> Dict[str, Optional[float]]:
+def parse_pe_data(html: str) -> dict[str, Optional[float]]:
     """Parse PE ratio data from Wisesheets HTML."""
     soup = BeautifulSoup(html, "html.parser")
-    records: Dict[str, Optional[float]] = {}
+    records: dict[str, Optional[float]] = {}
 
     # Look for tables with Year and PE Ratio columns
     tables = soup.find_all("table")
@@ -148,7 +148,7 @@ def parse_pe_data(html: str) -> Dict[str, Optional[float]]:
             rows = table.find_all("tr")[1:]  # Skip header row
 
             # Group rows by year to handle quarterly data
-            year_data: Dict[int, List[float]] = defaultdict(list)
+            year_data: dict[int, list[float]] = defaultdict(list)
             for row in rows:
                 cells = row.find_all(["td", "th"])
                 if len(cells) >= 2:

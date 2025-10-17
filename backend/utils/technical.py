@@ -6,7 +6,7 @@ Helper functions for technical analysis calculations.
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +19,7 @@ PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_pr
 logger = logging.getLogger(__name__)
 
 
-def calculate_rsi(prices: List[float], period: int = 14) -> float:
+def calculate_rsi(prices: list[float], period: int = 14) -> float:
     """Calculate RSI (Relative Strength Index) for a series of prices."""
     if len(prices) <= period:
         return 50.0  # Return neutral if not enough data
@@ -50,14 +50,14 @@ def calculate_rsi(prices: List[float], period: int = 14) -> float:
     return rsi
 
 
-def calculate_sma(prices: List[float], period: int) -> Optional[float]:
+def calculate_sma(prices: list[float], period: int) -> Optional[float]:
     """Calculate Simple Moving Average."""
     if len(prices) < period:
         return None
     return sum(prices[-period:]) / period
 
 
-def find_golden_cross_in_last_n_days(prices: List[float], n_days: int) -> Optional[int]:
+def find_golden_cross_in_last_n_days(prices: list[float], n_days: int) -> Optional[int]:
     """
     Calculate days since a moving average cross (e.g., SMA50 vs SMA200) within the last n_days.
     This function detects both golden (50 > 200) and death (50 < 200) crosses.
@@ -114,7 +114,7 @@ def find_golden_cross_in_last_n_days(prices: List[float], n_days: int) -> Option
     return None
 
 
-def calculate_gc_within_sma50(prices: List[float]) -> Optional[float]:
+def calculate_gc_within_sma50(prices: list[float]) -> Optional[float]:
     """Calculate if current price is within SMA50 range."""
     if len(prices) < 50:
         return None
@@ -128,7 +128,7 @@ def calculate_gc_within_sma50(prices: List[float]) -> Optional[float]:
     return (current_price - sma_50) / sma_50
 
 
-def calculate_bb_width(prices: List[float], period: int) -> Optional[float]:
+def calculate_bb_width(prices: list[float], period: int) -> Optional[float]:
     """Calculate Bollinger Band width."""
     if len(prices) < period:
         return None
@@ -147,7 +147,7 @@ def calculate_bb_width(prices: List[float], period: int) -> Optional[float]:
 
 
 def calculate_bb_width_percentile(
-    prices: List[float], period: int, lookback: int, percentile: float
+    prices: list[float], period: int, lookback: int, percentile: float
 ) -> Optional[float]:
     """Calculate BB width percentile over the last lookback days only."""
     if len(prices) < lookback + period:
@@ -236,7 +236,7 @@ async def calculate_volume_contraction_from_db(symbol: str, session: AsyncSessio
         return None
 
 
-def calculate_relative_strength_vs_spy(symbol_prices: List[float], spy_prices: List[float]) -> Optional[float]:
+def calculate_relative_strength_vs_spy(symbol_prices: list[float], spy_prices: list[float]) -> Optional[float]:
     """Calculate 6-month relative strength vs SPY using growth factors."""
     if not spy_prices or len(symbol_prices) < 126 or len(spy_prices) < 126:
         return None
@@ -265,11 +265,11 @@ def calculate_relative_strength_vs_spy(symbol_prices: List[float], spy_prices: L
 
 
 async def calculate_technical_indicators_for_symbols(
-    symbols: List[str], session: AsyncSession
-) -> Tuple[Dict[str, float], Dict[str, Dict[str, Any]]]:
+    symbols: list[str], session: AsyncSession
+) -> tuple[dict[str, float], dict[str, dict[str, Any]]]:
     """Calculate technical indicators for a list of symbols using available database data."""
-    rsi_data: Dict[str, float] = {}
-    technical_data: Dict[str, Dict[str, Any]] = {}
+    rsi_data: dict[str, float] = {}
+    technical_data: dict[str, dict[str, Any]] = {}
 
     if not symbols:
         return rsi_data, technical_data
@@ -288,7 +288,7 @@ async def calculate_technical_indicators_for_symbols(
         )
         price_data = price_result.all()
 
-        price_history: Dict[str, List[float]] = {}
+        price_history: dict[str, list[float]] = {}
         for row in price_data:
             price_history.setdefault(row.symbol, []).append(row.price)
 

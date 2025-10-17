@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from functools import lru_cache
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Optional
 
 # Third-party imports
 from fastapi import Depends, FastAPI, HTTPException
@@ -99,7 +99,7 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
-async def get_rates(session: AsyncSession) -> Dict[str, float]:
+async def get_rates(session: AsyncSession) -> dict[str, float]:
     """Get current currency exchange rates to GBP."""
     table = {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01}
 
@@ -117,9 +117,9 @@ async def get_rates(session: AsyncSession) -> Dict[str, float]:
     return table
 
 
-def calculate_historical_trends(holding: HoldingDaily) -> Dict[str, Optional[float]]:
+def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[float]]:
     """Calculates trend metrics from historical data stored in the yahoo object"""
-    trends: Dict[str, Optional[float]] = {
+    trends: dict[str, Optional[float]] = {
         "recommendation_trend": None,
         "pe_1y_trend_pct": None,
         "pe_5y_avg_vs_current_pct": None,
@@ -174,13 +174,13 @@ def calculate_historical_trends(holding: HoldingDaily) -> Dict[str, Optional[flo
 
 
 @app.get("/")
-async def root() -> Dict[str, str]:
+async def root() -> dict[str, str]:
     """Health check endpoint."""
     return {"message": "Trading212 Portfolio API", "status": "running"}
 
 
 @app.get("/api/portfolio/current")
-async def get_current_portfolio(session: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
+async def get_current_portfolio(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     """Get current portfolio holdings with detailed information."""
     try:
         # Get the latest snapshot date
@@ -353,7 +353,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
 
 
 @app.get("/api/portfolio/summary")
-async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
+async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     """Get portfolio summary statistics including total value, profit, and win rate."""
     try:
         # Get the latest portfolio snapshot
@@ -409,7 +409,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
 
 
 @app.get("/api/portfolio/allocations")
-async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_session)) -> Dict[str, Any]:
+async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     """Get portfolio allocations by sector and country."""
     try:
         # Get the latest portfolio snapshot
@@ -434,7 +434,7 @@ async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_sessi
 @app.get("/api/portfolio/history")
 async def get_portfolio_history(
     days: Optional[int] = None, session: AsyncSession = Depends(get_db_session)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get portfolio history for the last N days."""
     try:
         if days is not None:
@@ -455,7 +455,7 @@ async def get_portfolio_history(
             .order_by(PricesDaily.date)
         )
         bench_rows = bench_res.all()
-        daily_bench: Dict[str, Dict[date, float]] = defaultdict(lambda: defaultdict(float))
+        daily_bench: dict[str, dict[date, float]] = defaultdict(lambda: defaultdict(float))
         bench_prices = defaultdict(list)
         for bench_row in bench_rows:
             daily_bench[bench_row.symbol][bench_row.date] = bench_row.price
@@ -493,7 +493,7 @@ async def get_portfolio_history(
 
 
 @app.get("/api/instruments")
-async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> Dict[str, List[Dict[str, Any]]]:
+async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> dict[str, list[dict[str, Any]]]:
     """Get all instruments in the database for autocomplete."""
     try:
         result = await session.execute(
@@ -520,7 +520,7 @@ async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> Di
 @app.get("/api/instrument/{symbol}")
 async def get_instrument(
     symbol: str, days: int = 30, session: AsyncSession = Depends(get_db_session)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get detailed data for a specific stock by Yahoo symbol"""
     try:
         end_date = datetime.now(TIMEZONE).date()
@@ -540,12 +540,12 @@ async def get_instrument(
             .order_by(PricesDaily.date.asc())
         )
 
-        chart_price_data: Dict[str, float] = {}
+        chart_price_data: dict[str, float] = {}
         prices = prices_result.scalars().all()
         for price in prices:
             chart_price_data[price.date.isoformat()] = getattr(price, PRICE_FIELD.lower().replace(" ", "_") + "_price")
 
-        chart_orders_data: Dict[str, Dict[str, float | str]] = {}
+        chart_orders_data: dict[str, dict[str, float | str]] = {}
         orders_result = await session.execute(
             select(TransactionHistory)
             .where(TransactionHistory.ticker == symbol, TransactionHistory.timestamp >= start_date)
@@ -624,7 +624,7 @@ async def get_instrument(
 @app.get("/api/chart/prices")
 async def get_chart_prices(
     symbols: str, days: int = 30, session: AsyncSession = Depends(get_db_session)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get daily price data for charting."""
     return await get_chart_metric(symbols, days, "price", session)
 
@@ -632,13 +632,13 @@ async def get_chart_prices(
 @app.get("/api/chart/metrics")
 async def get_chart_metrics(
     symbols: str, days: int = 30, metric: str = "price", session: AsyncSession = Depends(get_db_session)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get chart data for different metrics."""
     return await get_chart_metric(symbols, days, metric, session)
 
 
 @app.get("/api/screeners")
-async def get_available_screeners() -> Dict[str, Any]:
+async def get_available_screeners() -> dict[str, Any]:
     """Get list of all available screeners with their configurations."""
     try:
         screener_config = get_screener_config()
@@ -648,7 +648,7 @@ async def get_available_screeners() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncSession) -> Dict[str, Any]:
+async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncSession) -> dict[str, Any]:
     """Get chart data for a specific metric."""
     if not symbols:
         raise HTTPException(status_code=400, detail="No symbols provided")
@@ -671,7 +671,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
         price_data = result.all()
 
         # Convert to chart format
-        chart_data: Dict[str, List[Dict[str, str | float]]] = defaultdict(list)
+        chart_data: dict[str, list[dict[str, str | float]]] = defaultdict(list)
         for row in price_data:
             chart_data[row.symbol].append({"date": row.date.isoformat(), "value": row.price})
     else:
@@ -746,7 +746,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
 @app.get("/api/market/top-movers")
 async def get_top_movers(
     period: str = "1d", limit: int = 10, session: AsyncSession = Depends(get_db_session)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get top movers (gainers and losers) for a given period."""
     try:
         # Validate period parameter

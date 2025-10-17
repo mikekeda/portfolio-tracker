@@ -97,8 +97,8 @@ def _parse_table_by_bs4(html: str) -> Optional[pd.DataFrame]:
     if not tbody:
         return None
     # Build rows
-    rows: List[List[str]] = []
-    headers: List[str] = []
+    rows: list[list[str]] = []
+    headers: list[str] = []
     thead = header.next_sibling.next
     if thead and thead.find_all("th"):
         headers = [th.get_text(strip=True) for th in thead.find_all("th")]
@@ -114,7 +114,7 @@ def _parse_table_by_bs4(html: str) -> Optional[pd.DataFrame]:
     return df
 
 
-def parse_pe_table(html: str) -> Dict[str, Dict[str, Optional[float]]]:
+def parse_pe_table(html: str) -> dict[str, dict[str, Optional[float]]]:
     df = _parse_table_by_pandas(html)
     if df is None:
         df = _parse_table_by_bs4(html)
@@ -137,7 +137,7 @@ def parse_pe_table(html: str) -> Dict[str, Dict[str, Optional[float]]]:
     df = df[["Date", "Stock Price", "TTM Net EPS", "PE Ratio"]].copy()
 
     # Clean data
-    records: Dict[str, Dict[str, Optional[float]]] = {}
+    records: dict[str, dict[str, Optional[float]]] = {}
     for _, row in df.iterrows():
         date_raw = str(row["Date"]).strip()
         # Try parse known formats

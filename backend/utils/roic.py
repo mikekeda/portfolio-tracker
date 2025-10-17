@@ -1,7 +1,7 @@
-from typing import Dict, Optional, Any
+from typing import Optional, Any
 
 
-def get_roic(info: Dict[str, Any]) -> Optional[float]:
+def get_roic(info: dict[str, Any]) -> Optional[float]:
     roic = None
     try:
         # 1. Get components from yfinance info

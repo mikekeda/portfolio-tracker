@@ -9,7 +9,7 @@ maintainable way. It serves as the single source of truth for screener definitio
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, List, Union
+from typing import Any, Callable, Iterable, Union
 
 
 def _is_finite_value(value: Any) -> bool:
@@ -51,7 +51,7 @@ class FieldRef:
 
 OperatorFunc = Callable[[Any, Any], bool]
 
-OP_FUNCS: Dict[str, OperatorFunc] = {
+OP_FUNCS: dict[str, OperatorFunc] = {
     ">=": lambda a, b: a >= b,
     "<=": lambda a, b: a <= b,
     ">": lambda a, b: a > b,
@@ -81,12 +81,12 @@ class ScreenerDefinition:
     name: str
     description: str
     category: ScreenerCategory
-    criteria: List[ScreenerCriteria]
+    criteria: list[ScreenerCriteria]
     requires_historical_data: bool = False
     requires_yahoo_data: bool = True
     available: bool = True
     weight: int = 5  # 0..10, usefulness for LT growth/high-risk
-    combine_with: List[str] = field(default_factory=list)  # list of screener IDs
+    combine_with: list[str] = field(default_factory=list)  # list of screener IDs
 
 
 class ScreenerConfig:
@@ -97,7 +97,7 @@ class ScreenerConfig:
         # Validate configuration on initialization
         self.validate()
 
-    def _initialize_screeners(self) -> Dict[str, ScreenerDefinition]:
+    def _initialize_screeners(self) -> dict[str, ScreenerDefinition]:
         """Initialize all available screeners."""
         return {
             # QARP (Quality at Reasonable Price)
@@ -411,15 +411,15 @@ class ScreenerConfig:
             ),
         }
 
-    def get_available_screeners(self) -> List[ScreenerDefinition]:
+    def get_available_screeners(self) -> list[ScreenerDefinition]:
         """Get only available screeners."""
         return [s for s in self.screeners.values() if s.available]
 
-    def get_available_operators(self) -> List[str]:
+    def get_available_operators(self) -> list[str]:
         """Get list of available operators."""
         return [">=", "<=", ">", "<", "==", "!=", "in", "not_in"]
 
-    def get_available_fields(self) -> List[str]:
+    def get_available_fields(self) -> list[str]:
         """Get list of available field names."""
         return [
             "return_on_equity",
@@ -473,7 +473,7 @@ class ScreenerConfig:
                     if criteria.value.name not in available_fields:
                         raise ValueError(f"Screener '{screener_id}': Unknown field reference '{criteria.value.name}'")
 
-    def eval_criterion(self, fields: Dict[str, Any], criteria: ScreenerCriteria) -> tuple[bool, str]:
+    def eval_criterion(self, fields: dict[str, Any], criteria: ScreenerCriteria) -> tuple[bool, str]:
         """Evaluate a single criterion."""
         if criteria.operator not in OP_FUNCS:
             raise ValueError(f"unknown operator {criteria.operator}")
@@ -501,7 +501,7 @@ class ScreenerConfig:
 
         return ok, (criteria.description or f"{criteria.field} {criteria.operator} {criteria.value}")
 
-    def eval_screener(self, fields: Dict[str, Any], screener_def: ScreenerDefinition) -> dict:
+    def eval_screener(self, fields: dict[str, Any], screener_def: ScreenerDefinition) -> dict:
         """Evaluate a screener against field data."""
         results = []
         all_ok = True
@@ -512,7 +512,7 @@ class ScreenerConfig:
 
         return {"screener_id": screener_def.id, "passed": bool(all_ok), "details": results}
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert only available screeners to dictionary format for API responses."""
         return {
             "screeners": [

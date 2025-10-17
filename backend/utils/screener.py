@@ -6,9 +6,8 @@ Helper functions for screener evaluation and calculation.
 
 import logging
 from itertools import combinations
-from typing import Dict, List
 
-from backend.screener_config import FieldRef, _is_finite_value, get_screener_config
+from backend.screener_config import FieldRef, get_screener_config
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +29,7 @@ EXPECTED_FIELDS = {
 }
 
 
-def calculate_screener_results(portfolio_data: List[Dict]) -> None:
+def calculate_screener_results(portfolio_data: list[dict]) -> None:
     """Calculate screener results for all holdings in portfolio data."""
     if not portfolio_data:
         logger.warning("No portfolio data provided for screener calculation")
@@ -104,7 +103,7 @@ def calculate_screener_results(portfolio_data: List[Dict]) -> None:
             holding_data["screener_score"] = 0
 
 
-def validate_screener_fields(available_screeners: List, sample_holding: Dict) -> None:
+def validate_screener_fields(available_screeners: list, sample_holding: dict) -> None:
     """Validate that screener field names match portfolio data fields."""
     if not sample_holding:
         return

@@ -22,7 +22,7 @@ import csv
 import os
 from collections import Counter
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Any, Optional
 
 from sqlalchemy import select
 from update_data import get_session
@@ -37,7 +37,7 @@ def safe_float(value: str) -> float:
         return 0.0
 
 
-def parse_csv_row(row: Dict[str, str], row_num: int, instruments_lookup: Dict[str, str]) -> Optional[Dict[str, Any]]:
+def parse_csv_row(row: dict[str, str], row_num: int, instruments_lookup: dict[str, str]) -> Optional[dict[str, Any]]:
     """Parse a single CSV row into transaction data format."""
     # Skip empty rows
     if not row.get("Action") or not row.get("Time"):
@@ -142,7 +142,7 @@ def parse_csv_row(row: Dict[str, str], row_num: int, instruments_lookup: Dict[st
     }
 
 
-def parse_csv_file(csv_file_path: str, instruments_lookup: Dict[str, str]) -> List[Dict[str, Any]]:
+def parse_csv_file(csv_file_path: str, instruments_lookup: dict[str, str]) -> list[dict[str, Any]]:
     """Parse Trading212 CSV export and return list of transaction dictionaries."""
     if not os.path.exists(csv_file_path):
         raise FileNotFoundError(f"CSV file not found: {csv_file_path}")
@@ -164,7 +164,7 @@ def parse_csv_file(csv_file_path: str, instruments_lookup: Dict[str, str]) -> Li
     return orders
 
 
-def store_transaction(session, transaction_data: Dict[str, Any]) -> bool:
+def store_transaction(session, transaction_data: dict[str, Any]) -> bool:
     """Store a single transaction in the database."""
     csv_id = transaction_data["csv_id"]
 
@@ -196,12 +196,12 @@ def store_transaction(session, transaction_data: Dict[str, Any]) -> bool:
 
 
 def analyze_and_import_csv_files(
-    csv_files: List[str], instruments_lookup: Dict[str, str]
-) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, Dict[str, Any]]]:
+    csv_files: list[str], instruments_lookup: dict[str, str]
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, dict[str, Any]]]:
     """Analyze all CSV files and return transactions and statistics."""
     all_transactions = []
     missing_instruments = {}
-    stats: Dict[str, int] = Counter()
+    stats: dict[str, int] = Counter()
 
     for csv_file in csv_files:
         print(f"\n📄 File: {os.path.basename(csv_file)}")
@@ -288,7 +288,7 @@ def analyze_and_import_csv_files(
     return all_transactions, combined_stats, missing_instruments
 
 
-def print_summary(stats: Dict[str, Any], missing_instruments: Dict[str, Dict[str, Any]]) -> None:
+def print_summary(stats: dict[str, Any], missing_instruments: dict[str, dict[str, Any]]) -> None:
     """Print combined statistics and missing instruments summary."""
     print("\n" + "=" * 80)
     print("📊 COMBINED STATISTICS (ALL FILES)")

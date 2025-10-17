@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from functools import lru_cache
-from typing import Any, Dict, Generator, List, Literal, Set, Tuple, TypeAlias, TypedDict, Union, Optional, cast
+from typing import Any, Generator, Literal, TypeAlias, TypedDict, Union, Optional, cast
 
 import numpy as np
 import pandas as pd
@@ -87,15 +87,15 @@ class T212Portfolio(TypedDict):
 
 
 class YahooData(TypedDict):
-    info: Dict[str, Any]
-    cashflow: Dict[str, Any]
-    earnings: Dict[str, Any]
-    recommendations: Dict[str, Any]
-    analyst_price_targets: Dict[str, Any]
-    splits: Dict[str, Any]
+    info: dict[str, Any]
+    cashflow: dict[str, Any]
+    earnings: dict[str, Any]
+    recommendations: dict[str, Any]
+    analyst_price_targets: dict[str, Any]
+    splits: dict[str, Any]
 
 
-TRADING212_API_RESPONSE: TypeAlias = List[Union[T212Instrument, T212Position]]
+TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
 
 
 @lru_cache(maxsize=1)
@@ -160,7 +160,7 @@ def convert_ticker(t212: str) -> str:
     return sym + suffix
 
 
-def _fetch_rates_batch(currencies: Tuple[str, ...]) -> Dict[str, float]:
+def _fetch_rates_batch(currencies: tuple[str, ...]) -> dict[str, float]:
     """Fetch currency rates from a reliable API in batch."""
     rates = {}
 
@@ -181,7 +181,7 @@ def _fetch_rates_batch(currencies: Tuple[str, ...]) -> Dict[str, float]:
     return rates
 
 
-def update_currency_rates(currencies: Tuple[str, ...]) -> Dict[str, float]:
+def update_currency_rates(currencies: tuple[str, ...]) -> dict[str, float]:
     """Get currency exchange rates to GBP with database caching."""
     today = datetime.now(TIMEZONE).date()
 
@@ -217,7 +217,7 @@ def update_currency_rates(currencies: Tuple[str, ...]) -> Dict[str, float]:
 # Holdings and Instruments
 
 
-def request_json(url: str, headers: Dict[str, str], retries: int = REQUEST_RETRY) -> TRADING212_API_RESPONSE:
+def request_json(url: str, headers: dict[str, str], retries: int = REQUEST_RETRY) -> TRADING212_API_RESPONSE:
     """Make HTTP request with retries."""
     for attempt in range(retries):
         try:
@@ -232,12 +232,12 @@ def request_json(url: str, headers: Dict[str, str], retries: int = REQUEST_RETRY
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
 
 
-def fetch_holdings() -> Dict[str, T212Position]:
+def fetch_holdings() -> dict[str, T212Position]:
     """Fetch portfolio holdings from Trading212 API."""
     logging.info("Fetching portfolio from Trading212 API")
     url = "https://live.trading212.com/api/v0/equity/portfolio"
     raw = cast(
-        List[T212Position],
+        list[T212Position],
         request_json(url, {"Authorization": TRADING212_API_KEY}),
     )
     holdings = {h["ticker"]: h for h in raw if h["ticker"] not in STOCKS_DELISTED}
@@ -246,9 +246,9 @@ def fetch_holdings() -> Dict[str, T212Position]:
 
 
 def update_holdings(
-    holdings: Dict[str, T212Position],
-    instruments: List[Instrument],
-) -> List[HoldingDaily]:
+    holdings: dict[str, T212Position],
+    instruments: list[Instrument],
+) -> list[HoldingDaily]:
     """Update holdings in the database."""
     created = 0
     updated = 0
@@ -365,13 +365,13 @@ def update_holdings(
     return result
 
 
-def update_instruments(tickers: Set[str], isins: Set[str]) -> List[Instrument]:
+def update_instruments(tickers: set[str], isins: set[str]) -> list[Instrument]:
     """Update instruments in the database from Trading212 API."""
     logging.info("Fetching instruments from Trading212 API")
     instruments = []
     url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
     instruments_from_api = cast(
-        List[T212Instrument],
+        list[T212Instrument],
         request_json(url, {"Authorization": TRADING212_API_KEY}),
     )
 
@@ -412,7 +412,7 @@ def update_instruments(tickers: Set[str], isins: Set[str]) -> List[Instrument]:
     return instruments
 
 
-def update_prices(session: Session, tickers: List[str], start: date) -> None:
+def update_prices(session: Session, tickers: list[str], start: date) -> None:
     """Update price data from Yahoo Finance."""
     for i in range(0, len(tickers), BATCH_SIZE_YF):
         sub = tickers[i : i + BATCH_SIZE_YF]
@@ -462,7 +462,7 @@ def update_prices(session: Session, tickers: List[str], start: date) -> None:
                     session.add(prices)
 
 
-def get_and_update_prices(tickers_to_add: Set[str]) -> None:
+def get_and_update_prices(tickers_to_add: set[str]) -> None:
     """Get and update price data for all tickers."""
     today = datetime.now(TIMEZONE).date()
 
@@ -505,7 +505,7 @@ def scrub_for_json(obj):
     return obj
 
 
-def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
+def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
     """Update Yahoo Finance data for all holdings."""
     logging.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
     yahoo_data: YahooData = {
@@ -560,7 +560,7 @@ def get_yahoo_ticker_data(symbols: List[str]) -> YahooData:
     return yahoo_data
 
 
-def update_holdings_and_instruments(isins: Set[str]) -> None:
+def update_holdings_and_instruments(isins: set[str]) -> None:
     """Update holdings and instruments in the database."""
     holdings_from_api = fetch_holdings()
     t212_codes = set(holdings_from_api.keys())
@@ -570,7 +570,7 @@ def update_holdings_and_instruments(isins: Set[str]) -> None:
     update_holdings(holdings_from_api, instruments)
 
 
-def get_rates(session: Session) -> Dict[str, float]:
+def get_rates(session: Session) -> dict[str, float]:
     """Get current currency exchange rates to GBP."""
     table = {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01}
 
@@ -590,9 +590,9 @@ def get_rates(session: Session) -> Dict[str, float]:
 
 def get_portfolio_allocation(
     session: Session, portfolio_value: float, snapshot_date: date
-) -> Dict[str, Dict[str, float]]:
+) -> dict[str, dict[str, float]]:
     """Get portfolio allocation per country, sector, currency and etf/equity split"""
-    allocations: Dict[str, Dict[str, float]] = {
+    allocations: dict[str, dict[str, float]] = {
         "country": defaultdict(float),
         "sector": defaultdict(float),
         "currency": defaultdict(float),
@@ -701,7 +701,7 @@ def update_portfolio():
             session.add(snapshot)
 
 
-def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> Dict[str, Optional[float]]:
+def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> dict[str, Optional[float]]:
     """Calculates Sharpe, Sortino, and Beta for the portfolio."""
 
     # Look back up to 1 year for calculations
@@ -814,7 +814,7 @@ if __name__ == "__main__":
     update_holdings_and_instruments(isins)
 
     # 3. Update prices
-    _tickers_to_add: Set[str] = set()  # "^VIX"
+    _tickers_to_add: set[str] = set()  # "^VIX"
     get_and_update_prices(_tickers_to_add)
 
     # 4. Update portfolio

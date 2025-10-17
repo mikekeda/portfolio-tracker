@@ -5,7 +5,7 @@ Defines the database schema using SQLAlchemy ORM.
 """
 
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 from enum import Enum
 
 from dateutil.relativedelta import relativedelta
@@ -101,13 +101,13 @@ class Instrument(Base):
     )
 
     # Relationships
-    holdings: Mapped[List["HoldingDaily"]] = relationship(back_populates="instrument")
+    holdings: Mapped[list["HoldingDaily"]] = relationship(back_populates="instrument")
     # One-to-one detached Yahoo cache container
     yahoo: Mapped["InstrumentYahoo"] = relationship(back_populates="instrument", uselist=False)
     # Time-series of market metrics (market_cap, pe, etc.)
-    metrics: Mapped[List["InstrumentMetricsDaily"]] = relationship(back_populates="instrument")
+    metrics: Mapped[list["InstrumentMetricsDaily"]] = relationship(back_populates="instrument")
     # Transaction history from CSV exports
-    transactions: Mapped[List["TransactionHistory"]] = relationship(
+    transactions: Mapped[list["TransactionHistory"]] = relationship(
         back_populates="instrument",
         foreign_keys="[TransactionHistory.ticker]",
         primaryjoin="Instrument.t212_code == TransactionHistory.ticker",
@@ -162,13 +162,13 @@ class InstrumentYahoo(Base):
     instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), primary_key=True)
 
     # Cached JSONB payloads
-    info: Mapped[Dict[str, Any]] = mapped_column(JSONB)
-    cashflow: Mapped[Dict[str, Any]] = mapped_column(JSONB)
-    earnings: Mapped[Dict[str, Any]] = mapped_column(JSONB)
-    recommendations: Mapped[Dict[str, Any]] = mapped_column(JSONB)
-    analyst_price_targets: Mapped[Dict[str, Any]] = mapped_column(JSONB)
-    splits: Mapped[Dict[str, Any]] = mapped_column(JSONB)
-    pes: Mapped[Dict[str, Any]] = mapped_column(JSONB)
+    info: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    cashflow: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    earnings: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    recommendations: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    analyst_price_targets: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    splits: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    pes: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -189,7 +189,7 @@ class InstrumentYahoo(Base):
 
         start = datetime.now(TIMEZONE).date() + relativedelta(years=-5)
 
-        values: List[float] = []
+        values: list[float] = []
         for k, v in self.pes.items():
             d = datetime.strptime(k, "%Y-%m-%d").date()
 
@@ -273,10 +273,10 @@ class PortfolioDaily(Base):
     invested: Mapped[float] = mapped_column(Float, nullable=False)
 
     # Allocation data (stored as JSON for flexibility)
-    country_allocation: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
-    sector_allocation: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
-    currency_allocation: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
-    etf_equity_split: Mapped[Dict[str, float]] = mapped_column(JSONB, nullable=True)
+    country_allocation: Mapped[dict[str, float]] = mapped_column(JSONB, nullable=True)
+    sector_allocation: Mapped[dict[str, float]] = mapped_column(JSONB, nullable=True)
+    currency_allocation: Mapped[dict[str, float]] = mapped_column(JSONB, nullable=True)
+    etf_equity_split: Mapped[dict[str, float]] = mapped_column(JSONB, nullable=True)
 
     sharpe_ratio: Mapped[float] = mapped_column(Float, nullable=True)
     sortino_ratio: Mapped[float] = mapped_column(Float, nullable=True)
@@ -313,11 +313,11 @@ class Pie(Base):
     goal: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Pie summary data (from first API call)
-    dividend_details: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    dividend_details: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
     # Raw settings data (keep for debugging/completeness)
-    settings: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    settings: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
@@ -325,7 +325,7 @@ class Pie(Base):
     )
 
     # Relationships
-    instruments: Mapped[List["PieInstrument"]] = relationship(
+    instruments: Mapped[list["PieInstrument"]] = relationship(
         "PieInstrument", back_populates="pie", cascade="all, delete-orphan"
     )
 
@@ -354,10 +354,10 @@ class PieInstrument(Base):
     owned_quantity: Mapped[float] = mapped_column(Float, nullable=False)
 
     # Instrument result data
-    result: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    result: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
     # Issues/notes
-    issues: Mapped[Optional[List[str]]] = mapped_column(JSONB, nullable=True)
+    issues: Mapped[Optional[list[str]]] = mapped_column(JSONB, nullable=True)
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
@@ -417,7 +417,7 @@ class TransactionHistory(Base):
 
     # Fees (CSV fee columns: "Currency conversion fee", "Stamp duty reserve tax", etc.)
     # Structure: [{"name": "CURRENCY_CONVERSION_FEE", "quantity": -0.05, "timeCharged": "2024-04-18 18:03:20"}, ...]
-    fees: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSONB, nullable=True)
+    fees: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSONB, nullable=True)
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(
