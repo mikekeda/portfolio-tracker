@@ -4,12 +4,24 @@ SQLAlchemy models for Trading212 Portfolio Manager
 Defines the database schema using SQLAlchemy ORM.
 """
 
+import enum
 from datetime import date, datetime
 from typing import Any, Optional
-from enum import Enum
 
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import BigInteger, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -17,7 +29,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from config import TIMEZONE
 
 
-class TransactionAction(Enum):
+class TransactionAction(enum.Enum):
     """Enumeration of all action types from Trading212 CSV exports."""
 
     # Buy orders
@@ -42,6 +54,9 @@ class TransactionAction(Enum):
     STOCK_SPLIT_OPEN = "Stock split open"
     STOCK_SPLIT_CLOSE = "Stock split close"
     RESULT_ADJUSTMENT = "Result adjustment"
+
+    def is_cash_positive(self):
+        return self not in {self.MARKET_BUY, self.LIMIT_BUY, self.WITHDRAWAL, self.STOCK_SPLIT_OPEN}
 
 
 class Base(DeclarativeBase):
@@ -394,7 +409,7 @@ class TransactionHistory(Base):
     ticker: Mapped[Optional[str]] = mapped_column(
         String(20), nullable=True, index=True
     )  # Nullable for deposits/interest
-    action: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # From TransactionAction enum
+    action: Mapped[TransactionAction] = mapped_column(Enum(TransactionAction), nullable=False, index=True)
 
     # Original CSV ID (for reference, nullable since some transactions don't have IDs)
     csv_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)

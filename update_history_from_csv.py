@@ -26,7 +26,7 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 from update_data import get_session
-from models import TransactionHistory, Instrument
+from models import TransactionAction, TransactionHistory, Instrument
 
 
 def safe_float(value: str) -> float:
@@ -182,7 +182,7 @@ def store_transaction(session, transaction_data: dict[str, Any]) -> bool:
         timestamp=datetime.strptime(transaction_data["dateCreated"], "%Y-%m-%d %H:%M:%S"),
         ticker=transaction_data["ticker"],
         isin=transaction_data["isin"] or None,
-        action=transaction_data["action"],
+        action=TransactionAction(transaction_data["action"]),
         quantity=transaction_data["quantity"],
         price=transaction_data["price"],
         total=transaction_data["total"],
@@ -431,7 +431,7 @@ def main():
                 total_skipped += skipped_count
         except Exception as e:
             print(f"  ❌ Failed to import transactions from {os.path.basename(csv_file)}: {e}")
-            continue
+            raise
 
     # Final summary
     print("\n" + "=" * 80)

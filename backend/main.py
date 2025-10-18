@@ -554,7 +554,7 @@ async def get_instrument(
         orders = orders_result.scalars().all()
         for order in orders:
             chart_orders_data[order.timestamp.isoformat()] = {
-                "action": order.action,
+                "action": order.action.value,
                 "total": order.total,
             }
 
