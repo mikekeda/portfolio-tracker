@@ -718,11 +718,8 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     if len(portfolio_history) < 2:
         return {"sharpe": None, "sortino": None, "beta": None}
 
-    portfolio_df = pd.DataFrame(portfolio_history, columns=["date", "value"]).set_index("date")
-    portfolio_returns = portfolio_df["value"].pct_change().dropna()
-
     # 2. Get historical benchmark prices (e.g., S&P 500)
-    benchmark_symbol = SPY  # Make sure this is a string
+    benchmark_symbol = SPY
     benchmark_prices = (
         session.query(PricesDaily.date, PricesDaily.close_price)
         .filter(
@@ -736,20 +733,23 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
         return {"sharpe": None, "sortino": None, "beta": None}
 
     benchmark_df = pd.DataFrame(benchmark_prices, columns=["date", "price"]).set_index("date")
-    benchmark_returns = benchmark_df["price"].pct_change().dropna()
+    portfolio_df = pd.DataFrame(portfolio_history, columns=["date", "value"]).set_index("date")
 
-    # Align the two return series by date
-    aligned_portfolio, aligned_benchmark = portfolio_returns.align(benchmark_returns, join="inner")
-    # TODO: We have portfolio data every day, but we don't have SPY prices on weekends
+    # Re-index the daily portfolio data to match the benchmark's trading-day index.
+    # 'ffill' ensures that if a portfolio snapshot was missed, we use the last known value.
+    portfolio_df = portfolio_df.reindex(benchmark_df.index, method="ffill")
+
+    # Now, calculate returns on the *aligned* price/value data.
+    # Both series now represent returns from one trading day to the next.
+    aligned_portfolio = portfolio_df["value"].pct_change().dropna()
+    aligned_benchmark = benchmark_df["price"].pct_change().dropna()
 
     if aligned_portfolio.empty or len(aligned_portfolio) < 2:
         return {"sharpe": None, "sortino": None, "beta": None}
 
     # --- DYNAMIC ANNUALIZATION FACTOR ---
     trading_days_per_year = 252
-    num_days = len(aligned_portfolio)
-    # Only annualize if we have a reasonable amount of data (e.g., > 3 months)
-    # Otherwise, the annualized number can be misleadingly large.
+    num_days = len(aligned_portfolio)  # This is now the number of *trading days*
     annualization_factor = np.sqrt(trading_days_per_year) if num_days > 60 else 1.0
 
     # Assume a risk-free rate (e.g., 4% annually for UK)
