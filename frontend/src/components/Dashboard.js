@@ -176,6 +176,64 @@ const getTwrrTooltip = (twrr) => {
   return `Time-Weighted Return: ${twrr.toFixed(2)}% (${level})\n\n${recommendation}\n\nThis measures the pure performance of your investment strategy, ignoring when you added/withdrew money.`;
 };
 
+// Helper function to get Yield Spread color
+const getYieldSpreadColor = (yieldSpread) => {
+  if (yieldSpread < 0) return 'negative'; // Inverted yield curve
+  if (yieldSpread > 1.5) return 'positive'; // Healthy spread
+  return '';
+};
+
+// Helper function to generate Yield Spread tooltip
+const getYieldSpreadTooltip = (yieldSpread) => {
+  let recommendation = '';
+  let level = '';
+
+  if (yieldSpread < 0) {
+    level = 'Inverted';
+    recommendation = 'Yield curve is inverted - recession warning signal. Consider defensive positioning and quality stocks.';
+  } else if (yieldSpread < 0.5) {
+    level = 'Flat';
+    recommendation = 'Yield curve is flat - economic uncertainty. Focus on high-quality, defensive stocks.';
+  } else if (yieldSpread < 1.5) {
+    level = 'Normal';
+    recommendation = 'Normal yield curve - economic growth expected. Balanced portfolio approach is appropriate.';
+  } else {
+    level = 'Steep';
+    recommendation = 'Steep yield curve - strong economic growth expected. Consider growth-oriented investments.';
+  }
+
+  return `10Y-2Y Yield Spread: ${yieldSpread.toFixed(2)}% (${level})\n\n${recommendation}\n\nThis measures the difference between 10-year and 2-year Treasury yields, indicating economic outlook.`;
+};
+
+// Helper function to get Buffett Indicator color
+const getBuffettIndicatorColor = (buffettIndicator) => {
+  if (buffettIndicator > 150) return 'negative'; // Overvalued
+  if (buffettIndicator < 75) return 'positive'; // Undervalued
+  return '';
+};
+
+// Helper function to generate Buffett Indicator tooltip
+const getBuffettIndicatorTooltip = (buffettIndicator) => {
+  let recommendation = '';
+  let level = '';
+
+  if (buffettIndicator > 150) {
+    level = 'Overvalued';
+    recommendation = 'Market appears overvalued relative to GDP. Consider defensive positioning and value stocks.';
+  } else if (buffettIndicator > 120) {
+    level = 'Expensive';
+    recommendation = 'Market is expensive. Focus on quality stocks and consider reducing risk exposure.';
+  } else if (buffettIndicator < 75) {
+    level = 'Undervalued';
+    recommendation = 'Market appears undervalued. Good time for long-term investments and growth stocks.';
+  } else {
+    level = 'Fair Value';
+    recommendation = 'Market is fairly valued. Balanced approach with quality stock selection is appropriate.';
+  }
+
+  return `Buffett Indicator: ${buffettIndicator.toFixed(1)}% (${level})\n\n${recommendation}\n\nThis measures total market cap as % of GDP, indicating overall market valuation.`;
+};
+
 const Dashboard = () => {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -294,16 +352,33 @@ const Dashboard = () => {
             </p>
           </div>
         )}
-        {summary.vix && (
-          <div className="card" title={getVixTooltip(summary.vix)}>
-            <h3>VIX</h3>
+        {summary.buffett_indicator !== null && summary.buffett_indicator !== undefined && (
+          <div className="card" title={getBuffettIndicatorTooltip(summary.buffett_indicator)}>
+            <h3>Buffett Indicator</h3>
             <a
-              href="https://markets.businessinsider.com/index/vix"
+              href="https://currentmarketvaluation.com/models/buffett-indicator.php"
               target="_blank"
               rel="noopener noreferrer"
               className="value-link"
             >
-              <p className="value">{summary.vix.toFixed(2)}</p>
+              <p className={`value ${getBuffettIndicatorColor(summary.buffett_indicator)}`}>
+                {summary.buffett_indicator.toFixed(1)}%
+              </p>
+            </a>
+          </div>
+        )}
+        {summary.yield_spread !== null && summary.yield_spread !== undefined && (
+          <div className="card" title={getYieldSpreadTooltip(summary.yield_spread)}>
+            <h3>Yield Spread</h3>
+            <a
+              href="https://fred.stlouisfed.org/series/T10Y2Y"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="value-link"
+            >
+              <p className={`value ${getYieldSpreadColor(summary.yield_spread)}`}>
+                {summary.yield_spread.toFixed(2)}%
+              </p>
             </a>
           </div>
         )}
@@ -319,6 +394,19 @@ const Dashboard = () => {
               <p className={`value ${getFearGreedColor(summary.fear_greed_index.label)}`}>
                 {summary.fear_greed_index.value.toFixed(1)}
               </p>
+            </a>
+          </div>
+        )}
+        {summary.vix && (
+          <div className="card" title={getVixTooltip(summary.vix)}>
+            <h3>VIX</h3>
+            <a
+              href="https://markets.businessinsider.com/index/vix"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="value-link"
+            >
+              <p className="value">{summary.vix.toFixed(2)}</p>
             </a>
           </div>
         )}

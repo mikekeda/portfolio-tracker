@@ -25,7 +25,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.screener_config import get_screener_config
 from backend.utils.dcf import get_dcf_prices
-from backend.utils.fear_greed_index import gen_fear_greed_index
+from backend.utils.market_data import gen_fear_greed_index, get_yield_spread, gen_buffett_indicator
 from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
@@ -364,7 +364,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             return {"error": "No portfolio data available"}
 
         # Get holdings for the same date to calculate win rate
-        holdings_result, vix_result, fear_greed_index = await asyncio.gather(
+        holdings_result, vix_result, fear_greed_index, yield_spread, buffett_indicator = await asyncio.gather(
             session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)),
             session.execute(
                 select(PricesDaily.close_price)
@@ -375,6 +375,8 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
                 .limit(1)
             ),
             gen_fear_greed_index(),
+            get_yield_spread(),
+            gen_buffett_indicator(),
         )
 
         holdings = holdings_result.scalars().all()
@@ -404,6 +406,8 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             "last_updated": latest_snapshot.date.isoformat(),
             "vix": vix_result.scalar(),
             "fear_greed_index": fear_greed_index,
+            "yield_spread": yield_spread,
+            "buffett_indicator": buffett_indicator,
         }
     except Exception as e:
         logger.error(f"Error fetching portfolio summary: {e}")
