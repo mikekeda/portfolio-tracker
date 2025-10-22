@@ -118,6 +118,64 @@ const getFearGreedTooltip = (fearGreed) => {
   return `Fear & Greed: ${value.toFixed(1)} (${label})\n\n${recommendation}\n\nScale: 0-25 (Extreme Fear), 25-45 (Fear), 45-55 (Neutral), 55-75 (Greed), 75-100 (Extreme Greed)`;
 };
 
+// Helper function to get MWRR color
+const getMwrrColor = (mwrr) => {
+  if (mwrr < 0) return 'negative';
+  if (mwrr > 10) return 'positive';
+  return '';
+};
+
+// Helper function to get TWRR color
+const getTwrrColor = (twrr) => {
+  if (twrr < 0) return 'negative';
+  if (twrr > 10) return 'positive';
+  return '';
+};
+
+// Helper function to generate MWRR tooltip
+const getMwrrTooltip = (mwrr) => {
+  let recommendation = '';
+  let level = '';
+
+  if (mwrr < 0) {
+    level = 'Negative';
+    recommendation = 'Your portfolio is losing money overall. Review your investment strategy and consider rebalancing.';
+  } else if (mwrr < 5) {
+    level = 'Low';
+    recommendation = 'Low returns detected. Consider reviewing your stock selection and diversification strategy.';
+  } else if (mwrr < 15) {
+    level = 'Moderate';
+    recommendation = 'Decent returns. Continue monitoring your portfolio and consider optimizing your holdings.';
+  } else {
+    level = 'Strong';
+    recommendation = 'Excellent returns! Your investment strategy is performing well.';
+  }
+
+  return `Money-Weighted Return: ${mwrr.toFixed(2)}% (${level})\n\n${recommendation}\n\nThis measures the return you've actually earned on your money, considering when you invested it.`;
+};
+
+// Helper function to generate TWRR tooltip
+const getTwrrTooltip = (twrr) => {
+  let recommendation = '';
+  let level = '';
+
+  if (twrr < 0) {
+    level = 'Negative';
+    recommendation = 'Your investment strategy is underperforming. Review your stock selection and consider using better screeners.';
+  } else if (twrr < 5) {
+    level = 'Low';
+    recommendation = 'Low strategy returns. Consider improving your stock selection process and using quality screeners.';
+  } else if (twrr < 15) {
+    level = 'Moderate';
+    recommendation = 'Decent strategy performance. Continue monitoring and consider optimizing your stock picks.';
+  } else {
+    level = 'Strong';
+    recommendation = 'Excellent strategy performance! Your stock selection is working well.';
+  }
+
+  return `Time-Weighted Return: ${twrr.toFixed(2)}% (${level})\n\n${recommendation}\n\nThis measures the pure performance of your investment strategy, ignoring when you added/withdrew money.`;
+};
+
 const Dashboard = () => {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -204,6 +262,22 @@ const Dashboard = () => {
             )}
           </p>
         </div>
+        {summary.mwrr && (
+          <div className="card" title={getMwrrTooltip(summary.mwrr)}>
+            <h3>Money-Weighted RR</h3>
+            <p className={`value ${getMwrrColor(summary.mwrr)}`}>
+              {summary.mwrr.toFixed(2)}%
+            </p>
+          </div>
+        )}
+        {summary.twrr && (
+          <div className="card" title={getTwrrTooltip(summary.twrr)}>
+            <h3>Time-Weighted RR</h3>
+            <p className={`value ${getTwrrColor(summary.twrr)}`}>
+              {summary.twrr.toFixed(2)}%
+            </p>
+          </div>
+        )}
         {summary.sortino_ratio && (
           <div className="card" title={getSortinoTooltip(summary.sortino_ratio)}>
             <h3>Sortino</h3>

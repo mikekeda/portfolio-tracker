@@ -296,6 +296,8 @@ class PortfolioDaily(Base):
     sharpe_ratio: Mapped[float] = mapped_column(Float, nullable=True)
     sortino_ratio: Mapped[float] = mapped_column(Float, nullable=True)
     beta: Mapped[float] = mapped_column(Float, nullable=True)
+    mwrr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Money-Weighted Return (annualized)
+    twrr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Time-Weighted Return (annualized)
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(

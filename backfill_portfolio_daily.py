@@ -16,16 +16,19 @@ Usage:
     python backfill_portfolio_daily2.py
 """
 
-from datetime import date, timedelta
+from datetime import datetime, date, timedelta
 from typing import Optional, Tuple
 
+import numpy as np
+from numpy_financial import irr
 from sqlalchemy import select, func, and_
 
+from config import TIMEZONE
 from update_data import get_session
 from models import TransactionAction, TransactionHistory, Instrument, CurrencyRateDaily, PortfolioDaily, PricesDaily
 
 # Constants
-BACKFILL_END_DATE = date(2025, 8, 29)
+TODAY = datetime.now(TIMEZONE).date()
 
 # In-memory cache of last seen price per ISIN during this run.
 # Updated as transactions are processed; read by get_price for daily calc.
@@ -208,11 +211,7 @@ def backfill_portfolio_daily():
     with get_session() as session:
         # Get all transactions in date order for efficient processing
         all_transactions = (
-            session.execute(
-                select(TransactionHistory)
-                .where(func.date(TransactionHistory.timestamp) <= BACKFILL_END_DATE)
-                .order_by(TransactionHistory.timestamp, TransactionHistory.id)
-            )
+            session.execute(select(TransactionHistory).order_by(TransactionHistory.timestamp, TransactionHistory.id))
             .scalars()
             .all()
         )
@@ -223,16 +222,24 @@ def backfill_portfolio_daily():
         total_realised_profit = 0.0
         transaction_index = 0
 
+        # State variables for MWRR and TWRR
+        mwrr_daily_cash_flows = []  # For MWRR
+        twrr_factors = []  # For TWRR
+        last_portfolio_value = 0.0  # For TWRR
+
         # Process each date
         processed = 0
         current_date = all_transactions[0].timestamp.date()
         backfill_start_date = current_date
-        total_days = (BACKFILL_END_DATE - backfill_start_date).days + 1
+        total_days = (TODAY - backfill_start_date).days + 1
 
         print(f"📊 Total days to backfill: {total_days}")
         print(f"📋 Loaded {len(all_transactions)} transactions")
 
-        while current_date <= BACKFILL_END_DATE:
+        while current_date <= TODAY:
+            # Track cash flow for this day
+            daily_net_cash_flow = 0.0
+
             # Process all transactions for this date
             while (
                 transaction_index < len(all_transactions)
@@ -242,6 +249,13 @@ def backfill_portfolio_daily():
                 cash_balance, total_realised_profit = process_transaction_on_date(
                     transaction, holdings, cash_balance, total_realised_profit, session
                 )
+
+                # Accumulate daily cash flow
+                if transaction.action == TransactionAction.DEPOSIT:
+                    daily_net_cash_flow += transaction.total
+                elif transaction.action == TransactionAction.WITHDRAWAL:
+                    daily_net_cash_flow -= transaction.total
+
                 transaction_index += 1
 
             # Calculate portfolio metrics for this date
@@ -262,11 +276,53 @@ def backfill_portfolio_daily():
 
             value = cash_balance + invested + unrealised_profit
 
-            # Debug output for first few days
+            # MWRR (IRR) Calculation
+            mwrr_daily_cash_flows.append(daily_net_cash_flow)
+            annual_mwrr_pct = 0.0
+
+            # Prepare flows for np.irr: [-initial_investment, cf1, cf2, ..., final_value]
+            # We invert flows: deposits are "investments" (negative), withdrawals are "returns" (positive)
+            irr_flows = [-cf for cf in mwrr_daily_cash_flows]
+
+            # Add the final portfolio value as the last, positive cash flow
+            irr_flows.append(value)
+
+            try:
+                # np.irr finds the internal rate of return for a series of cash flows
+                daily_mwrr = irr(irr_flows)
+                if daily_mwrr and not np.isnan(daily_mwrr):
+                    # Annualize the daily rate
+                    annual_mwrr_pct = ((1 + daily_mwrr) ** 365 - 1) * 100.0
+            except ValueError:
+                annual_mwrr_pct = 0.0  # Failed to converge
+
+            # TWRR Calculation
+            V_start = last_portfolio_value
+            V_end = value
+            CF = daily_net_cash_flow
+
+            denominator = V_start + CF
+
+            if denominator != 0:
+                # Calculate the return factor for this period (day)
+                period_factor = V_end / denominator
+                twrr_factors.append(period_factor)
+
+            last_portfolio_value = V_end  # Store V_end for next period's V_start
+
+            annual_twrr_pct = 0.0
+            if twrr_factors:
+                num_days = len(twrr_factors)
+                # Link all factors and annualize
+                total_return_factor = np.prod(twrr_factors)
+                annual_twrr_pct = ((total_return_factor ** (365.25 / num_days)) - 1) * 100.0
+
+            # Debug output
             print(
-                f"📊 {current_date}: Cash={cash_balance:.2f}, Invested={invested:.2f}, Unrealised={unrealised_profit:.2f}, Realised={total_realised_profit:.2f}, Value={value:.2f}"
+                f"📊 {current_date}: Cash={cash_balance:.2f}, Invested={invested:.2f}, Unrealised={unrealised_profit:.2f}, Realised={total_realised_profit:.2f}, Value={value:.2f} "
+                f"MWRR={annual_mwrr_pct:.2f}%, TWRR={annual_twrr_pct:.2f}%"
             )
-            if current_date == BACKFILL_END_DATE:
+            if current_date == TODAY:
                 for isin, holding in sorted(list(holdings.items()), key=lambda x: x[1].name):
                     current_price = get_price(session, isin, current_date)
                     print(
@@ -279,12 +335,9 @@ def backfill_portfolio_daily():
             ).scalar_one_or_none()
 
             if existing:
-                # Update existing record
-                existing.value = value
-                existing.unrealised_profit = unrealised_profit
-                existing.realised_profit = round(total_realised_profit, 9)
-                existing.cash = round(cash_balance, 9)
-                existing.invested = round(invested, 9)
+                # Update existing record with mwrr and twrr
+                existing.mwrr = float(annual_mwrr_pct)
+                existing.twrr = float(annual_twrr_pct)
             else:
                 # Create new PortfolioDaily record
                 portfolio_daily = PortfolioDaily(
@@ -294,6 +347,8 @@ def backfill_portfolio_daily():
                     realised_profit=round(total_realised_profit, 9),
                     cash=round(cash_balance, 9),
                     invested=round(invested, 9),
+                    mwrr=float(annual_mwrr_pct),
+                    twrr=float(annual_twrr_pct),
                 )
                 session.add(portfolio_daily)
 
@@ -311,11 +366,9 @@ def backfill_portfolio_daily():
 
         print(f"\n✅ Backfill complete!")
         print(f"   📊 Processed: {processed} days")
-        print(f"   📅 Date range: {backfill_start_date} to {BACKFILL_END_DATE}")
+        print(f"   📅 Date range: {backfill_start_date} to {TODAY}")
         print(f"\n📝 All calculations complete including unrealised_profit and value!")
 
 
 if __name__ == "__main__":
     backfill_portfolio_daily()
-
-

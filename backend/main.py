@@ -399,6 +399,8 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             "beta": latest_snapshot.beta,
             "sortino_ratio": latest_snapshot.sortino_ratio,
             "sharpe_ratio": latest_snapshot.sharpe_ratio,
+            "mwrr": latest_snapshot.mwrr,
+            "twrr": latest_snapshot.twrr,
             "last_updated": latest_snapshot.date.isoformat(),
             "vix": vix_result.scalar(),
             "fear_greed_index": fear_greed_index,
