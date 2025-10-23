@@ -141,7 +141,7 @@ class ScreenerConfig:
                 requires_historical_data=False,
                 requires_yahoo_data=True,
                 available=True,
-                weight=5,
+                weight=6,
                 combine_with=["golden_cross", "oversold_uptrend", "momentum_pullback", "pe_compression"],
             ),
             # Growth at Reasonable Price
@@ -390,24 +390,70 @@ class ScreenerConfig:
                 weight=-5,  # Negative weight to penalize stocks in a downtrend
                 combine_with=[],
             ),
-            "fundamental_red_flags": ScreenerDefinition(
-                id="fundamental_red_flags",
-                name="Fundamental Red Flags",
-                description="Identifies companies with weak profitability, high debt, and negative cash flow.",
-                category=ScreenerCategory.QUALITY,  # It's a filter for low-quality
+            "red_flag_low_roic": ScreenerDefinition(
+                id="red_flag_low_roic",
+                name="Red Flag: Low ROIC",
+                description="""Company generates poor returns on invested capital (< 5%).""",
+                category=ScreenerCategory.QUALITY,
                 criteria=[
-                    # Note: This screener passes if ALL the red flags are met.
-                    # This is different from positive screeners where ALL criteria must be met.
-                    # We will handle this logic in the evaluation step. For now, we define the flags.
                     ScreenerCriteria("roic", "<", 5, "ROIC is very low (< 5%)"),
+                ],
+                available=True,
+                weight=-4,  # Apply a partial penalty
+            ),
+            "red_flag_high_debt": ScreenerDefinition(
+                id="red_flag_high_debt",
+                name="Red Flag: High Debt",
+                description="""Company has excessive debt burden (Debt/Equity > 150%).""",
+                category=ScreenerCategory.QUALITY,
+                criteria=[
                     ScreenerCriteria("debtToEquity", ">", 150, "Debt is high (>150% of equity)"),
+                ],
+                available=True,
+                weight=-3,
+            ),
+            "red_flag_cash_burn": ScreenerDefinition(
+                id="red_flag_cash_burn",
+                name="Red Flag: Negative FCF",
+                description="""Company is burning cash (Negative Free Cash Flow).""",
+                category=ScreenerCategory.QUALITY,
+                criteria=[
                     ScreenerCriteria("free_cashflow_yield", "<", 0, "Company is burning cash"),
                 ],
-                requires_historical_data=False,
+                available=True,
+                weight=-5,  # This is a significant red flag
+            ),
+            # Top Quality (based on screenshot)
+            "top_quality_proxy": ScreenerDefinition(
+                id="top_quality_proxy",
+                name="Tom Nash screener",
+                description="""Strong TTM growth, profitability, and balance sheet as a proxy for consistent quality.
+Check those criteria:
+1. Positive free cash flow 4 to 6 quarters
+2. Net cash positive 4 to 6 quarters
+3. Revenue growth at 10% or better
+4. Clear moat
+5. CEO and team with track record
+6. No major legal or regulatory overhang""",
+                category=ScreenerCategory.QUALITY,
+                criteria=[
+                    ScreenerCriteria("revenue_growth", ">=", 10, "Revenue Growth >= 10% (TTM)"),
+                    # This is the proxy for "Positive free cash flow 4 to 6 quarters"
+                    # We use TTM FCF Yield, which you already have.
+                    ScreenerCriteria("free_cashflow_yield", ">=", 3, "Positive FCF Yield >= 3% (TTM)"),
+                    # This is the proxy for "Net cash positive"
+                    # We use a very strict Debt/Equity ratio.
+                    ScreenerCriteria("debtToEquity", "<", 60, "Low Debt to Equity (< 60%)"),
+                    # These are proxies for "Clear moat"
+                    ScreenerCriteria("return_on_equity", ">=", 10, "High ROE (Moat proxy) >= 10%"),
+                    ScreenerCriteria("profit_margins", ">=", 10, "High Profit Margins (Moat proxy) >= 10%"),
+                ],
+                requires_historical_data=False,  # We are using current/TTM data
                 requires_yahoo_data=True,
                 available=True,
-                weight=-10,  # A strong negative penalty
-                combine_with=[],
+                weight=9,  # This is a very strong, high-quality signal
+                combine_with=["momentum_pullback", "oversold_uptrend", "pe_vs_history"],
+                # Combines well with entry points
             ),
         }
 
