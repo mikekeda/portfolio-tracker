@@ -1,7 +1,5 @@
 """
 FastAPI backend for Trading212 Portfolio Manager
-===============================================
-Serves portfolio data from PostgreSQL database.
 """
 
 import logging
@@ -12,11 +10,12 @@ import asyncio
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
-from dateutil.relativedelta import relativedelta
 from functools import lru_cache
 from typing import Any, AsyncGenerator, Optional
 
 # Third-party imports
+import aiohttp
+from dateutil.relativedelta import relativedelta
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func, select
@@ -364,20 +363,23 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             return {"error": "No portfolio data available"}
 
         # Get holdings for the same date to calculate win rate
-        holdings_result, vix_result, fear_greed_index, yield_spread, buffett_indicator = await asyncio.gather(
-            session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)),
-            session.execute(
-                select(PricesDaily.close_price)
-                .where(
-                    PricesDaily.symbol == VIX,
-                )
-                .order_by(PricesDaily.date.desc())
-                .limit(1)
-            ),
-            gen_fear_greed_index(),
-            get_yield_spread(),
-            gen_buffett_indicator(),
-        )
+        async with aiohttp.ClientSession(
+            connector=aiohttp.TCPConnector(verify_ssl=False), raise_for_status=True
+        ) as aiohttp_session:
+            holdings_result, vix_result, fear_greed_index, yield_spread, buffett_indicator = await asyncio.gather(
+                session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)),
+                session.execute(
+                    select(PricesDaily.close_price)
+                    .where(
+                        PricesDaily.symbol == VIX,
+                    )
+                    .order_by(PricesDaily.date.desc())
+                    .limit(1)
+                ),
+                gen_fear_greed_index(aiohttp_session),
+                get_yield_spread(aiohttp_session),
+                gen_buffett_indicator(aiohttp_session),
+            )
 
         holdings = holdings_result.scalars().all()
 
