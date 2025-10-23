@@ -106,6 +106,7 @@ const Stock = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [chartLoading, setChartLoading] = useState(false);
   const [showFullSummary, setShowFullSummary] = useState(false);
   const [chartDays, setChartDays] = useState(() => {
     const stored = localStorage.getItem('stock_chart_days') || '365';
@@ -146,16 +147,25 @@ const Stock = () => {
   useEffect(() => {
     const load = async () => {
       try {
-        setLoading(true);
+        // Only show full loading on initial load (when data is null)
+        if (!data) {
+          setLoading(true);
+        } else {
+          // For period changes, just show chart loading
+          setChartLoading(true);
+        }
+
         // Convert chartDays to number for API call
         const daysParam = chartDays === 'ytd' ? calculateYTDDays() : chartDays;
         const res = await portfolioAPI.getInstrument(symbol, daysParam);
         setData(res);
+        setError(null);
       } catch (e) {
         console.error(e);
         setError('Failed to load instrument');
       } finally {
         setLoading(false);
+        setChartLoading(false);
       }
     };
     load();
@@ -397,14 +407,23 @@ const Stock = () => {
         </div>
         <div className="panel">
           <h3>Price {priceMetric === 'price_pct_change' ? '(%)' : ''}</h3>
-          <div className="inline-controls">
+          <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label>Metric: </label>
-              <select aria-label="Price metric" value={priceMetric} onChange={handlePriceMetricChange}>
+              <div className="radio-group">
                 {PRICE_METRICS.map(metric => (
-                  <option key={metric.value} value={metric.value}>{metric.label}</option>
+                  <label key={metric.value} className="radio-label">
+                    <input
+                      type="radio"
+                      name="price-metric"
+                      value={metric.value}
+                      checked={priceMetric === metric.value}
+                      onChange={handlePriceMetricChange}
+                    />
+                    {metric.label}
+                  </label>
                 ))}
-              </select>
+              </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label>Range: </label>
@@ -425,7 +444,25 @@ const Stock = () => {
             </div>
           </div>
           {chartData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
+            <div style={{ position: 'relative' }}>
+              {chartLoading && (
+                <div style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  background: 'rgba(255, 255, 255, 0.9)',
+                  padding: '8px 16px',
+                  borderRadius: '4px',
+                  fontSize: '0.9rem',
+                  color: '#6c757d',
+                  zIndex: 10,
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}>
+                  Loading...
+                </div>
+              )}
+              <ResponsiveContainer width="100%" height={300}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
@@ -487,10 +524,11 @@ const Stock = () => {
                   stroke="#6f42c1"
                   strokeWidth={2}
                   dot={(props) => {
-                    const { payload } = props;
+                    const { payload, index } = props;
                     if (payload?.order) {
                       return (
                         <circle
+                          key={`order-dot-${index}`}
                           cx={props.cx}
                           cy={props.cy}
                           r={payload.order.radius}
@@ -521,7 +559,7 @@ const Stock = () => {
 
                   return (
                     <Line
-                      key={category}
+                      key={`order-legend-${category}`}
                       type="monotone"
                       dataKey={() => null}
                       data={[]}
@@ -569,13 +607,14 @@ const Stock = () => {
                   />
                 ))}
               </LineChart>
-            </ResponsiveContainer>
+              </ResponsiveContainer>
+            </div>
           ) : <div className="empty">No price data</div>}
         </div>
 
         <div className="panel">
           <h3>PE Ratio</h3>
-          <div className="inline-controls">
+          <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
             <div></div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <label>Range: </label>
@@ -596,7 +635,25 @@ const Stock = () => {
             </div>
           </div>
           {peData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={300}>
+            <div style={{ position: 'relative' }}>
+              {chartLoading && (
+                <div style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  background: 'rgba(255, 255, 255, 0.9)',
+                  padding: '8px 16px',
+                  borderRadius: '4px',
+                  fontSize: '0.9rem',
+                  color: '#6c757d',
+                  zIndex: 10,
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}>
+                  Loading...
+                </div>
+              )}
+              <ResponsiveContainer width="100%" height={300}>
               <LineChart data={peData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
@@ -665,7 +722,8 @@ const Stock = () => {
                   />
                 ))}
               </LineChart>
-            </ResponsiveContainer>
+              </ResponsiveContainer>
+            </div>
           ) : <div className="empty">No PE data</div>}
         </div>
 
