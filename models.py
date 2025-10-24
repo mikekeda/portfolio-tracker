@@ -293,9 +293,9 @@ class PortfolioDaily(Base):
     currency_allocation: Mapped[dict[str, float]] = mapped_column(JSONB, nullable=True)
     etf_equity_split: Mapped[dict[str, float]] = mapped_column(JSONB, nullable=True)
 
-    sharpe_ratio: Mapped[float] = mapped_column(Float, nullable=True)
-    sortino_ratio: Mapped[float] = mapped_column(Float, nullable=True)
-    beta: Mapped[float] = mapped_column(Float, nullable=True)
+    sharpe_ratio: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    sortino_ratio: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    beta: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     mwrr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Money-Weighted Return (annualized)
     twrr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Time-Weighted Return (annualized)
 

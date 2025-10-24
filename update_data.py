@@ -20,6 +20,7 @@ import pandas as pd
 import requests
 import yfinance as yf  # type: ignore[import-untyped]
 from sqlalchemy import create_engine, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert  # Added for bulk upsert
 from sqlalchemy.orm import Session, sessionmaker, selectinload
 from sqlalchemy.sql import func
 
@@ -97,6 +98,9 @@ class YahooData(TypedDict):
 
 
 TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
+
+YAHOO_UPDATE_LIMIT = 100
+YAHOO_UPDATE_INTERVAL_DAYS = 1
 
 
 @lru_cache(maxsize=1)
@@ -257,8 +261,14 @@ def update_holdings(
     current_date = datetime.now(TIMEZONE).date()
     instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
 
-    # TODO: Update this data only once a day
-    yahoo_datas = get_yahoo_ticker_data([i.yahoo_symbol for i in instruments])
+    # Update this data only once a day
+    yahoo_datas = get_yahoo_ticker_data(
+        [
+            i.yahoo_symbol
+            for i in sorted(instruments, key=lambda x: x.updated_at)
+            if i.updated_at > datetime.now(TIMEZONE) - timedelta(days=YAHOO_UPDATE_INTERVAL_DAYS)
+        ][:YAHOO_UPDATE_LIMIT]
+    )
 
     with get_session() as session:
         # Delete sold holdings
@@ -273,6 +283,10 @@ def update_holdings(
         # Update instruments
         for instrument in instruments:
             yahoo_symbol = instrument.yahoo_symbol
+            if yahoo_symbol not in yahoo_datas["info"]:
+                # This stock was recently updated or wasn't selected for update because of the limit
+                continue
+
             yahoo_data = yahoo_datas["info"][yahoo_symbol]
 
             # Upsert InstrumentYahoo (detached Yahoo blobs)
@@ -384,10 +398,7 @@ def update_instruments(tickers: set[str], isins: set[tuple[str, str]]) -> list[I
         created = 0
         updated = 0
         for instrument in instruments_from_api:
-            if any([
-                instrument["ticker"] in tickers,
-                (instrument["isin"], instrument["currencyCode"]) in isins,
-            ]):
+            if instrument["ticker"] in tickers or (instrument["isin"], instrument["currencyCode"]) in isins:
                 existing = session.query(Instrument).filter(Instrument.t212_code == instrument["ticker"]).first()
 
                 try:
@@ -422,6 +433,8 @@ def update_instruments(tickers: set[str], isins: set[tuple[str, str]]) -> list[I
 
 def update_prices(session: Session, tickers: list[str], start: date) -> None:
     """Update price data from Yahoo Finance."""
+    now = datetime.now(TIMEZONE)
+
     for i in range(0, len(tickers), BATCH_SIZE_YF):
         sub = tickers[i : i + BATCH_SIZE_YF]
         logging.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), sub)
@@ -437,37 +450,48 @@ def update_prices(session: Session, tickers: list[str], start: date) -> None:
         ).rename(columns={"Adj Close": "Adj_Close"})
 
         # Bulk upsert
+        all_price_data = []
         for ticker in df.columns.get_level_values(0).unique():
             tdf = df[ticker].dropna(how="all")  # Open/High/Low/Close/Adj Close/Volume
             for dt, row in tdf.iterrows():
-                existing = (
-                    session.query(PricesDaily)
-                    .filter(PricesDaily.symbol == ticker, PricesDaily.date == dt.date())
-                    .first()
+                all_price_data.append(
+                    {
+                        "symbol": ticker,
+                        "date": dt.date(),
+                        "open_price": float(row["Open"]),
+                        "high_price": float(row["High"]),
+                        "low_price": float(row["Low"]),
+                        "close_price": float(row["Close"]),
+                        "adj_close_price": float(row["Adj_Close"]),
+                        "volume": int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
+                        "updated_at": now,
+                    }
                 )
 
-                if existing:
-                    # Update existing record
-                    existing.open_price = float(row["Open"])
-                    existing.high_price = float(row["High"])
-                    existing.low_price = float(row["Low"])
-                    existing.close_price = float(row["Close"])
-                    existing.adj_close_price = float(row["Adj_Close"])
-                    existing.volume = int(row["Volume"]) if not pd.isna(row["Volume"]) else 0
-                    existing.updated_at = datetime.now(TIMEZONE)
-                else:
-                    # Insert new record
-                    prices = PricesDaily(
-                        symbol=ticker,
-                        date=dt.date(),
-                        open_price=float(row["Open"]),
-                        high_price=float(row["High"]),
-                        low_price=float(row["Low"]),
-                        close_price=float(row["Close"]),
-                        adj_close_price=float(row["Adj_Close"]),
-                        volume=int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
-                    )
-                    session.add(prices)
+        if all_price_data:
+            insert_stmt = pg_insert(PricesDaily).values(all_price_data)
+
+            # Define what to do ON CONFLICT (i.e., when symbol/date key exists)
+            # We update the existing row with the new values
+            on_conflict_stmt = insert_stmt.on_conflict_do_update(
+                index_elements=["symbol", "date"],  # This is the UniqueConstraint
+                set_={
+                    "open_price": insert_stmt.excluded.open_price,
+                    "high_price": insert_stmt.excluded.high_price,
+                    "low_price": insert_stmt.excluded.low_price,
+                    "close_price": insert_stmt.excluded.close_price,
+                    "adj_close_price": insert_stmt.excluded.adj_close_price,
+                    "volume": insert_stmt.excluded.volume,
+                    "updated_at": insert_stmt.excluded.updated_at,
+                },
+            )
+
+            # Execute the single bulk statement
+            try:
+                session.execute(on_conflict_stmt)
+            except Exception as e:
+                logging.error(f"Failed to bulk upsert prices for {sub}: {e}")
+                session.rollback()  # Rollback this batch
 
 
 def get_and_update_prices(tickers_to_add: set[str]) -> None:
@@ -489,6 +513,7 @@ def get_and_update_prices(tickers_to_add: set[str]) -> None:
 
         existing_tickers = set(row.symbol for row in existing_prices)
         if existing_tickers:
+            existing_tickers -= STOCKS_DELISTED
             latest_date = min([row.max_date for row in existing_prices])
             start = latest_date + timedelta(days=1)
 
