@@ -77,6 +77,7 @@ class T212Position(TypedDict):
 
 # GET /api/v0/equity/account/cash
 class T212Portfolio(TypedDict):
+    id: int
     blocked: float
     free: float
     invested: float
@@ -269,8 +270,8 @@ def update_holdings(
         if deleted:
             logging.warning("Deleted %s HoldingDaily", deleted)
 
-        for t212_code, holding in holdings.items():
-            instrument = instruments_dict[t212_code]
+        # Update instruments
+        for instrument in instruments:
             yahoo_symbol = instrument.yahoo_symbol
             yahoo_data = yahoo_datas["info"][yahoo_symbol]
 
@@ -328,6 +329,10 @@ def update_holdings(
                     )
                 )
 
+        # Update holdings
+        for t212_code, holding in holdings.items():
+            instrument = instruments_dict[t212_code]
+
             if holding:
                 existing_holding = (
                     session.query(HoldingDaily)
@@ -365,7 +370,7 @@ def update_holdings(
     return result
 
 
-def update_instruments(tickers: set[str], isins: set[str]) -> list[Instrument]:
+def update_instruments(tickers: set[str], isins: set[tuple[str, str]]) -> list[Instrument]:
     """Update instruments in the database from Trading212 API."""
     logging.info("Fetching instruments from Trading212 API")
     instruments = []
@@ -379,7 +384,10 @@ def update_instruments(tickers: set[str], isins: set[str]) -> list[Instrument]:
         created = 0
         updated = 0
         for instrument in instruments_from_api:
-            if instrument["ticker"] in tickers or instrument["isin"] in isins:
+            if any([
+                instrument["ticker"] in tickers,
+                (instrument["isin"], instrument["currencyCode"]) in isins,
+            ]):
                 existing = session.query(Instrument).filter(Instrument.t212_code == instrument["ticker"]).first()
 
                 try:
@@ -534,7 +542,12 @@ def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
                 data = tickers.tickers[symbol].cashflow.to_dict()
                 yahoo_data["cashflow"][symbol] = scrub_for_json(data)
 
-                data = tickers.tickers[symbol].get_earnings_dates(limit=40)
+                try:
+                    data = tickers.tickers[symbol].get_earnings_dates(limit=40)
+                except KeyError as e:
+                    logging.warning("Failed to get earnings for %s: %s", symbol, e)
+                    continue
+
                 if data is None:
                     # ETFs don't have earnings
                     yahoo_data["earnings"][symbol] = {}
@@ -560,7 +573,7 @@ def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
     return yahoo_data
 
 
-def update_holdings_and_instruments(isins: set[str]) -> None:
+def update_holdings_and_instruments(isins: set[tuple[str, str]]) -> None:
     """Update holdings and instruments in the database."""
     holdings_from_api = fetch_holdings()
     t212_codes = set(holdings_from_api.keys())
@@ -809,7 +822,7 @@ if __name__ == "__main__":
 
                 if not row["ISIN"] or row["ISIN"] in existing_isins:
                     continue
-                isins.add(row["ISIN"])
+                isins.add((row["ISIN"], row["Currency (Price / share)"]))
 
     update_holdings_and_instruments(isins)
 
