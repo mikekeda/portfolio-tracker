@@ -3,24 +3,19 @@ FastAPI backend for Trading212 Portfolio Manager
 """
 
 import logging
-import os
 
 # Standard library imports
 import asyncio
 from collections import defaultdict
-from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
-from functools import lru_cache
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, Optional
 
 # Third-party imports
 import aiohttp
 from dateutil.relativedelta import relativedelta
-from fastapi import Depends, FastAPI, HTTPException, Request, status
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi import Depends, HTTPException
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.screener_config import get_screener_config
@@ -31,6 +26,7 @@ from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 
 # Local imports
+from app import app, get_db_session
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE, BENCHES, VIX
 from data import QUICK_RATIO_THRESHOLDS
 from models import (
@@ -46,79 +42,10 @@ from models import (
 )
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
-API_TOKEN = os.getenv("API_TOKEN")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-app = FastAPI(title="Trading212 Portfolio API", description="API for accessing portfolio data", version="1.0.0")
-
-
-@app.middleware("http")
-async def check_api_token(request: Request, call_next):
-    auth_header = request.headers.get("Authorization")
-
-    if not auth_header:
-        # If no auth header, return 401
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"detail": "Authorization header missing"},
-        )
-
-    # Expect "Bearer YOUR_TOKEN"
-    scheme, token = auth_header.split()
-    if scheme.lower() != "bearer" or token != API_TOKEN:
-        return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"detail": "Invalid authorization header"},
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # If the token is valid, proceed with the request
-    response = await call_next(request)
-
-    return response
-
-
-# Add CORS middleware
-app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("DOMAIN") or "http://localhost:3000"])
-
-
-@lru_cache(maxsize=1)
-def _get_session_factory() -> async_sessionmaker:
-    """Create and cache the async database session factory."""
-    db_url = "postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}".format(
-        db_name=os.getenv("DB_NAME", "trading212_portfolio"),
-        db_password=os.getenv("DB_PASSWORD"),
-        db_user=os.getenv("DB_USER", "postgres"),
-        db_host=os.getenv("DB_HOST", "localhost"),
-        db_port=os.getenv("DB_PORT", "5432"),
-    )
-    engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
-
-    return async_sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
-
-
-@asynccontextmanager
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Async context manager for database sessions."""
-    AsyncSessionLocal = _get_session_factory()
-    session = AsyncSessionLocal()
-    try:
-        yield session
-        await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
-    finally:
-        await session.close()
-
-
-async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency for database sessions."""
-    async with get_session() as session:
-        yield session
 
 
 async def get_rates(session: AsyncSession) -> dict[str, float]:
