@@ -13,9 +13,13 @@ const apiClient = axios.create({
   },
 });
 
-// Request interceptor for logging
+// Request interceptor to add token to all requests
 apiClient.interceptors.request.use(
   (config) => {
+    const token = localStorage.getItem('api_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
     return config;
   },
   (error) => {
@@ -30,11 +34,16 @@ apiClient.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error('API Response Error:', error);
-    if (error.response) {
-      // Server responded with error status
-      console.error('Error Status:', error.response.status);
-      console.error('Error Data:', error.response.data);
+    // Check if this is a 401 authentication error FIRST
+    if (error.response && error.response.status === 401) {
+      const errorMessage = error.response.data?.detail || error.response.data?.message || 'Authentication failed';
+      console.error("Set authentication token with: localStorage.setItem('api_token', 'your-token-here')");
+
+      // Show authentication-specific error message
+      alert(`Authentication Error (401 Unauthorized)\n\n${errorMessage}\n\nPlease check your API token.`);
+    } else if (error.response) {
+      // Server responded with other error status
+      console.error('API Error:', error.response.status, error.response.data);
     } else if (error.request) {
       // Request was made but no response received
       console.error('No response received from server');
@@ -114,3 +123,6 @@ export const portfolioAPI = {
     return response.data;
   },
 };
+
+// Export the apiClient for use in other modules
+export default apiClient;

@@ -4,6 +4,8 @@
  * Contains screener logic and API calls for the stock screening functionality.
  */
 
+import apiClient from './api';
+
 // Cache for screeners data
 let screenersCache = null;
 let screenersCacheTimestamp = null;
@@ -12,12 +14,8 @@ const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 // Fetch screeners from API
 export const fetchScreeners = async () => {
   try {
-    const response = await fetch('/api/screeners');
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    const data = await response.json();
-    return data.screeners || [];
+    const response = await apiClient.get('/api/screeners');
+    return response.data.screeners || [];
   } catch (error) {
     console.error('Failed to fetch screeners:', error);
     throw error;

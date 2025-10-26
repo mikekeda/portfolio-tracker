@@ -16,8 +16,9 @@ from typing import Any, AsyncGenerator, Optional
 # Third-party imports
 import aiohttp
 from dateutil.relativedelta import relativedelta
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
 from sqlalchemy.orm import selectinload
@@ -45,6 +46,7 @@ from models import (
 )
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
+API_TOKEN = os.getenv("API_TOKEN")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -52,14 +54,35 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Trading212 Portfolio API", description="API for accessing portfolio data", version="1.0.0")
 
+
+@app.middleware("http")
+async def check_api_token(request: Request, call_next):
+    auth_header = request.headers.get("Authorization")
+
+    if not auth_header:
+        # If no auth header, return 401
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Authorization header missing"},
+        )
+
+    # Expect "Bearer YOUR_TOKEN"
+    scheme, token = auth_header.split()
+    if scheme.lower() != "bearer" or token != API_TOKEN:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Invalid authorization header"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # If the token is valid, proceed with the request
+    response = await call_next(request)
+
+    return response
+
+
 # Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React dev server
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("DOMAIN") or "http://localhost:3000"])
 
 
 @lru_cache(maxsize=1)
@@ -364,7 +387,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
 
         # Get holdings for the same date to calculate win rate
         async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(verify_ssl=False), raise_for_status=True
+            connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
         ) as aiohttp_session:
             holdings_result, vix_result, fear_greed_index, yield_spread, buffett_indicator = await asyncio.gather(
                 session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)),
