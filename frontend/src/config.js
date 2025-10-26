@@ -1,7 +1,15 @@
 // Application configuration
 const config = {
   // API Configuration
-  API_BASE_URL: process.env.REACT_APP_API_URL || 'http://localhost:8000',
+
+  // auto-detect based on environment
+  API_BASE_URL: (() => {
+    const protocol = window.location.protocol;
+    const hostname = window.location.hostname;
+    return hostname === 'localhost'
+      ? 'http://localhost:8000'
+      : `${protocol}//${hostname}`;
+  })(),
 
   // API timeouts
   API_TIMEOUT: 30000,

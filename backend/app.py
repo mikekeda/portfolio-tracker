@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
 
-API_TOKEN = os.getenv("API_TOKEN")
+from config import API_TOKEN, DB_NAME, DB_PASSWORD, DB_HOST, DB_PORT, DB_USER, DOMAIN
+
 app = FastAPI(title="Trading212 Portfolio API", description="API for accessing portfolio data", version="1.0.0")
 
 
@@ -40,19 +41,13 @@ async def check_api_token(request: Request, call_next):
 
 
 # Add CORS middleware
-app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("DOMAIN") or "http://localhost:3000"])
+app.add_middleware(CORSMiddleware, allow_origins=[DOMAIN], allow_headers=["*"])
 
 
 @lru_cache(maxsize=1)
 def _get_session_factory() -> async_sessionmaker:
     """Create and cache the async database session factory."""
-    db_url = "postgresql+asyncpg://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}".format(
-        db_name=os.getenv("DB_NAME", "trading212_portfolio"),
-        db_password=os.getenv("DB_PASSWORD"),
-        db_user=os.getenv("DB_USER", "postgres"),
-        db_host=os.getenv("DB_HOST", "localhost"),
-        db_port=os.getenv("DB_PORT", "5432"),
-    )
+    db_url = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
 
     return async_sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)

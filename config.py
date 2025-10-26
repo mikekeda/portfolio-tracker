@@ -21,6 +21,10 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = os.getenv("DB_PORT", "5432")
 
+API_TOKEN = os.getenv("API_TOKEN")
+DOMAIN = os.getenv("DOMAIN", "http://localhost:3000")
+FRED_API_KEY = os.getenv("FRED_API_KEY")
+
 # Yahoo Finance Configuration
 PRICE_FIELD = "Adj Close"  # or "close_price" if you prefer raw closes
 BATCH_SIZE_YF = 50  # tickers per yahoo request

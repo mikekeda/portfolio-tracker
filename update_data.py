@@ -24,6 +24,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert  # Added for bulk
 from sqlalchemy.orm import Session, sessionmaker, selectinload
 from sqlalchemy.sql import func
 
+from config import DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
+
 from config import (
     BATCH_SIZE_YF,
     CURRENCIES,
@@ -106,13 +108,7 @@ YAHOO_UPDATE_INTERVAL_DAYS = 1
 @lru_cache(maxsize=1)
 def _get_session_factory() -> sessionmaker:
     """Create and cache the database engine and session factory."""
-    db_url = "postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}".format(
-        db_name=os.getenv("DB_NAME", "trading212_portfolio"),
-        db_password=os.getenv("DB_PASSWORD"),
-        db_user=os.getenv("DB_USER", "postgres"),
-        db_host=os.getenv("DB_HOST", "localhost"),
-        db_port=os.getenv("DB_PORT", "5432"),
-    )
+    db_url = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     engine = create_engine(db_url, echo=False, pool_pre_ping=True)
 
     # from models import Pie, PieInstrument, TransactionHistory

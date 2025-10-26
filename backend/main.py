@@ -122,12 +122,6 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
     return trends
 
 
-@app.get("/")
-async def root() -> dict[str, str]:
-    """Health check endpoint."""
-    return {"message": "Trading212 Portfolio API", "status": "running"}
-
-
 @app.get("/api/portfolio/current")
 async def get_current_portfolio(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     """Get current portfolio holdings with detailed information."""
