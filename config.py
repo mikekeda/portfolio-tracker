@@ -6,24 +6,49 @@ Centralized configuration settings.
 
 import os
 import re
+import requests
 
 from datetime import timezone
+
+SITE_ENV_PREFIX = "T212"
+
+
+def get_env_var(name: str, default: str = "") -> str:
+    """Get all sensitive data from google vm custom metadata."""
+    try:
+        name = f"{SITE_ENV_PREFIX}_{name}"
+        res = os.environ.get(name)
+        if res is not None:
+            # Check env variable (Jenkins build).
+            return res
+        else:
+            res = requests.get(
+                f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{name}",
+                headers={"Metadata-Flavor": "Google"},
+            )
+            if res.status_code == 200:
+                return res.text
+    except requests.exceptions.ConnectionError:
+        pass
+
+    return default
+
 
 TIMEZONE = timezone.utc
 
 # API Configuration
-TRADING212_API_KEY = os.environ["TRADING212_API_KEY"]
+TRADING212_API_KEY = get_env_var("TRADING212_API_KEY")
 
 # Database Configuration
-DB_NAME = os.getenv("DB_NAME", "trading212_portfolio")
-DB_PASSWORD = os.getenv("DB_PASSWORD")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = get_env_var("DB_NAME", "trading212_portfolio")
+DB_PASSWORD = get_env_var("DB_PASSWORD")
+DB_USER = get_env_var("DB_USER", "postgres")
+DB_HOST = get_env_var("DB_HOST", "localhost")
+DB_PORT = get_env_var("DB_PORT", "5432")
 
-API_TOKEN = os.getenv("API_TOKEN")
-DOMAIN = os.getenv("DOMAIN", "http://localhost:3000")
-FRED_API_KEY = os.getenv("FRED_API_KEY")
+API_TOKEN = get_env_var("API_TOKEN")
+DOMAIN = get_env_var("DOMAIN", "http://localhost:3000")
+FRED_API_KEY = get_env_var("FRED_API_KEY")
 
 # Yahoo Finance Configuration
 PRICE_FIELD = "Adj Close"  # or "close_price" if you prefer raw closes
