@@ -16,16 +16,16 @@ Usage:
     python backfill_portfolio_daily2.py
 """
 
-from datetime import datetime, date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional, Tuple
 
 import numpy as np
 from numpy_financial import irr
-from sqlalchemy import select, func, and_
+from sqlalchemy import and_, select
 
 from config import TIMEZONE
+from models import CurrencyRateDaily, Instrument, PortfolioDaily, PricesDaily, TransactionAction, TransactionHistory
 from update_data import get_session
-from models import TransactionAction, TransactionHistory, Instrument, CurrencyRateDaily, PortfolioDaily, PricesDaily
 
 # Constants
 TODAY = datetime.now(TIMEZONE).date()
@@ -75,6 +75,7 @@ def get_price(session, isin: str, target_date: date) -> Optional[float]:
     # Try market price from PricesDaily first
     instrument = session.execute(select(Instrument).where(Instrument.isin == isin)).scalar_one_or_none()
 
+    # TODO: Fix performance
     if instrument and instrument.yahoo_symbol:
         price = session.execute(
             select(PricesDaily.close_price)

@@ -6,9 +6,9 @@ Centralized configuration settings.
 
 import os
 import re
-import requests
-
 from datetime import timezone
+
+import requests
 
 SITE_ENV_PREFIX = "T212"
 
@@ -17,10 +17,10 @@ def get_env_var(name: str, default: str = "") -> str:
     """Get all sensitive data from google vm custom metadata."""
     try:
         name = f"{SITE_ENV_PREFIX}_{name}"
-        res = os.environ.get(name)
-        if res is not None:
+        env_var = os.environ.get(name)
+        if env_var is not None:
             # Check env variable (Jenkins build).
-            return res
+            return env_var
         else:
             res = requests.get(
                 f"http://metadata.google.internal/computeMetadata/v1/instance/attributes/{name}",

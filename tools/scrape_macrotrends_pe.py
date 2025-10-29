@@ -22,18 +22,17 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from io import StringIO
+from time import sleep
 from typing import Dict, List, Optional
 
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
 from sqlalchemy.orm import selectinload
-from time import sleep
 
 from config import TIMEZONE
 from models import InstrumentYahoo
 from update_data import get_session
-
 
 HEADERS = {
     "User-Agent": (

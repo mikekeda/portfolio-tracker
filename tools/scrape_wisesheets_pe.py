@@ -22,22 +22,21 @@ from __future__ import annotations
 import sys
 from collections import defaultdict
 from datetime import datetime
+from time import sleep
 from typing import Dict, List, Optional
 
 # import pandas as pd  # Not needed for this scraper
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 from sqlalchemy.orm import selectinload
-from time import sleep
 
 from config import TIMEZONE
 from models import InstrumentYahoo
 from update_data import get_session
-
 
 HEADERS = {
     "User-Agent": (

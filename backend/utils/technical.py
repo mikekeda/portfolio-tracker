@@ -11,7 +11,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import SPY, PRICE_FIELD, TIMEZONE
+from config import PRICE_FIELD, SPY, TIMEZONE
 from models import PricesDaily
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")

@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional, TypedDict, Any
+from typing import Any, Optional, TypedDict
 
 from models import Instrument
 

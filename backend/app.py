@@ -1,5 +1,4 @@
 import os
-
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import AsyncGenerator
@@ -7,9 +6,9 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from config import API_TOKEN, DB_NAME, DB_PASSWORD, DB_HOST, DB_PORT, DB_USER, DOMAIN
+from config import API_TOKEN, DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER, DOMAIN
 
 app = FastAPI(title="Trading212 Portfolio API", description="API for accessing portfolio data", version="1.0.0")
 

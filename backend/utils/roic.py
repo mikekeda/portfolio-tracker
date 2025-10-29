@@ -1,4 +1,4 @@
-from typing import Optional, Any
+from typing import Any, Optional
 
 
 def get_roic(info: dict[str, Any]) -> Optional[float]:
