@@ -25,8 +25,9 @@ from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import select
+
+from models import Instrument, TransactionAction, TransactionHistory
 from update_data import get_session
-from models import TransactionAction, TransactionHistory, Instrument
 
 
 def safe_float(value: str) -> float:
