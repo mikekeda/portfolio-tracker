@@ -2,6 +2,10 @@
 STOCKS_SUFFIX: dict[str, str] = {
     "US": "",  # NYSE / Nasdaq
     "l": ".L",  # London
+    "m": ".L",  # LSE
+    "s": ".L",  # LSE
+    "a": ".AS",  # Amsterdam
+    "e": ".MC",  # MCE
     "p": ".PA",  # Paris
     "d": ".DE",  # Xetra
     "CA": ".TO",  # Toronto
@@ -12,6 +16,9 @@ STOCKS_SUFFIX: dict[str, str] = {
     "SW": ".SW",  # Zurich
     "HK": ".HK",  # Hong‑Kong
     "VX": ".SW",  # Virt‑X (shares Zurich feed)
+    "AT": ".VI",  # Vienna
+    "1": ".SW",  # Swiss
+    "U": ".L",  # LSE
 }
 
 STOCKS_ALIASES: dict[str, str] = {
@@ -28,10 +35,34 @@ STOCKS_ALIASES: dict[str, str] = {
     "LSE": "LSEG",
     "IPOB": "OPEN",
     "CCIR": "KYIV",
+    "EJFA": "PGY",
+    "BRK/A": "BRK-A",
+    "BRK_B": "BRK-B",
 }
 
 
-STOCKS_DELISTED: set[str] = {"HYUDl_EQ"}
+STOCKS_DELISTED: set[str] = {
+    "3LBA1.L",
+    "8GC.DE",
+    "AAXN",
+    "AI1",
+    "BYND1",
+    "CCIV",
+    "DAI.DE",
+    "DMYI",
+    "FP.PA",
+    "HYUDl_EQ",
+    "KCAC",
+    "OAC",
+    "RTP",
+    "SL.L",
+    "SNE",
+    "SQ",
+    "SRNG",
+    "SVFC",
+    "BHI",
+    "AGR.L",
+}
 
 
 ETF_COUNTRY_ALLOCATION = {

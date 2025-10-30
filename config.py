@@ -64,3 +64,11 @@ VIX = "^VIX"  # VIX index
 
 # Currency Configuration
 CURRENCIES = ("USD", "EUR", "CAD")
+
+# CELERY STUFF
+CELERY_BROKER_URL = "redis://localhost:6379/11"
+CELERY_result_backend = "redis://localhost:6379/11"
+CELERY_accept_content = ["application/json"]
+CELERY_task_serializer = "json"
+CELERY_result_serializer = "json"
+CELERY_timezone = "UTC"

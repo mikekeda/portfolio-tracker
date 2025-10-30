@@ -27,7 +27,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from models import Instrument, TransactionAction, TransactionHistory
-from update_data import get_session
+from celery_tasks.update_data import get_session
 
 
 def safe_float(value: str) -> float:

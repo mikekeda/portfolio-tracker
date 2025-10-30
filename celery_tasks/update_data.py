@@ -48,6 +48,7 @@ from models import (
     PortfolioDaily,
     PricesDaily,
 )
+from celery_tasks.celery_app import app
 
 
 # GET /api/v0/equity/metadata/instruments
@@ -826,8 +827,13 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     return {"sharpe": sharpe_ratio, "sortino": sortino_ratio, "beta": beta}
 
 
-if __name__ == "__main__":
-    """update all data in the database."""
+@app.task
+def update_data_task():
+    update_data()
+
+
+def update_data():
+    """Update all data in the database."""
     logging.getLogger().setLevel(logging.INFO)
     logging.info("Starting data update process")
 
@@ -847,3 +853,7 @@ if __name__ == "__main__":
 
     # 5. Update portfolio
     update_portfolio()
+
+
+if __name__ == "__main__":
+    update_data()
