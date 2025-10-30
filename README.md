@@ -37,6 +37,7 @@ ruff format --line-length 120
 
 # Type checking
 mypy .
+mypy . --check-untyped-def
 
 # Import organization
 isort .

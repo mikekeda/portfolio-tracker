@@ -549,6 +549,39 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 60,
       }),
+      columnHelper.accessor('recommendation_trend', {
+        header: 'Rec Trend',
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="recommendation-trend"></span>;
+
+          // Determine color and direction based on trend
+          let className = '';
+          let interpretation = '';
+
+          if (value > 0.1) {
+            className = 'positive';
+            interpretation = 'Improving';
+          } else if (value < -0.1) {
+            className = 'negative';
+            interpretation = 'Declining';
+          } else {
+            className = '';
+            interpretation = 'Stable';
+          }
+
+          const tooltip = `Trend: ${interpretation}\nValue: ${value.toFixed(3)}\nRange: -1.0 (declining) to +1.0 (improving)`;
+
+          return (
+            <span className={`recommendation-trend ${className}`} title={tooltip}>
+              {value.toFixed(2)}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 80,
+      }),
       columnHelper.accessor('fifty_two_week_high_distance', {
         header: '52WH Change',
         cell: (info) => {
