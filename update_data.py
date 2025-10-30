@@ -6,50 +6,53 @@ Updates all database tables with fresh data from Trading212 API and Yahoo Financ
 
 import logging
 import math
-import os
 import time
 from collections import defaultdict
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
-from dateutil.relativedelta import relativedelta
 from functools import lru_cache
-from typing import Any, Generator, Literal, TypeAlias, TypedDict, Union, Optional, cast
+from typing import Any, Generator, Literal, Optional, TypeAlias, TypedDict, Union, cast
 
 import numpy as np
 import pandas as pd
 import requests
 import yfinance as yf  # type: ignore[import-untyped]
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert  # Added for bulk upsert
-from sqlalchemy.orm import Session, sessionmaker, selectinload
+from sqlalchemy.orm import Session, selectinload, sessionmaker
 from sqlalchemy.sql import func
-
-from config import DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
 
 from config import (
     BATCH_SIZE_YF,
     CURRENCIES,
+    DB_HOST,
+    DB_NAME,
+    DB_PASSWORD,
+    DB_PORT,
+    DB_USER,
     HISTORY_YEARS,
     PATTERN_MULTI,
     REQUEST_RETRY,
-    TRADING212_API_KEY,
-    TIMEZONE,
     SPY,
+    TIMEZONE,
+    TRADING212_API_KEY,
 )
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
 from models import (
     CurrencyRateDaily,
     HoldingDaily,
     Instrument,
+    InstrumentMetricsDaily,
+    InstrumentYahoo,
     PortfolioDaily,
     PricesDaily,
-    InstrumentYahoo,
-    InstrumentMetricsDaily,
 )
 
 
 # GET /api/v0/equity/metadata/instruments
 class T212Instrument(TypedDict):
+    id: int
     addedOn: str  # ISO8601
     currencyCode: str  # e.g. "USD"
     isin: str
@@ -65,6 +68,7 @@ class T212Instrument(TypedDict):
 
 # GET /api/v0/equity/portfolio
 class T212Position(TypedDict):
+    id: int
     averagePrice: float
     currentPrice: float
     frontend: Literal["API", "WEB", "MOBILE"]  # docs example shows "API"
@@ -97,6 +101,7 @@ class YahooData(TypedDict):
     recommendations: dict[str, Any]
     analyst_price_targets: dict[str, Any]
     splits: dict[str, Any]
+    news: dict[str, Any]
 
 
 TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
@@ -233,6 +238,7 @@ def request_json(url: str, headers: dict[str, str], retries: int = REQUEST_RETRY
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
 
 
+@lru_cache()
 def fetch_holdings() -> dict[str, T212Position]:
     """Fetch portfolio holdings from Trading212 API."""
     logging.info("Fetching portfolio from Trading212 API")
@@ -246,31 +252,35 @@ def fetch_holdings() -> dict[str, T212Position]:
     return holdings
 
 
-def update_holdings(
-    holdings: dict[str, T212Position],
-    instruments: list[Instrument],
-) -> list[HoldingDaily]:
+def update_holdings() -> list[HoldingDaily]:
     """Update holdings in the database."""
     created = 0
     updated = 0
     result = []
     current_date = datetime.now(TIMEZONE).date()
-    instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
 
-    # Update this data only once a day
-    yahoo_datas = get_yahoo_ticker_data(
-        [
-            i.yahoo_symbol
-            for i in sorted(instruments, key=lambda x: x.updated_at)
-            if i.updated_at > datetime.now(TIMEZONE) - timedelta(days=YAHOO_UPDATE_INTERVAL_DAYS)
-        ][:YAHOO_UPDATE_LIMIT]
-    )
+    holdings = fetch_holdings()
 
     with get_session() as session:
+        instruments = session.query(Instrument).order_by(Instrument.updated_at).all()
+
+        instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
+        # Update this data only once a day
+        yahoo_datas = get_yahoo_ticker_data(
+            [
+                i.yahoo_symbol
+                for i in instruments
+                if i.updated_at > datetime.now() - timedelta(days=YAHOO_UPDATE_INTERVAL_DAYS)
+            ][:YAHOO_UPDATE_LIMIT]
+        )
+
         # Delete sold holdings
         deleted = (
             session.query(HoldingDaily)
-            .filter(HoldingDaily.instrument_id.notin_({i.id for i in instruments}), HoldingDaily.date == current_date)
+            .filter(
+                HoldingDaily.instrument_id.notin_({i.id for i in instruments if i.t212_code in holdings}),
+                HoldingDaily.date == current_date,
+            )
             .delete(synchronize_session=False)
         )
         if deleted:
@@ -298,6 +308,7 @@ def update_holdings(
                 }
                 yahoo_row.analyst_price_targets = yahoo_datas["analyst_price_targets"][yahoo_symbol]
                 yahoo_row.splits = yahoo_datas["splits"][yahoo_symbol]
+                yahoo_row.news = yahoo_datas["news"][yahoo_symbol]  # TODO: Keep old news?
                 yahoo_row.updated_at = datetime.now(TIMEZONE)
             else:
                 session.add(
@@ -309,6 +320,7 @@ def update_holdings(
                         recommendations=yahoo_datas["recommendations"][yahoo_symbol],
                         analyst_price_targets=yahoo_datas["analyst_price_targets"][yahoo_symbol],
                         splits=yahoo_datas["splits"][yahoo_symbol],
+                        news=yahoo_datas["news"][yahoo_symbol],
                     )
                 )
 
@@ -380,7 +392,7 @@ def update_holdings(
     return result
 
 
-def update_instruments(tickers: set[str], isins: set[tuple[str, str]]) -> list[Instrument]:
+def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
     """Update instruments in the database from Trading212 API."""
     logging.info("Fetching instruments from Trading212 API")
     instruments = []
@@ -389,6 +401,8 @@ def update_instruments(tickers: set[str], isins: set[tuple[str, str]]) -> list[I
         list[T212Instrument],
         request_json(url, {"Authorization": TRADING212_API_KEY}),
     )
+    holdings_from_api = fetch_holdings()
+    tickers = set(holdings_from_api.keys())
 
     with get_session() as session:
         created = 0
@@ -427,7 +441,7 @@ def update_instruments(tickers: set[str], isins: set[tuple[str, str]]) -> list[I
     return instruments
 
 
-def update_prices(session: Session, tickers: list[str], start: date) -> None:
+def _update_prices(session: Session, tickers: list[str], start: date) -> None:
     """Update price data from Yahoo Finance."""
     now = datetime.now(TIMEZONE)
 
@@ -490,7 +504,7 @@ def update_prices(session: Session, tickers: list[str], start: date) -> None:
                 session.rollback()  # Rollback this batch
 
 
-def get_and_update_prices(tickers_to_add: set[str]) -> None:
+def update_prices(tickers_to_add: set[str]) -> None:
     """Get and update price data for all tickers."""
     today = datetime.now(TIMEZONE).date()
 
@@ -515,13 +529,13 @@ def get_and_update_prices(tickers_to_add: set[str]) -> None:
 
             # Get prices for existing tickers
             if start <= (today - timedelta(days=[3, 1, 1, 1, 1, 1, 2][today.weekday()])):
-                update_prices(session, list(existing_tickers), start)
+                _update_prices(session, list(existing_tickers), start)
 
         # Get prices for new tickers
         new_tickers = list(tickers_to_add | tickers - existing_tickers - STOCKS_DELISTED)
         if new_tickers:
             start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
-            update_prices(session, new_tickers, start)
+            _update_prices(session, new_tickers, start)
 
 
 def scrub_for_json(obj):
@@ -544,6 +558,7 @@ def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
         "recommendations": defaultdict(dict),
         "analyst_price_targets": defaultdict(dict),
         "splits": defaultdict(dict),
+        "news": defaultdict(dict),
     }
 
     # Fetch in batches
@@ -588,20 +603,13 @@ def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
                 # Fetch and store splits
                 splits_data = tickers.tickers[symbol].splits.to_dict()
                 yahoo_data["splits"][symbol] = scrub_for_json(splits_data)
+
+                # Fetch and store news
+                yahoo_data["news"][symbol] = tickers.tickers[symbol].get_news()
             except ValueError as e:
                 logging.warning(f"Problem with parsing DataFrame {symbol}: {e}")
 
     return yahoo_data
-
-
-def update_holdings_and_instruments(isins: set[tuple[str, str]]) -> None:
-    """Update holdings and instruments in the database."""
-    holdings_from_api = fetch_holdings()
-    t212_codes = set(holdings_from_api.keys())
-
-    # Update instruments
-    instruments = update_instruments(t212_codes, isins)
-    update_holdings(holdings_from_api, instruments)
 
 
 def get_rates(session: Session) -> dict[str, float]:
@@ -826,30 +834,16 @@ if __name__ == "__main__":
     # 1. Update rates
     update_currency_rates(CURRENCIES)
 
-    # 2. Update holdings and instruments
-    with get_session() as _session:
-        existing_isins = {r[0] for r in _session.query(Instrument.isin).distinct()}
+    # 2. Update instruments
+    _isins_to_add: set[tuple[str, str]] = set()
+    update_instruments(_isins_to_add)
 
-    import csv
+    # 3. Update holdings
+    update_holdings()
 
-    csv_dir = "csv"
-    isins = set()
-    csv_files = sorted([os.path.join(csv_dir, f) for f in os.listdir(csv_dir) if f.endswith(".csv")])
-    for csv_file in csv_files:
-        with open(csv_file, "r", encoding="utf-8") as file:
-            reader = csv.DictReader(file)
-            for row_num, row in enumerate(reader, start=2):  # Start at 2 (1=header)
-                row["ISIN"] = row["ISIN"].strip()
-
-                if not row["ISIN"] or row["ISIN"] in existing_isins:
-                    continue
-                isins.add((row["ISIN"], row["Currency (Price / share)"]))
-
-    update_holdings_and_instruments(isins)
-
-    # 3. Update prices
+    # 4. Update prices
     _tickers_to_add: set[str] = set()  # "^VIX"
-    get_and_update_prices(_tickers_to_add)
+    update_prices(_tickers_to_add)
 
-    # 4. Update portfolio
+    # 5. Update portfolio
     update_portfolio()

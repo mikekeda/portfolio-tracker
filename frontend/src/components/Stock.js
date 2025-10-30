@@ -225,6 +225,10 @@ const Stock = () => {
       .sort((a, b) => new Date(a.date) - new Date(b.date));
   }, [data]);
 
+  const newsArticles = useMemo(() => {
+    return data?.news || [];
+  }, [data?.news]);
+
   // Process price data from the new API response
   const priceData = useMemo(() => {
     const prices = data?.prices || {};
@@ -829,6 +833,70 @@ const Stock = () => {
               </BarChart>
             </ResponsiveContainer>
           ) : <div className="empty">No recommendations data</div>}
+        </div>
+
+        {/* News Section */}
+        <div className="panel">
+          <h3>Latest News</h3>
+          {newsArticles && newsArticles.length > 0 ? (
+            <div className="news-list">
+              {newsArticles.map((article, index) => {
+                const content = article.content;
+                const thumbnail = content?.thumbnail;
+                const thumbnailUrl = thumbnail?.originalUrl;
+                const pubDate = new Date(content?.pubDate);
+                const timeAgo = Math.floor((Date.now() - pubDate) / (1000 * 60)); // minutes ago
+                const displayTime = timeAgo < 60 ? `${timeAgo}m ago` :
+                                  timeAgo < 1440 ? `${Math.floor(timeAgo / 60)}h ago` :
+                                  `${Math.floor(timeAgo / 1440)}d ago`;
+
+                return (
+                  <a
+                    key={article.id || index}
+                    href={content?.clickThroughUrl?.url || content?.canonicalUrl?.url || '#'}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="news-item"
+                  >
+                    {thumbnailUrl ? (
+                      <div className="news-thumbnail">
+                        <img src={thumbnailUrl} alt={content?.title} />
+                      </div>
+                    ) : (
+                      <div className="news-thumbnail news-thumbnail-placeholder"></div>
+                    )}
+                    <div className="news-content">
+                      <div className="news-title">{content?.title}</div>
+                      {content?.summary && (
+                        <div className="news-summary">{content.summary}</div>
+                      )}
+                      <div className="news-meta">
+                        <span className="news-provider">{content?.provider?.displayName || 'Unknown'}</span>
+                        <span className="news-time">{displayTime}</span>
+                        {content?.metadata?.editorsPick && (
+                          <span className="news-badge">Editor's Pick</span>
+                        )}
+                      </div>
+                    </div>
+                  </a>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="empty">No news available</div>
+          )}
+          {newsArticles && newsArticles.length > 0 && (
+            <div className="news-footer">
+              <a
+                href={`https://finance.yahoo.com/quote/${symbol}/news/`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="news-more-link"
+              >
+                More news →
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </div>

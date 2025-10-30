@@ -560,6 +560,7 @@ async def get_instrument(
             },
             "splits": {k: v for k, v in instrument.yahoo.splits.items() if date.fromisoformat(k) >= start_date},
             "recommendations": instrument.yahoo.recommendations or {},
+            "news": instrument.yahoo.news,
         }
     except HTTPException:
         raise

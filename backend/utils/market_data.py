@@ -1,12 +1,13 @@
 import asyncio
 import logging
-import os
-
+from io import StringIO
 from typing import Optional, Union
 
 import aiohttp
+import pandas as pd
 
-FRED_API_KEY = os.getenv("FRED_API_KEY")
+from config import FRED_API_KEY
+
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 
@@ -106,3 +107,16 @@ async def gen_buffett_indicator(session: aiohttp.ClientSession) -> Optional[floa
     numerator_billions = numerator_millions / 1000.0  # <-- convert M → B
     ratio_pct = (numerator_billions / denominator_billions) * 100.0
     return ratio_pct
+
+
+async def get_sp500_symbols(session: aiohttp.ClientSession) -> list[tuple[str, str]]:
+    """Fetch current S&P500 tickers from Wikipedia."""
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+    headers = {"User-Agent": UA}
+    async with session.get(url, headers=headers) as r:
+        html = await r.text()
+    tables = pd.read_html(StringIO(html))
+    df = tables[0]
+    results = [(str(row["Symbol"]), str(row["Security"])) for _, row in df.iterrows()]
+
+    return results

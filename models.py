@@ -183,6 +183,7 @@ class InstrumentYahoo(Base):
     recommendations: Mapped[dict[str, Any]] = mapped_column(JSONB)
     analyst_price_targets: Mapped[dict[str, Any]] = mapped_column(JSONB)
     splits: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    news: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     pes: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
     # Metadata
