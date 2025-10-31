@@ -6,7 +6,7 @@ Centralized configuration settings.
 
 import os
 import re
-from datetime import timezone
+from datetime import timezone as dt_timezone
 
 import requests
 
@@ -34,7 +34,7 @@ def get_env_var(name: str, default: str = "") -> str:
     return default
 
 
-TIMEZONE = timezone.utc
+TIMEZONE = dt_timezone.utc
 
 DEBUG = get_env_var("DEBUG")
 SOCKET_FILE = get_env_var("SOCKET_FILE", "/temp/site.sock")
