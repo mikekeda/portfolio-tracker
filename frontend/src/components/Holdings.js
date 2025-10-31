@@ -102,14 +102,7 @@ const Holdings = () => {
     }
 
     return result;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    holdingsWithScreeners,
-    selectedScreeners,
-    showOnlySelected,
-    // Only recalculate when showing selected to avoid expensive filtering
-    showOnlySelected ? selectedStocks.size : 0
-  ]);
+  }, [holdingsWithScreeners, selectedScreeners, showOnlySelected, selectedStocks]);
 
   // Toggle select all based on currently filtered/visible rows
   const toggleSelectAll = useCallback(() => {
@@ -844,7 +837,7 @@ const Holdings = () => {
         size: 80,
       }),
     ],
-    [columnHelper, barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection]
+    [columnHelper, barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners]
   );
 
   useEffect(() => {

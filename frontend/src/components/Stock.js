@@ -169,6 +169,7 @@ const Stock = () => {
       }
     };
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol, chartDays]);
 
   // Process splits data
@@ -274,7 +275,7 @@ const Stock = () => {
       );
 
       if (orderEntry) {
-        const [timestamp, order] = orderEntry;
+        const [, order] = orderEntry;
         const category = getTransactionCategory(order.action);
 
         // Calculate dynamic radius (min 4, max 12)
