@@ -14,7 +14,7 @@ import aiohttp
 import numpy as np
 
 # Local imports
-from app import app, get_db_session
+from backend.app import app, get_db_session
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends, HTTPException
 from sqlalchemy import func, select
@@ -828,9 +828,3 @@ async def get_pies(session: AsyncSession = Depends(get_db_session)):
     except Exception as e:
         logger.error(f"Error fetching pies: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)

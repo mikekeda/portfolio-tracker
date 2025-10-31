@@ -36,6 +36,9 @@ def get_env_var(name: str, default: str = "") -> str:
 
 TIMEZONE = timezone.utc
 
+DEBUG = get_env_var("DEBUG")
+SOCKET_FILE = get_env_var("SOCKET_FILE", "/temp/site.sock")
+
 # API Configuration
 TRADING212_API_KEY = get_env_var("TRADING212_API_KEY")
 
