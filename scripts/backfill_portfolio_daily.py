@@ -365,10 +365,10 @@ def backfill_portfolio_daily():
         # Commit any remaining changes
         session.commit()
 
-        print(f"\n✅ Backfill complete!")
+        print("\n✅ Backfill complete!")
         print(f"   📊 Processed: {processed} days")
         print(f"   📅 Date range: {backfill_start_date} to {TODAY}")
-        print(f"\n📝 All calculations complete including unrealised_profit and value!")
+        print("\n📝 All calculations complete including unrealised_profit and value!")
 
 
 if __name__ == "__main__":

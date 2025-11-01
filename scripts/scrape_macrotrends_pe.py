@@ -23,7 +23,7 @@ import re
 from datetime import datetime
 from io import StringIO
 from time import sleep
-from typing import Dict, List, Optional
+from typing import Optional
 
 import pandas as pd
 import requests

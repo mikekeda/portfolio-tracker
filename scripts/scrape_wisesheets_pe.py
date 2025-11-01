@@ -23,7 +23,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime
 from time import sleep
-from typing import Dict, List, Optional
+from typing import Optional
 
 # import pandas as pd  # Not needed for this scraper
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
@@ -92,7 +92,7 @@ def fetch_html(url: str) -> str:
                     quarterly_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
                     print(f"Found quarterly button with selector: {selector}", file=sys.stderr)
                     break
-                except:
+                except Exception:
                     continue
 
             if quarterly_button:

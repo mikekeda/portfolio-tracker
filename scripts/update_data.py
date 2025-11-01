@@ -48,7 +48,6 @@ from models import (
     PortfolioDaily,
     PricesDaily,
 )
-from celery_tasks.celery_app import app
 
 
 # GET /api/v0/equity/metadata/instruments
@@ -825,11 +824,6 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     beta = float(covariance / variance) if variance != 0 else None
 
     return {"sharpe": sharpe_ratio, "sortino": sortino_ratio, "beta": beta}
-
-
-@app.task
-def update_data_task():
-    update_data()
 
 
 def update_data():
