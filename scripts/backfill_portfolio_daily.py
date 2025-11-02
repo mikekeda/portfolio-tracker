@@ -25,7 +25,7 @@ from sqlalchemy import and_, select
 
 from config import TIMEZONE
 from models import CurrencyRateDaily, Instrument, PortfolioDaily, PricesDaily, TransactionAction, TransactionHistory
-from celery_tasks.update_data import get_session
+from scripts.update_data import get_session
 
 # Constants
 TODAY = datetime.now(TIMEZONE).date()

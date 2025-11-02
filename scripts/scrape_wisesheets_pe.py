@@ -36,7 +36,7 @@ from sqlalchemy.orm import selectinload
 
 from config import TIMEZONE
 from models import InstrumentYahoo
-from update_data import get_session
+from scripts.update_data import get_session
 
 HEADERS = {
     "User-Agent": (
