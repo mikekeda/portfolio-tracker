@@ -19,6 +19,51 @@ A comprehensive portfolio management application that integrates with Trading212
 - **Frontend**: React with modern UI components and charts
 - **Data Sources**: Trading212 API, Yahoo Finance API
 - **Database**: PostgreSQL with optimized queries and caching
+- **Background Tasks**: Celery with Redis broker for scheduled data updates
+
+## Background Tasks (Celery)
+
+The application uses Celery for periodic background data updates. Tasks are automatically scheduled via Celery Beat.
+
+### Scheduled Tasks
+
+- **`update_data_task`**: Updates portfolio holdings, prices, currency rates, and technical indicators
+  - Runs every 4 hours
+  - Fetches fresh data from Trading212 API and Yahoo Finance
+
+- **`calculate_portfolio_returns_task`**: Calculates Money-Weighted Rate of Return (MWRR) and Time-Weighted Rate of Return (TWRR)
+  - Runs every 8 hours
+  - Reconstructs historical portfolio values from transaction history
+
+### Running Celery
+
+```bash
+# Start Celery worker (task executor)
+celery -A celery_tasks.celery_app worker --loglevel=info
+
+# Start Celery beat (task scheduler)
+celery -A celery_tasks.celery_app beat --loglevel=info
+```
+
+### Running Scripts Manually
+
+All scripts are located in the `scripts/` directory. When running manually, you must set the `PYTHONPATH` environment variable to the project root:
+
+```bash
+# From the project root directory
+PYTHONPATH=/home/voron/sites/portfolio_tracker python scripts/backfill_portfolio_daily.py
+PYTHONPATH=/home/voron/sites/portfolio_tracker python scripts/update_data.py
+```
+
+**Available Scripts:**
+
+- **`backfill_portfolio_daily.py`**: Backfill and calculate MWRR/TWRR metrics for historical dates
+- **`update_data.py`**: Update all database tables with fresh API data
+- **`backfill_currency_rates.py`**: Backfill historical currency exchange rates
+- **`update_history_from_csv.py`**: Import Trading212 CSV transaction exports
+- **`update_pies.py`**: Update Trading212 Pies data
+- **`scrape_macrotrends_pe.py`**: Scrape PE ratios from Macrotrends
+- **`scrape_wisesheets_pe.py`**: Scrape PE ratios from Wisesheets
 
 ## Code Quality
 
