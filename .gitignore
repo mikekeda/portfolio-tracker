@@ -1,4 +1,5 @@
 *.db
+celerybeat*
 
 .idea/
 __pycache__/

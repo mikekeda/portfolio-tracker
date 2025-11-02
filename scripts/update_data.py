@@ -230,7 +230,7 @@ def request_json(url: str, headers: dict[str, str], retries: int = REQUEST_RETRY
             r = requests.get(url, headers=headers, timeout=10)
             if r.status_code == 200:
                 return r.json()
-            logging.warning(f"HTTP {r.status_code} for {url}")
+            logging.warning(f"HTTP {r.status_code} for {url}: {r.text}")
         except requests.RequestException as exc:
             logging.warning(f"Request error for {url}: {exc}")
         if attempt < retries - 1:
