@@ -4,6 +4,7 @@ Configuration for Trading212 Portfolio Manager
 Centralized configuration settings.
 """
 
+import logging
 import os
 import re
 from datetime import timezone as dt_timezone
@@ -11,6 +12,10 @@ from datetime import timezone as dt_timezone
 import requests
 
 SITE_ENV_PREFIX = "T212"
+
+# Configure logging
+logging.basicConfig(format="%(asctime)s %(levelname)-8s %(message)s", level=logging.INFO, datefmt="%Y-%m-%d %H:%M:%S")
+logger = logging.getLogger(__name__)
 
 
 def get_env_var(name: str, default: str = "") -> str:

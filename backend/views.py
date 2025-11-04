@@ -4,7 +4,6 @@ FastAPI backend for Trading212 Portfolio Manager
 
 # Standard library imports
 import asyncio
-import logging
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
@@ -27,7 +26,7 @@ from backend.utils.market_data import gen_buffett_indicator, gen_fear_greed_inde
 from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
-from config import BENCHES, CURRENCIES, PRICE_FIELD, TIMEZONE, VIX
+from config import BENCHES, CURRENCIES, PRICE_FIELD, TIMEZONE, VIX, logger
 from data import QUICK_RATIO_THRESHOLDS
 from models import (
     CurrencyRateDaily,
@@ -42,10 +41,6 @@ from models import (
 )
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 async def get_rates(session: AsyncSession) -> dict[str, float]:

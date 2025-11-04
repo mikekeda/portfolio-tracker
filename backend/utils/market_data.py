@@ -1,12 +1,11 @@
 import asyncio
-import logging
 from io import StringIO
 from typing import Optional, Union
 
 import aiohttp
 import pandas as pd
 
-from config import FRED_API_KEY
+from config import FRED_API_KEY, logger
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
@@ -27,7 +26,7 @@ async def gen_fear_greed_index(session: aiohttp.ClientSession) -> Optional[dict[
 
             return {"value": fear_greed_value, "label": fear_greed_label, "timestamp": data["timestamp"]}
     except Exception as e:
-        logging.warning(f"Error fetching Fear & Greed Index: {e}")
+        logger.warning(f"Error fetching Fear & Greed Index: {e}")
         return None
 
 
@@ -36,7 +35,7 @@ async def gen_fred_latest(
 ) -> Optional[list[dict[str, float]]]:
     """Fetch latest N observations for a FRED series (async). Returns list of dicts [{date, value}], newest first."""
     if not FRED_API_KEY:
-        logging.warning("FRED_API_KEY is not set")
+        logger.warning("FRED_API_KEY is not set")
         return None
 
     params: dict[str, str | int] = {
@@ -62,7 +61,7 @@ async def gen_fred_latest(
                 out.append({"date": o["date"], "value": float(v)})
             return out or None
     except Exception as e:
-        logging.warning(f"FRED fetch error for {series_id}: {e}")
+        logger.warning(f"FRED fetch error for {series_id}: {e}")
         return None
 
 
@@ -95,7 +94,7 @@ async def gen_buffett_indicator(session: aiohttp.ClientSession) -> Optional[floa
     gdp_map = {o["date"]: o["value"] for o in gdp_obs}
     common_dates = sorted(set(num_map.keys()) & set(gdp_map.keys()), reverse=True)
     if not common_dates:
-        logging.warning("No common quarter between NCBEILQ027S and GDP")
+        logger.warning("No common quarter between NCBEILQ027S and GDP")
         return None
 
     d = common_dates[0]

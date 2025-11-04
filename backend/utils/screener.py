@@ -4,12 +4,10 @@ Screener Utilities
 Helper functions for screener evaluation and calculation.
 """
 
-import logging
 from itertools import combinations
 
 from backend.screener_config import FieldRef, get_screener_config
-
-logger = logging.getLogger(__name__)
+from config import logger
 
 # Expected field names in portfolio data (for validation)
 EXPECTED_FIELDS = {

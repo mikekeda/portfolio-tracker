@@ -1,7 +1,6 @@
 import grp
 import os
 import socket
-import logging
 
 import uvicorn
 
@@ -17,7 +16,7 @@ if __name__ == "__main__":
         try:
             os.unlink(config.SOCKET_FILE)
         except FileNotFoundError as e:
-            logging.info(f"No old socket file found: {e}")
+            config.logger.info(f"No old socket file found: {e}")
 
         # Create socket and run app.
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
@@ -29,4 +28,4 @@ if __name__ == "__main__":
 
                 uvicorn.run(app, uds=config.SOCKET_FILE, access_log=False)
             except OSError as e:
-                logging.warning(e)
+                config.logger.warning(e)

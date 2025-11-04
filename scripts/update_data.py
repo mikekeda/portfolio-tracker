@@ -4,7 +4,6 @@ Data Update Script for Trading212 Portfolio Manager
 Updates all database tables with fresh data from Trading212 API and Yahoo Finance.
 """
 
-import logging
 import math
 import time
 from collections import defaultdict
@@ -37,6 +36,7 @@ from config import (
     SPY,
     TIMEZONE,
     TRADING212_API_KEY,
+    logger,
 )
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
 from models import (
@@ -206,7 +206,7 @@ def update_currency_rates(currencies: tuple[str, ...]) -> dict[str, float]:
             )
 
             if existing:
-                logging.info(f"Updated rate {currency}: {rates[currency]}")
+                logger.info(f"Updated rate {currency}: {rates[currency]}")
                 existing.rate = rates[currency]
                 existing.updated_at = datetime.now(TIMEZONE)
             else:
@@ -230,9 +230,9 @@ def request_json(url: str, headers: dict[str, str], retries: int = REQUEST_RETRY
             r = requests.get(url, headers=headers, timeout=10)
             if r.status_code == 200:
                 return r.json()
-            logging.warning(f"HTTP {r.status_code} for {url}: {r.text}")
+            logger.warning(f"HTTP {r.status_code} for {url}: {r.text}")
         except requests.RequestException as exc:
-            logging.warning(f"Request error for {url}: {exc}")
+            logger.warning(f"Request error for {url}: {exc}")
         if attempt < retries - 1:
             time.sleep(2**attempt)
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
@@ -241,7 +241,7 @@ def request_json(url: str, headers: dict[str, str], retries: int = REQUEST_RETRY
 @lru_cache()
 def fetch_holdings() -> dict[str, T212Position]:
     """Fetch portfolio holdings from Trading212 API."""
-    logging.info("Fetching portfolio from Trading212 API")
+    logger.info("Fetching portfolio from Trading212 API")
     url = "https://live.trading212.com/api/v0/equity/portfolio"
     raw = cast(
         list[T212Position],
@@ -284,7 +284,7 @@ def update_holdings() -> list[HoldingDaily]:
             .delete(synchronize_session=False)
         )
         if deleted:
-            logging.warning("Deleted %s HoldingDaily", deleted)
+            logger.warning("Deleted %s HoldingDaily", deleted)
 
         # Update instruments
         for instrument in instruments:
@@ -387,14 +387,14 @@ def update_holdings() -> list[HoldingDaily]:
                     result.append(new_holding)
                     created += 1
 
-    logging.info(f"Created {created} holdings, updated {updated} holdings")
+    logger.info(f"Created {created} holdings, updated {updated} holdings")
 
     return result
 
 
 def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
     """Update instruments in the database from Trading212 API."""
-    logging.info("Fetching instruments from Trading212 API")
+    logger.info("Fetching instruments from Trading212 API")
     instruments = []
     url = "https://live.trading212.com/api/v0/equity/metadata/instruments"
     instruments_from_api = cast(
@@ -436,7 +436,7 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
                     print(instrument["isin"], instrument["ticker"])
                     raise e
 
-    logging.info(f"Created {created} instruments, updated {updated} instruments")
+    logger.info(f"Created {created} instruments, updated {updated} instruments")
 
     return instruments
 
@@ -447,7 +447,7 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
 
     for i in range(0, len(tickers), BATCH_SIZE_YF):
         sub = tickers[i : i + BATCH_SIZE_YF]
-        logging.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), sub)
+        logger.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), sub)
 
         df = yf.download(
             tickers=sub,
@@ -500,7 +500,7 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
             try:
                 session.execute(on_conflict_stmt)
             except Exception as e:
-                logging.error(f"Failed to bulk upsert prices for {sub}: {e}")
+                logger.error(f"Failed to bulk upsert prices for {sub}: {e}")
                 session.rollback()  # Rollback this batch
 
 
@@ -550,7 +550,7 @@ def scrub_for_json(obj):
 
 def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
     """Update Yahoo Finance data for all holdings."""
-    logging.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
+    logger.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
     yahoo_data: YahooData = {
         "info": {},
         "cashflow": defaultdict(dict),
@@ -581,7 +581,7 @@ def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
                 try:
                     data = tickers.tickers[symbol].get_earnings_dates(limit=40)
                 except KeyError as e:
-                    logging.warning("Failed to get earnings for %s: %s", symbol, e)
+                    logger.warning("Failed to get earnings for %s: %s", symbol, e)
                     continue
 
                 if data is None:
@@ -607,7 +607,7 @@ def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
                 # Fetch and store news
                 yahoo_data["news"][symbol] = tickers.tickers[symbol].get_news()
             except ValueError as e:
-                logging.warning(f"Problem with parsing DataFrame {symbol}: {e}")
+                logger.warning(f"Problem with parsing DataFrame {symbol}: {e}")
 
     return yahoo_data
 
@@ -687,7 +687,7 @@ def get_portfolio_allocation(
 
 def update_portfolio():
     """Update portfolio."""
-    logging.info("Fetching portfolio from Trading212 API")
+    logger.info("Fetching portfolio from Trading212 API")
     snapshot_date = datetime.now(TIMEZONE).date()
     url = "https://live.trading212.com/api/v0/equity/account/cash"
     portfolio_from_api = cast(
@@ -828,8 +828,7 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
 
 def update_data():
     """Update all data in the database."""
-    logging.getLogger().setLevel(logging.INFO)
-    logging.info("Starting data update process")
+    logger.info("Starting data update process")
 
     # 1. Update rates
     update_currency_rates(CURRENCIES)

@@ -4,19 +4,16 @@ Technical Analysis Utilities
 Helper functions for technical analysis calculations.
 """
 
-import logging
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import PRICE_FIELD, SPY, TIMEZONE
+from config import PRICE_FIELD, SPY, TIMEZONE, logger
 from models import PricesDaily
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
-
-logger = logging.getLogger(__name__)
 
 
 def calculate_rsi(prices: list[float], period: int = 14) -> float:
