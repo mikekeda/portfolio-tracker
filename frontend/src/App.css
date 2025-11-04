@@ -7,6 +7,10 @@
   padding-top: 20px;
 }
 
+.main-content-full {
+  padding: 0;
+}
+
 /* Global styles for loading and error states */
 .loading,
 .error {

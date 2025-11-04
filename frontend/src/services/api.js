@@ -34,13 +34,16 @@ apiClient.interceptors.response.use(
     return response;
   },
   (error) => {
-    // Check if this is a 401 authentication error FIRST
+    // Check if this is a 401 authentication error
     if (error.response && error.response.status === 401) {
-      const errorMessage = error.response.data?.detail || error.response.data?.message || 'Authentication failed';
-      console.error("Set authentication token with: localStorage.setItem('api_token', 'your-token-here')");
-
-      // Show authentication-specific error message
-      alert(`Authentication Error (401 Unauthorized)\n\n${errorMessage}\n\nPlease check your API token.`);
+      // Don't redirect if we're already on the login page
+      if (window.location.pathname !== '/login') {
+        // Store the current path to redirect back after login
+        const currentPath = window.location.pathname + window.location.search;
+        sessionStorage.setItem('redirectAfterLogin', currentPath);
+        // Redirect to login page
+        window.location.href = '/login';
+      }
     } else if (error.response) {
       // Server responded with other error status
       console.error('API Error:', error.response.status, error.response.data);
