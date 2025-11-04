@@ -2,6 +2,8 @@
   max-width: 1200px;
   margin: 0 auto;
   padding: 16px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .chart-loading {
@@ -37,6 +39,8 @@
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px 12px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .kpi {
@@ -100,12 +104,17 @@
   border: 1px solid #e9ecef;
   border-radius: 8px;
   padding: 12px 16px;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
 }
 
 .valuation-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 8px 12px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .inline-controls {
@@ -115,6 +124,16 @@
   gap: 8px;
   margin-bottom: 8px;
   flex-wrap: wrap;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.inline-controls > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .inline-controls label {
@@ -141,11 +160,27 @@
 
 .radio-group {
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   gap: 2px;
   background-color: #f8f9fa;
   border: 1px solid #dee2e6;
   border-radius: 5px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+/* Make metric radio groups (like Price/Price % Change) distribute evenly */
+.inline-controls > div:first-child .radio-group {
+  display: flex;
+  width: 100%;
+  flex-wrap: nowrap;
+  min-width: 200px;
+}
+
+.inline-controls > div:first-child .radio-group .radio-label {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
 }
 
 .radio-label {
@@ -159,6 +194,7 @@
   transition: all 0.2s ease;
   margin: 0;
   user-select: none;
+  white-space: nowrap;
 }
 
 .radio-label input[type="radio"] {
@@ -335,6 +371,106 @@
   border-radius: 12px;
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+/* Mobile responsive styles */
+@media (max-width: 768px) {
+  .stock-container {
+    padding: 12px;
+  }
+
+  .panel {
+    padding: 10px 12px;
+  }
+
+  .valuation-grid,
+  .stock-kpis {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 8px;
+  }
+
+  .stock-overview {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    padding: 10px 12px;
+    gap: 8px;
+  }
+
+  .inline-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .inline-controls > div {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .inline-controls label {
+    font-weight: 600;
+    font-size: 0.85rem;
+  }
+
+  .radio-group {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  /* Keep metric buttons evenly distributed on mobile */
+  .inline-controls > div:first-child .radio-group {
+    flex-wrap: nowrap;
+    width: 100%;
+  }
+
+  .inline-controls > div:first-child .radio-group .radio-label {
+    flex: 1;
+    text-align: center;
+  }
+
+  .radio-label {
+    padding: 6px 10px;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .stock-container {
+    padding: 10px;
+  }
+
+  .panel {
+    padding: 10px;
+  }
+
+  .valuation-grid,
+  .stock-kpis {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .stock-overview {
+    grid-template-columns: 1fr;
+    padding: 10px;
+  }
+
+  .kpi {
+    padding: 8px;
+  }
+
+  .inline-controls {
+    gap: 10px;
+  }
+
+  .radio-label {
+    padding: 5px 8px;
+    font-size: 0.75rem;
+  }
+
+  .inline-controls label {
+    font-size: 0.8rem;
+  }
 }
 
 .news-footer {

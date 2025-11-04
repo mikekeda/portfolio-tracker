@@ -140,7 +140,7 @@
 /* Allocation-style background bars for Change column */
 .movers-table .change-cell {
   position: relative;
-  min-width: 100px;
+  min-width: 60px;
   text-align: right;
 }
 
