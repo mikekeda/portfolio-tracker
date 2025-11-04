@@ -37,11 +37,11 @@ const Login = () => {
     try {
       // Save token to localStorage (may fail in private browsing mode)
       localStorage.setItem('api_token', trimmedToken);
-      
+
       // Get the redirect path from sessionStorage (if user was redirected here)
       const redirectPath = sessionStorage.getItem('redirectAfterLogin');
       sessionStorage.removeItem('redirectAfterLogin');
-      
+
       // Redirect to the stored path or home
       navigate(redirectPath || '/');
     } catch (err) {
@@ -71,7 +71,7 @@ const Login = () => {
         <p className="login-description">
           Please enter your API token to access the portfolio data.
         </p>
-        
+
         <form onSubmit={handleSubmit} className="login-form">
           <div className="form-group">
             <label htmlFor="api-token">API Token</label>

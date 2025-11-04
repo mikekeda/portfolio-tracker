@@ -38,8 +38,15 @@ async def check_api_token(request: Request, call_next):
     return response
 
 
-# Add CORS middleware
-app.add_middleware(CORSMiddleware, allow_origins=[DOMAIN], allow_headers=["*"])
+# Add CORS middleware - allow localhost, local network IPs, and configured DOMAIN
+# The regex matches: localhost, 127.0.0.1, and private network IP ranges (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+# DOMAIN is also included in allow_origins for production deployments
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[DOMAIN] if DOMAIN else [],
+    allow_origin_regex=r"http(s)?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.\d{1,3}\.\d{1,3})(:\d+)?",
+    allow_headers=["*"],
+)
 
 
 @lru_cache(maxsize=1)
