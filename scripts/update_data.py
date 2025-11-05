@@ -4,6 +4,7 @@ Data Update Script for Trading212 Portfolio Manager
 Updates all database tables with fresh data from Trading212 API and Yahoo Finance.
 """
 
+import concurrent.futures
 import math
 import time
 from collections import defaultdict
@@ -96,18 +97,19 @@ class T212Portfolio(TypedDict):
 
 class YahooData(TypedDict):
     info: dict[str, Any]
-    cashflow: dict[str, Any]
-    earnings: dict[str, Any]
-    recommendations: dict[str, Any]
-    analyst_price_targets: dict[str, Any]
-    splits: dict[str, Any]
-    news: dict[str, Any]
+    cashflow: dict[str, dict[str, Optional[int]]]
+    earnings: dict[str, dict[str, Optional[float]]]
+    recommendations: dict[str, dict[str, int]]
+    analyst_price_targets: dict[str, float]
+    splits: dict[str, float]
+    news: list[dict[str, Any]]
 
 
 TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
 
 YAHOO_UPDATE_LIMIT = 100
 YAHOO_UPDATE_INTERVAL_DAYS = 1
+TODAY = datetime.now(TIMEZONE).date()
 
 
 @lru_cache(maxsize=1)
@@ -288,39 +290,39 @@ def update_holdings() -> list[HoldingDaily]:
 
         # Update instruments
         for instrument in instruments:
-            yahoo_symbol = instrument.yahoo_symbol
-            if yahoo_symbol not in yahoo_datas["info"]:
+            yahoo_symbol = str(instrument.yahoo_symbol)
+            if yahoo_symbol not in yahoo_datas:
                 # This stock was recently updated or wasn't selected for update because of the limit
                 continue
 
-            yahoo_data = yahoo_datas["info"][yahoo_symbol]
+            yahoo_data = yahoo_datas[yahoo_symbol]["info"]
 
             # Upsert InstrumentYahoo (detached Yahoo blobs)
             yahoo_row = session.get(InstrumentYahoo, instrument.id)
             if yahoo_row:
                 yahoo_row.info = yahoo_data
-                yahoo_row.cashflow = yahoo_datas["cashflow"][yahoo_symbol]
-                yahoo_row.earnings = yahoo_datas["earnings"][yahoo_symbol]
+                yahoo_row.cashflow = yahoo_datas[yahoo_symbol]["cashflow"]
+                yahoo_row.earnings = yahoo_datas[yahoo_symbol]["earnings"]
                 # TODO: Keep only 12 - 24 recommendations
                 yahoo_row.recommendations = {
                     **yahoo_row.recommendations,
-                    **yahoo_datas["recommendations"][yahoo_symbol],
+                    **yahoo_datas[yahoo_symbol]["recommendations"],
                 }
-                yahoo_row.analyst_price_targets = yahoo_datas["analyst_price_targets"][yahoo_symbol]
-                yahoo_row.splits = yahoo_datas["splits"][yahoo_symbol]
-                yahoo_row.news = yahoo_datas["news"][yahoo_symbol]  # TODO: Keep old news?
+                yahoo_row.analyst_price_targets = yahoo_datas[yahoo_symbol]["analyst_price_targets"]
+                yahoo_row.splits = yahoo_datas[yahoo_symbol]["splits"]
+                yahoo_row.news = yahoo_datas[yahoo_symbol]["news"]  # TODO: Keep old news?
                 yahoo_row.updated_at = datetime.now(TIMEZONE)
             else:
                 session.add(
                     InstrumentYahoo(
                         instrument_id=instrument.id,
                         info=yahoo_data,
-                        cashflow=yahoo_datas["cashflow"][yahoo_symbol],
-                        earnings=yahoo_datas["earnings"][yahoo_symbol],
-                        recommendations=yahoo_datas["recommendations"][yahoo_symbol],
-                        analyst_price_targets=yahoo_datas["analyst_price_targets"][yahoo_symbol],
-                        splits=yahoo_datas["splits"][yahoo_symbol],
-                        news=yahoo_datas["news"][yahoo_symbol],
+                        cashflow=yahoo_datas[yahoo_symbol]["cashflow"],
+                        earnings=yahoo_datas[yahoo_symbol]["earnings"],
+                        recommendations=yahoo_datas[yahoo_symbol]["recommendations"],
+                        analyst_price_targets=yahoo_datas[yahoo_symbol]["analyst_price_targets"],
+                        splits=yahoo_datas[yahoo_symbol]["splits"],
+                        news=yahoo_datas[yahoo_symbol]["news"],
                     )
                 )
 
@@ -445,68 +447,65 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
     """Update price data from Yahoo Finance."""
     now = datetime.now(TIMEZONE)
 
-    for i in range(0, len(tickers), BATCH_SIZE_YF):
-        sub = tickers[i : i + BATCH_SIZE_YF]
-        logger.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), sub)
+    logger.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), tickers)
 
-        df = yf.download(
-            tickers=sub,
-            start=start.strftime("%Y-%m-%d"),
-            interval="1d",
-            group_by="ticker",
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-        ).rename(columns={"Adj Close": "Adj_Close"})
+    df = yf.download(
+        tickers=tickers,
+        start=start.strftime("%Y-%m-%d"),
+        interval="1d",
+        group_by="ticker",
+        auto_adjust=False,
+        progress=False,
+        threads=False,
+    ).rename(columns={"Adj Close": "Adj_Close"})
 
-        # Bulk upsert
-        all_price_data = []
-        for ticker in df.columns.get_level_values(0).unique():
-            tdf = df[ticker].dropna(how="all")  # Open/High/Low/Close/Adj Close/Volume
-            for dt, row in tdf.iterrows():
-                all_price_data.append(
-                    {
-                        "symbol": ticker,
-                        "date": dt.date(),
-                        "open_price": float(row["Open"]),
-                        "high_price": float(row["High"]),
-                        "low_price": float(row["Low"]),
-                        "close_price": float(row["Close"]),
-                        "adj_close_price": float(row["Adj_Close"]),
-                        "volume": int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
-                        "updated_at": now,
-                    }
-                )
-
-        if all_price_data:
-            insert_stmt = pg_insert(PricesDaily).values(all_price_data)
-
-            # Define what to do ON CONFLICT (i.e., when symbol/date key exists)
-            # We update the existing row with the new values
-            on_conflict_stmt = insert_stmt.on_conflict_do_update(
-                index_elements=["symbol", "date"],  # This is the UniqueConstraint
-                set_={
-                    "open_price": insert_stmt.excluded.open_price,
-                    "high_price": insert_stmt.excluded.high_price,
-                    "low_price": insert_stmt.excluded.low_price,
-                    "close_price": insert_stmt.excluded.close_price,
-                    "adj_close_price": insert_stmt.excluded.adj_close_price,
-                    "volume": insert_stmt.excluded.volume,
-                    "updated_at": insert_stmt.excluded.updated_at,
-                },
+    # Bulk upsert
+    all_price_data = []
+    for ticker in df.columns.get_level_values(0).unique():
+        tdf = df[ticker].dropna(how="all")  # Open/High/Low/Close/Adj Close/Volume
+        for dt, row in tdf.iterrows():
+            all_price_data.append(
+                {
+                    "symbol": ticker,
+                    "date": dt.date(),
+                    "open_price": float(row["Open"]),
+                    "high_price": float(row["High"]),
+                    "low_price": float(row["Low"]),
+                    "close_price": float(row["Close"]),
+                    "adj_close_price": float(row["Adj_Close"]),
+                    "volume": int(row["Volume"]) if not pd.isna(row["Volume"]) else 0,
+                    "updated_at": now,
+                }
             )
 
-            # Execute the single bulk statement
-            try:
-                session.execute(on_conflict_stmt)
-            except Exception as e:
-                logger.error(f"Failed to bulk upsert prices for {sub}: {e}")
-                session.rollback()  # Rollback this batch
+    if all_price_data:
+        insert_stmt = pg_insert(PricesDaily).values(all_price_data)
+
+        # Define what to do ON CONFLICT (i.e., when symbol/date key exists)
+        # We update the existing row with the new values
+        on_conflict_stmt = insert_stmt.on_conflict_do_update(
+            index_elements=["symbol", "date"],  # This is the UniqueConstraint
+            set_={
+                "open_price": insert_stmt.excluded.open_price,
+                "high_price": insert_stmt.excluded.high_price,
+                "low_price": insert_stmt.excluded.low_price,
+                "close_price": insert_stmt.excluded.close_price,
+                "adj_close_price": insert_stmt.excluded.adj_close_price,
+                "volume": insert_stmt.excluded.volume,
+                "updated_at": insert_stmt.excluded.updated_at,
+            },
+        )
+
+        # Execute the single bulk statement
+        try:
+            session.execute(on_conflict_stmt)
+        except Exception as e:
+            logger.error(f"Failed to bulk upsert prices for {tickers}: {e}")
+            session.rollback()  # Rollback this batch
 
 
 def update_prices(tickers_to_add: set[str]) -> None:
     """Get and update price data for all tickers."""
-    today = datetime.now(TIMEZONE).date()
 
     with get_session() as session:
         tickers = set(session.scalars(select(Instrument.yahoo_symbol)).all())
@@ -518,24 +517,23 @@ def update_prices(tickers_to_add: set[str]) -> None:
             )
             .where(PricesDaily.symbol.notin_(STOCKS_DELISTED))
             .group_by(PricesDaily.symbol)
+            .order_by(func.max(PricesDaily.date))
             .all()
         )
 
-        existing_tickers = set(row.symbol for row in existing_prices)
-        if existing_tickers:
-            existing_tickers -= STOCKS_DELISTED
-            latest_date = min([row.max_date for row in existing_prices])
-            start = latest_date + timedelta(days=1)
-
-            # Get prices for existing tickers
-            if start <= (today - timedelta(days=[3, 1, 1, 1, 1, 1, 2][today.weekday()])):
-                _update_prices(session, list(existing_tickers), start)
+        # Get prices for existing tickers
+        for i in range(0, len(existing_prices), BATCH_SIZE_YF):
+            sub = existing_prices[i : i + BATCH_SIZE_YF]
+            start = min([row.max_date for row in sub]) + timedelta(days=1)
+            if start > (TODAY - timedelta(days=[3, 1, 1, 1, 1, 1, 2][TODAY.weekday()])):
+                break
+            existing_tickers: list[str] = [row.symbol for row in sub]
+            _update_prices(session, existing_tickers, start)
 
         # Get prices for new tickers
-        new_tickers = list(tickers_to_add | tickers - existing_tickers - STOCKS_DELISTED)
-        if new_tickers:
-            start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
-            _update_prices(session, new_tickers, start)
+        new_tickers = list(tickers_to_add | tickers - set(row.symbol for row in existing_prices))
+        start = TODAY - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
+        _update_prices(session, new_tickers, start)  # all new tickers at once
 
 
 def scrub_for_json(obj):
@@ -548,18 +546,64 @@ def scrub_for_json(obj):
     return obj
 
 
-def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
-    """Update Yahoo Finance data for all holdings."""
-    logger.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
+def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
     yahoo_data: YahooData = {
         "info": {},
-        "cashflow": defaultdict(dict),
-        "earnings": defaultdict(dict),
-        "recommendations": defaultdict(dict),
-        "analyst_price_targets": defaultdict(dict),
-        "splits": defaultdict(dict),
-        "news": defaultdict(dict),
+        "cashflow": {},
+        "earnings": {},
+        "recommendations": {},
+        "analyst_price_targets": {},
+        "splits": {},
+        "news": [],
     }
+
+    try:
+        yahoo_data["info"] = ticker.info
+
+        if yahoo_data["info"].get("quoteType") == "ETF":
+            # ETF don't have cashflow, earnings, recommendations, analyst_price_targets, splits
+            return ticker.ticker, yahoo_data
+
+        data = ticker.cashflow.to_dict()
+        yahoo_data["cashflow"] = scrub_for_json(data)
+
+        try:
+            data = ticker.get_earnings_dates(limit=40)
+        except KeyError as e:
+            logger.warning("Failed to get earnings for %s: %s", ticker.ticker, e)
+            return ticker.ticker, yahoo_data
+
+        if data is None:
+            # ETFs don't have earnings
+            yahoo_data["earnings"] = {}
+        else:
+            yahoo_data["earnings"] = scrub_for_json(data.to_dict(orient="index"))
+
+        data = ticker.recommendations.to_dict(orient="index")
+        data = {
+            datetime.now(TIMEZONE).date().replace(day=1) + relativedelta(months=int(v.pop("period").rstrip("m"))): v
+            for k, v in data.items()
+        }
+        yahoo_data["recommendations"] = scrub_for_json(data)
+
+        yahoo_data["analyst_price_targets"] = ticker.analyst_price_targets
+
+        # Fetch and store splits
+        splits_data = ticker.splits.to_dict()
+        yahoo_data["splits"] = scrub_for_json(splits_data)
+
+        # Fetch and store news
+        yahoo_data["news"] = ticker.get_news()
+    except ValueError as e:
+        logger.warning(f"Problem with parsing DataFrame {ticker.ticker}: {e}")
+
+    return ticker.ticker, yahoo_data
+
+
+def get_yahoo_ticker_data(symbols: list[str]) -> dict[str, YahooData]:
+    """Update Yahoo Finance data for all holdings."""
+    logger.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
+    yahoo_data: dict[str, YahooData] = {}
 
     # Fetch in batches
     for i in range(0, len(symbols), BATCH_SIZE_YF):
@@ -567,47 +611,12 @@ def get_yahoo_ticker_data(symbols: list[str]) -> YahooData:
 
         # Use yfinance's batch download capability
         tickers = yf.Tickers(" ".join(batch))
-        for symbol in batch:
-            try:
-                yahoo_data["info"][symbol] = tickers.tickers[symbol].info
 
-                if yahoo_data["info"][symbol].get("quoteType") == "ETF":
-                    # ETF don't have cashflow, earnings, recommendations, analyst_price_targets, splits
-                    continue
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            results = executor.map(fetch_profile_for_ticker, tickers.tickers.values())
 
-                data = tickers.tickers[symbol].cashflow.to_dict()
-                yahoo_data["cashflow"][symbol] = scrub_for_json(data)
-
-                try:
-                    data = tickers.tickers[symbol].get_earnings_dates(limit=40)
-                except KeyError as e:
-                    logger.warning("Failed to get earnings for %s: %s", symbol, e)
-                    continue
-
-                if data is None:
-                    # ETFs don't have earnings
-                    yahoo_data["earnings"][symbol] = {}
-                else:
-                    yahoo_data["earnings"][symbol] = scrub_for_json(data.to_dict(orient="index"))
-
-                data = tickers.tickers[symbol].recommendations.to_dict(orient="index")
-                data = {
-                    datetime.now(TIMEZONE).date().replace(day=1)
-                    + relativedelta(months=int(v.pop("period").rstrip("m"))): v
-                    for k, v in data.items()
-                }
-                yahoo_data["recommendations"][symbol] = scrub_for_json(data)
-
-                yahoo_data["analyst_price_targets"][symbol] = tickers.tickers[symbol].analyst_price_targets
-
-                # Fetch and store splits
-                splits_data = tickers.tickers[symbol].splits.to_dict()
-                yahoo_data["splits"][symbol] = scrub_for_json(splits_data)
-
-                # Fetch and store news
-                yahoo_data["news"][symbol] = tickers.tickers[symbol].get_news()
-            except ValueError as e:
-                logger.warning(f"Problem with parsing DataFrame {symbol}: {e}")
+            for ticker, data in results:
+                yahoo_data[ticker] = data
 
     return yahoo_data
 
