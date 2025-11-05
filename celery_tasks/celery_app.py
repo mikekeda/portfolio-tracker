@@ -27,27 +27,27 @@ app.conf.beat_schedule = {
     # Update data during market hours (Mon-Fri, 08:00-20:00 UTC): Every 2 hours
     "update_data_market_hours": {
         "task": "celery_tasks.tasks.update_data_task",
-        "schedule": crontab(minute=0, hour='8,10,12,14,16,18,20', day_of_week='mon-fri'),
+        "schedule": crontab(minute=0, hour="8,10,12,14,16,18,20", day_of_week="mon-fri"),
         "args": (),
     },
     # Update data weekends (Sat-Sun): Every 4 hours during market hours time
     "update_data_weekends": {
         "task": "celery_tasks.tasks.update_data_task",
-        "schedule": crontab(minute=0, hour='8,12,16,20', day_of_week='sat-sun'),
+        "schedule": crontab(minute=0, hour="8,12,16,20", day_of_week="sat-sun"),
         "args": (),
     },
     # Calculate portfolio returns during market hours: Every 4 hours, staggered 5 min after update_data
     # Runs at 8:05, 12:05, 16:05 (5 minutes after update_data at 8:00, 12:00, 16:00)
     "calculate_portfolio_returns_market_hours": {
         "task": "celery_tasks.tasks.calculate_portfolio_returns_task",
-        "schedule": crontab(minute=5, hour='8,12,16', day_of_week='mon-fri'),
+        "schedule": crontab(minute=5, hour="8,12,16", day_of_week="mon-fri"),
         "args": (),
     },
     # Calculate portfolio returns weekends: Every 8 hours, staggered 5 min after update_data
     # Runs at 8:05, 16:05 (5 minutes after update_data at 8:00, 16:00)
     "calculate_portfolio_returns_weekends": {
         "task": "celery_tasks.tasks.calculate_portfolio_returns_task",
-        "schedule": crontab(minute=5, hour='8,16', day_of_week='sat-sun'),
+        "schedule": crontab(minute=5, hour="8,16", day_of_week="sat-sun"),
         "args": (),
     },
 }

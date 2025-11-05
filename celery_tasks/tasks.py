@@ -5,7 +5,7 @@ from scripts.update_data import update_data
 
 @app.task
 def calculate_portfolio_returns_task():
-    backfill_portfolio_daily()
+    backfill_portfolio_daily(rebuild=False)
 
 
 @app.task

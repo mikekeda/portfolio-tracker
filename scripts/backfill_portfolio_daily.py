@@ -21,9 +21,9 @@ from typing import Optional, Tuple
 
 import numpy as np
 from numpy_financial import irr
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, or_, select
 
-from config import TIMEZONE
+from config import TIMEZONE, logger
 from models import CurrencyRateDaily, Instrument, PortfolioDaily, PricesDaily, TransactionAction, TransactionHistory
 from scripts.update_data import get_session
 
@@ -205,7 +205,7 @@ def process_transaction_on_date(
     return cash_balance, total_realised_profit
 
 
-def backfill_portfolio_daily():
+def backfill_portfolio_daily(rebuild: bool = True):
     """Main function to backfill PortfolioDaily table."""
     # Calculate total days
 
@@ -233,9 +233,17 @@ def backfill_portfolio_daily():
         current_date = all_transactions[0].timestamp.date()
         backfill_start_date = current_date
         total_days = (TODAY - backfill_start_date).days + 1
+        latest_processed_date = session.execute(
+            select(func.min(PortfolioDaily.date)).where(
+                or_(PortfolioDaily.mwrr.is_(None), PortfolioDaily.twrr.is_(None))
+            )
+        ).scalar_one_or_none()
+        if not rebuild and latest_processed_date is None:
+            logger.info("All is up to date, no update is needed!")
+            return
 
-        print(f"📊 Total days to backfill: {total_days}")
-        print(f"📋 Loaded {len(all_transactions)} transactions")
+        logger.info(f"📊 Total days to backfill: {total_days}")
+        logger.info(f"📋 Loaded {len(all_transactions)} transactions")
 
         while current_date <= TODAY:
             # Track cash flow for this day
@@ -319,57 +327,68 @@ def backfill_portfolio_daily():
                 annual_twrr_pct = ((total_return_factor ** (365.25 / num_days)) - 1) * 100.0
 
             # Debug output
-            print(
+            logger.debug(
                 f"📊 {current_date}: Cash={cash_balance:.2f}, Invested={invested:.2f}, Unrealised={unrealised_profit:.2f}, Realised={total_realised_profit:.2f}, Value={value:.2f} "
                 f"MWRR={annual_mwrr_pct:.2f}%, TWRR={annual_twrr_pct:.2f}%"
             )
             if current_date == TODAY:
                 for isin, holding in sorted(list(holdings.items()), key=lambda x: x[1].name):
                     current_price = get_price(session, isin, current_date)
-                    print(
+                    logger.debug(
                         f"   {holding.name}: {holding.quantity:.4f} @ £{holding.avg_buy_price:.2f} = £{holding.total_cost:.2f} (market: £{current_price:.2f})"
                     )
 
-            # Check if record already exists
-            existing = session.execute(
-                select(PortfolioDaily).where(PortfolioDaily.date == current_date)
-            ).scalar_one_or_none()
+            if rebuild:
+                # Check if record already exists
+                existing = session.execute(
+                    select(PortfolioDaily).where(PortfolioDaily.date == current_date)
+                ).scalar_one_or_none()
 
-            if existing:
-                # Update existing record with mwrr and twrr
-                existing.mwrr = float(annual_mwrr_pct)
-                existing.twrr = float(annual_twrr_pct)
-            else:
-                # Create new PortfolioDaily record
-                portfolio_daily = PortfolioDaily(
-                    date=current_date,
-                    value=value,
-                    unrealised_profit=unrealised_profit,
-                    realised_profit=round(total_realised_profit, 9),
-                    cash=round(cash_balance, 9),
-                    invested=round(invested, 9),
-                    mwrr=float(annual_mwrr_pct),
-                    twrr=float(annual_twrr_pct),
-                )
-                session.add(portfolio_daily)
+                if existing:
+                    # Update existing record with mwrr and twrr
+                    existing.mwrr = float(annual_mwrr_pct)
+                    existing.twrr = float(annual_twrr_pct)
+                else:
+                    # Create new PortfolioDaily record
+                    portfolio_daily = PortfolioDaily(
+                        date=current_date,
+                        value=value,
+                        unrealised_profit=unrealised_profit,
+                        realised_profit=round(total_realised_profit, 9),
+                        cash=round(cash_balance, 9),
+                        invested=round(invested, 9),
+                        mwrr=float(annual_mwrr_pct),
+                        twrr=float(annual_twrr_pct),
+                    )
+                    session.add(portfolio_daily)
+            elif current_date >= latest_processed_date:
+                existing = session.execute(
+                    select(PortfolioDaily).where(
+                        PortfolioDaily.date == current_date,
+                        or_(PortfolioDaily.mwrr.is_(None), PortfolioDaily.twrr.is_(None)),
+                    )
+                ).scalar_one_or_none()
+                if existing:
+                    existing.mwrr = float(annual_mwrr_pct)
+                    existing.twrr = float(annual_twrr_pct)
 
             processed += 1
 
             # Commit every 10 records to avoid long transactions
             if processed % 10 == 0:
                 session.commit()
-                print(f"📈 Processed {processed}/{total_days} days, current: {current_date}")
+                logger.info(f"📈 Processed {processed}/{total_days} days, current: {current_date}")
 
             current_date += timedelta(days=1)
 
         # Commit any remaining changes
         session.commit()
 
-        print("\n✅ Backfill complete!")
-        print(f"   📊 Processed: {processed} days")
-        print(f"   📅 Date range: {backfill_start_date} to {TODAY}")
-        print("\n📝 All calculations complete including unrealised_profit and value!")
+        logger.info("\n✅ Backfill complete!")
+        logger.info(f"   📊 Processed: {processed} days")
+        logger.info(f"   📅 Date range: {backfill_start_date} to {TODAY}")
+        logger.info("\n📝 All calculations complete including unrealised_profit and value!")
 
 
 if __name__ == "__main__":
-    backfill_portfolio_daily()
+    backfill_portfolio_daily(rebuild=True)
