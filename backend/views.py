@@ -281,7 +281,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
             "last_updated": latest_date.isoformat(),
         }
     except Exception as e:
-        logger.error(f"Error fetching current portfolio: {e}")
+        logger.exception(f"Error fetching current portfolio: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -346,7 +346,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             "buffett_indicator": buffett_indicator,
         }
     except Exception as e:
-        logger.error(f"Error fetching portfolio summary: {e}")
+        logger.exception(f"Error fetching portfolio summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -369,7 +369,7 @@ async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_sessi
             "total_value": latest_snapshot.value,
         }
     except Exception as e:
-        logger.error(f"Error fetching allocations: {e}")
+        logger.exception(f"Error fetching allocations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -430,7 +430,7 @@ async def get_portfolio_history(
 
         return {"history": history_data, "days": days, "benchmark": BENCHES}
     except Exception as e:
-        logger.error(f"Error fetching portfolio history: {e}")
+        logger.exception(f"Error fetching portfolio history: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -455,7 +455,7 @@ async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> di
             ]
         }
     except Exception as e:
-        logger.error(f"Error fetching instruments: {e}")
+        logger.exception(f"Error fetching instruments: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -560,7 +560,7 @@ async def get_instrument(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching instrument {symbol}: {e}")
+        logger.exception(f"Error fetching instrument {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -587,7 +587,7 @@ async def get_available_screeners() -> dict[str, Any]:
         screener_config = get_screener_config()
         return screener_config.to_dict()
     except Exception as e:
-        logger.error(f"Error getting available screeners: {e}")
+        logger.exception(f"Error getting available screeners: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -675,7 +675,7 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
                 chart_data[sym].sort(key=lambda x: x["date"])
 
         except Exception as e:
-            logger.error(f"Error fetching data for chart: {e}")
+            logger.exception(f"Error fetching data for chart: {e}")
             return {"error": f"Failed to fetch {metric} data"}
 
     return {
@@ -773,7 +773,7 @@ async def get_top_movers(
         }
 
     except Exception as e:
-        logger.error(f"Error fetching top movers: {e}")
+        logger.exception(f"Error fetching top movers: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -821,5 +821,5 @@ async def get_pies(session: AsyncSession = Depends(get_db_session)):
         return pies_data
 
     except Exception as e:
-        logger.error(f"Error fetching pies: {e}")
+        logger.exception(f"Error fetching pies: {e}")
         raise HTTPException(status_code=500, detail=str(e))

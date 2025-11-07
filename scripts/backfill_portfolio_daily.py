@@ -377,17 +377,17 @@ def backfill_portfolio_daily(rebuild: bool = True):
             # Commit every 10 records to avoid long transactions
             if processed % 10 == 0:
                 session.commit()
-                logger.info(f"📈 Processed {processed}/{total_days} days, current: {current_date}")
+                logger.debug(f"📈 Processed {processed}/{total_days} days, current: {current_date}")
 
             current_date += timedelta(days=1)
 
         # Commit any remaining changes
         session.commit()
 
-        logger.info("\n✅ Backfill complete!")
-        logger.info(f"   📊 Processed: {processed} days")
-        logger.info(f"   📅 Date range: {backfill_start_date} to {TODAY}")
-        logger.info("\n📝 All calculations complete including unrealised_profit and value!")
+        logger.info("✅ Backfill complete!")
+        logger.info(f"📊 Processed: {processed} days")
+        logger.info(f"📅 Date range: {backfill_start_date} to {TODAY}")
+        logger.info("📝 All calculations complete including unrealised_profit and value!")
 
 
 if __name__ == "__main__":
