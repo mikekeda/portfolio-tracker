@@ -27,9 +27,6 @@ from config import TIMEZONE, logger
 from models import CurrencyRateDaily, Instrument, PortfolioDaily, PricesDaily, TransactionAction, TransactionHistory
 from scripts.update_data import get_session
 
-# Constants
-TODAY = datetime.now(TIMEZONE).date()
-
 # In-memory cache of last seen price per ISIN during this run.
 # Updated as transactions are processed; read by get_price for daily calc.
 PRICE_CACHE: dict[str, float] = {}
@@ -207,8 +204,10 @@ def process_transaction_on_date(
 
 def backfill_portfolio_daily(rebuild: bool = True):
     """Main function to backfill PortfolioDaily table."""
-    # Calculate total days
 
+    today = datetime.now(TIMEZONE).date()
+
+    # Calculate total days
     with get_session() as session:
         # Get all transactions in date order for efficient processing
         all_transactions = (
@@ -232,7 +231,7 @@ def backfill_portfolio_daily(rebuild: bool = True):
         processed = 0
         current_date = all_transactions[0].timestamp.date()
         backfill_start_date = current_date
-        total_days = (TODAY - backfill_start_date).days + 1
+        total_days = (today - backfill_start_date).days + 1
         latest_processed_date = session.execute(
             select(func.min(PortfolioDaily.date)).where(
                 or_(PortfolioDaily.mwrr.is_(None), PortfolioDaily.twrr.is_(None))
@@ -245,7 +244,7 @@ def backfill_portfolio_daily(rebuild: bool = True):
         logger.info(f"📊 Total days to backfill: {total_days}")
         logger.info(f"📋 Loaded {len(all_transactions)} transactions")
 
-        while current_date <= TODAY:
+        while current_date <= today:
             # Track cash flow for this day
             daily_net_cash_flow = 0.0
 
@@ -331,7 +330,7 @@ def backfill_portfolio_daily(rebuild: bool = True):
                 f"📊 {current_date}: Cash={cash_balance:.2f}, Invested={invested:.2f}, Unrealised={unrealised_profit:.2f}, Realised={total_realised_profit:.2f}, Value={value:.2f} "
                 f"MWRR={annual_mwrr_pct:.2f}%, TWRR={annual_twrr_pct:.2f}%"
             )
-            if current_date == TODAY:
+            if current_date == today:
                 for isin, holding in sorted(list(holdings.items()), key=lambda x: x[1].name):
                     current_price = get_price(session, isin, current_date)
                     logger.debug(
@@ -386,7 +385,7 @@ def backfill_portfolio_daily(rebuild: bool = True):
 
         logger.info("✅ Backfill complete!")
         logger.info(f"📊 Processed: {processed} days")
-        logger.info(f"📅 Date range: {backfill_start_date} to {TODAY}")
+        logger.info(f"📅 Date range: {backfill_start_date} to {today}")
         logger.info("📝 All calculations complete including unrealised_profit and value!")
 
 
