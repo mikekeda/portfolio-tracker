@@ -109,7 +109,6 @@ TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
 
 YAHOO_UPDATE_LIMIT = 100
 YAHOO_UPDATE_INTERVAL_DAYS = 1
-TODAY = datetime.now(TIMEZONE).date()
 
 
 @lru_cache(maxsize=1)
@@ -507,6 +506,8 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
 def update_prices(tickers_to_add: set[str]) -> None:
     """Get and update price data for all tickers."""
 
+    today = datetime.now(TIMEZONE).date()
+
     with get_session() as session:
         tickers = set(session.scalars(select(Instrument.yahoo_symbol)).all())
 
@@ -525,14 +526,14 @@ def update_prices(tickers_to_add: set[str]) -> None:
         for i in range(0, len(existing_prices), BATCH_SIZE_YF):
             sub = existing_prices[i : i + BATCH_SIZE_YF]
             start = min([row.max_date for row in sub]) + timedelta(days=1)
-            if start > (TODAY - timedelta(days=[3, 1, 1, 1, 1, 1, 2][TODAY.weekday()])):
+            if start > (today - timedelta(days=[3, 1, 1, 1, 1, 1, 2][today.weekday()])):
                 break
             existing_tickers: list[str] = [row.symbol for row in sub]
             _update_prices(session, existing_tickers, start)
 
         # Get prices for new tickers
         new_tickers = list(tickers_to_add | tickers - set(row.symbol for row in existing_prices))
-        start = TODAY - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
+        start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
         _update_prices(session, new_tickers, start)  # all new tickers at once
 
 
@@ -855,6 +856,9 @@ def update_data():
 
     # 5. Update portfolio
     update_portfolio()
+
+    # 6. Clear caches
+    fetch_holdings.cache_clear()
 
 
 if __name__ == "__main__":

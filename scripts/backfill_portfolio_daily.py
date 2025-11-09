@@ -388,6 +388,8 @@ def backfill_portfolio_daily(rebuild: bool = True):
         logger.info(f"📅 Date range: {backfill_start_date} to {today}")
         logger.info("📝 All calculations complete including unrealised_profit and value!")
 
+        PRICE_CACHE.clear()  # clear cache between runs
+
 
 if __name__ == "__main__":
     backfill_portfolio_daily(rebuild=True)
