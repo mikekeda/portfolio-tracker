@@ -137,14 +137,6 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
 
         # Fetch market metrics for latest_date in one batch
         instrument_ids = {h.instrument_id for h in holdings}
-        metrics_result = await session.execute(
-            select(InstrumentMetricsDaily).where(
-                InstrumentMetricsDaily.date == latest_date,
-                InstrumentMetricsDaily.instrument_id.in_(instrument_ids),
-            )
-        )
-        metrics_rows = metrics_result.scalars().all()
-        metrics_by_instrument_id = {m.instrument_id: m for m in metrics_rows}
 
         # Calculate technical indicators using centralized function
         symbols_for_technical = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
@@ -168,7 +160,6 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
 
             # Yahoo Finance info for this instrument
             info = holding.instrument.yahoo.info
-            metrics = metrics_by_instrument_id[holding.instrument_id]
             trends = calculate_historical_trends(holding)
 
             portfolio_data.append(
@@ -187,11 +178,11 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "dcf_diff": dcf_price / holding.current_price - 1 if dcf_price else None,
                     "ppl": holding.ppl,
                     "fx_ppl": holding.fx_ppl,
-                    "market_cap": metrics.market_cap,
-                    "pe_ratio": metrics.pe_ratio,
+                    "market_cap": info.get("marketCap"),
+                    "pe_ratio": info.get("trailingPE"),
                     "ps_ratio": holding.instrument.yahoo.info.get("priceToSalesTrailing12Months"),
                     "avg_pe": holding.instrument.yahoo.avg_pe_5y,
-                    "beta": metrics.beta,
+                    "beta": info.get("beta"),
                     "date": holding.date.isoformat(),
                     "market_value": market_value_gbp,  # Now in GBP
                     "profit": holding.ppl,  # Total profit (same as terminal - ppl already includes FX)
@@ -204,8 +195,8 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                     "prediction": (info["targetMedianPrice"] / holding.current_price - 1) * 100.0
                     if info.get("targetMedianPrice")
                     else None,
-                    "institutional_ownership": round(metrics.institutional * 100.0)
-                    if (metrics and metrics.institutional is not None)
+                    "institutional_ownership": round(info.get("heldPercentInstitutions") * 100.0)
+                    if (info.get("heldPercentInstitutions") is not None)
                     else None,
                     "peg_ratio": info["trailingPegRatio"]
                     if info.get("trailingPegRatio")
