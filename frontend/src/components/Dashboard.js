@@ -287,7 +287,7 @@ const Dashboard = () => {
       <div className="dashboard-header">
         <h1>Portfolio Summary</h1>
         {summary.last_updated && (
-          <div className="last-updated">Last updated: {new Date(summary.last_updated).toLocaleDateString()}</div>
+          <div className="last-updated">Last updated: {new Date(summary.last_updated).toLocaleString()}</div>
         )}
       </div>
 

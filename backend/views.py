@@ -135,9 +135,6 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
         # Get currency rates
         currency_rates = await get_rates(session)
 
-        # Fetch market metrics for latest_date in one batch
-        instrument_ids = {h.instrument_id for h in holdings}
-
         # Calculate technical indicators using centralized function
         symbols_for_technical = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
         rsi_data, technical_data = await calculate_technical_indicators_for_symbols(symbols_for_technical, session)
@@ -330,7 +327,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             "sharpe_ratio": latest_snapshot.sharpe_ratio,
             "mwrr": latest_snapshot.mwrr,
             "twrr": latest_snapshot.twrr,
-            "last_updated": latest_snapshot.date.isoformat(),
+            "last_updated": latest_snapshot.updated_at.isoformat(),
             "vix": vix_result.scalar(),
             "fear_greed_index": fear_greed_index,
             "yield_spread": yield_spread,
