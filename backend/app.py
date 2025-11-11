@@ -2,14 +2,23 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from config import API_TOKEN, DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER, DOMAIN
+from config import API_TOKEN, DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER, DOMAIN, logger
 
 app = FastAPI(title="Trading212 Portfolio API", description="API for accessing portfolio data", version="1.0.0")
+
+
+@app.exception_handler(Exception)
+async def exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, HTTPException):
+        raise exc  # keeps original status/detail
+
+    logger.exception("Unhandled server error", extra={"path": request.url.path})
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 @app.middleware("http")
