@@ -457,6 +457,8 @@ PieCard.propTypes = {
   onToggle: PropTypes.func.isRequired
 };
 
+PieCard.displayName = 'PieCard';
+
 // PropTypes for PieChart
 PieChart.propTypes = {
   data: PropTypes.arrayOf(PropTypes.shape({

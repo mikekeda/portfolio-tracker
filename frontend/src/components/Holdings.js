@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import PropTypes from 'prop-types';
 import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
 import {
@@ -26,6 +27,14 @@ const HoldingRow = React.memo(({ row, isSelected }) => {
     </tr>
   );
 });
+
+HoldingRow.displayName = 'HoldingRow';
+HoldingRow.propTypes = {
+  row: PropTypes.shape({
+    getVisibleCells: PropTypes.func.isRequired,
+  }).isRequired,
+  isSelected: PropTypes.bool.isRequired,
+};
 
 const Holdings = () => {
   const [holdings, setHoldings] = useState([]);

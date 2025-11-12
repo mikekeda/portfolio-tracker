@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
 import {
   LineChart,
   Line,
@@ -140,6 +141,21 @@ const PortfolioChart = () => {
       );
     }
     return null;
+  };
+  CombinedTooltip.propTypes = {
+    active: PropTypes.bool,
+    payload: PropTypes.arrayOf(
+      PropTypes.shape({
+        dataKey: PropTypes.string,
+        value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      })
+    ),
+    label: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  };
+  CombinedTooltip.defaultProps = {
+    active: false,
+    payload: [],
+    label: '',
   };
 
   return (

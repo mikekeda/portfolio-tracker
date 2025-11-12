@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
 import './TopMovers.css';
@@ -16,11 +16,7 @@ const TopMovers = () => {
     { value: '90d', label: '90 Days' }
   ];
 
-  useEffect(() => {
-    fetchTopMovers();
-  }, [selectedPeriod]);
-
-  const fetchTopMovers = async () => {
+  const fetchTopMovers = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -32,7 +28,11 @@ const TopMovers = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedPeriod]);
+
+  useEffect(() => {
+    fetchTopMovers();
+  }, [fetchTopMovers]);
 
   const formatChange = (change) => {
     const isPositive = change >= 0;

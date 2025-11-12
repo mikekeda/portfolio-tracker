@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+build/
+dist/
+
+# Generated files
+*.min.css
+
+# Package manager files
+package-lock.json
+

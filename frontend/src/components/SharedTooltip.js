@@ -1,7 +1,16 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 
 // Reusable tooltip component that sorts entries by value or custom order
-const SharedTooltip = ({ active, payload, label, prefix = '', valueFormatter = (value) => value.toFixed(2), nameMap = {}, sortOrder = null }) => {
+const SharedTooltip = ({
+  active,
+  payload,
+  label,
+  prefix = '',
+  valueFormatter = (value) => value.toFixed(2),
+  nameMap = {},
+  sortOrder = null,
+}) => {
   if (active && payload && payload.length) {
     let sortedPayload;
 
@@ -43,6 +52,23 @@ const SharedTooltip = ({ active, payload, label, prefix = '', valueFormatter = (
     );
   }
   return null;
+};
+
+SharedTooltip.propTypes = {
+  active: PropTypes.bool,
+  payload: PropTypes.arrayOf(
+    PropTypes.shape({
+      dataKey: PropTypes.string,
+      name: PropTypes.string,
+      value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+      color: PropTypes.string,
+    })
+  ),
+  label: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  prefix: PropTypes.string,
+  valueFormatter: PropTypes.func,
+  nameMap: PropTypes.objectOf(PropTypes.string),
+  sortOrder: PropTypes.arrayOf(PropTypes.string),
 };
 
 export default SharedTooltip;

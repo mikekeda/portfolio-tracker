@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import PropTypes from 'prop-types';
 import { useParams } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
 import SharedTooltip from './SharedTooltip';
@@ -36,6 +37,115 @@ const PRICE_METRICS = [
   { value: 'price_pct_change', label: 'Price % Change' }
 ];
 
+const formatActionName = (action) => {
+  return action
+    .replace('MARKET_', '')
+    .replace('LIMIT_', '')
+    .replace('_(DIVIDEND)', '')
+    .replace('DIVIDEND', 'Dividend');
+};
+
+const PriceTooltip = ({ active, payload, label, priceMetric }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0]?.payload || {};
+    const displayName = priceMetric === 'price_pct_change' ? 'Price %' : 'Price';
+    const formattedValue =
+      priceMetric === 'price_pct_change'
+        ? `${data.value?.toFixed(2)}%`
+        : typeof data.value === 'number'
+          ? data.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
+          : data.value;
+    const isOrder = data.order !== undefined;
+
+    return (
+      <div className="custom-tooltip">
+        <p className="tooltip-label">{label}</p>
+        {!isOrder && (
+          <p className="tooltip-item" style={{ color: '#6f42c1' }}>
+            <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
+            {displayName}: {formattedValue}
+          </p>
+        )}
+        {isOrder && (
+          <>
+            <p className="tooltip-item" style={{ color: data.order.color, fontWeight: 'bold' }}>
+              <span className="color-indicator" style={{ backgroundColor: data.order.color }}></span>
+              {formatActionName(data.order.action)}: £{data.order.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </p>
+            <p className="tooltip-item" style={{ color: '#6f42c1' }}>
+              <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
+              {displayName}: {formattedValue}
+            </p>
+          </>
+        )}
+      </div>
+    );
+  }
+  return null;
+};
+
+PriceTooltip.propTypes = {
+  active: PropTypes.bool,
+  payload: PropTypes.arrayOf(
+    PropTypes.shape({
+      payload: PropTypes.shape({
+        value: PropTypes.number,
+        order: PropTypes.shape({
+          action: PropTypes.string,
+          total: PropTypes.number,
+          color: PropTypes.string,
+        }),
+      }),
+    })
+  ),
+  label: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  priceMetric: PropTypes.string.isRequired,
+};
+
+PriceTooltip.defaultProps = {
+  active: false,
+  payload: [],
+  label: '',
+};
+
+const OrderDot = ({ cx, cy, payload }) => {
+  if (payload?.order) {
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={payload.order.radius}
+        fill={payload.order.color}
+        fillOpacity={payload.order.opacity}
+        stroke="#fff"
+        strokeWidth={2}
+        strokeOpacity={payload.order.opacity}
+      />
+    );
+  }
+  return null;
+};
+
+OrderDot.propTypes = {
+  cx: PropTypes.number,
+  cy: PropTypes.number,
+  payload: PropTypes.shape({
+    order: PropTypes.shape({
+      radius: PropTypes.number,
+      color: PropTypes.string,
+      opacity: PropTypes.number,
+      action: PropTypes.string,
+      total: PropTypes.number,
+    }),
+  }),
+};
+
+OrderDot.defaultProps = {
+  cx: 0,
+  cy: 0,
+  payload: null,
+};
+
 // Transaction categories for color coding
 const TRANSACTION_CATEGORIES = {
   BUY: ['Market buy', 'Limit buy'],
@@ -70,14 +180,6 @@ const formatDate = (dateString) => {
     day: 'numeric',
     year: '2-digit'
   });
-};
-
-const formatActionName = (action) => {
-  return action
-    .replace('MARKET_', '')
-    .replace('LIMIT_', '')
-    .replace('_(DIVIDEND)', '')
-    .replace('DIVIDEND', 'Dividend');
 };
 
 const getTransactionCategory = (action) => {
@@ -480,47 +582,7 @@ const Stock = () => {
                           : v)
                   }
                 />
-                <Tooltip
-                  content={({ active, payload, label }) => {
-                    if (active && payload && payload.length) {
-                      const data = payload[0].payload;
-                      const displayName = priceMetric === 'price_pct_change' ? 'Price %' : 'Price';
-                      const formattedValue = priceMetric === 'price_pct_change'
-                        ? `${data.value?.toFixed(2)}%`
-                        : (typeof data.value === 'number'
-                            ? data.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
-                            : data.value);
-
-                      // Check if this is an order dot
-                      const isOrder = data.order !== undefined;
-
-                      return (
-                        <div className="custom-tooltip">
-                          <p className="tooltip-label">{label}</p>
-                          {!isOrder && (
-                            <p className="tooltip-item" style={{ color: '#6f42c1' }}>
-                              <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
-                              {displayName}: {formattedValue}
-                            </p>
-                          )}
-                          {isOrder && (
-                            <>
-                              <p className="tooltip-item" style={{ color: data.order.color, fontWeight: 'bold' }}>
-                                <span className="color-indicator" style={{ backgroundColor: data.order.color }}></span>
-                                {formatActionName(data.order.action)}: £{data.order.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                              </p>
-                              <p className="tooltip-item" style={{ color: '#6f42c1' }}>
-                                <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
-                                {displayName}: {formattedValue}
-                              </p>
-                            </>
-                          )}
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
-                />
+                <Tooltip content={<PriceTooltip priceMetric={priceMetric} />} />
                 <Legend />
                 <Line
                   type="monotone"
@@ -528,25 +590,7 @@ const Stock = () => {
                   name={priceMetric === 'price_pct_change' ? 'Price %' : 'Price'}
                   stroke="#6f42c1"
                   strokeWidth={2}
-                  dot={(props) => {
-                    const { payload, index } = props;
-                    if (payload?.order) {
-                      return (
-                        <circle
-                          key={`order-dot-${index}`}
-                          cx={props.cx}
-                          cy={props.cy}
-                          r={payload.order.radius}
-                          fill={payload.order.color}
-                          fillOpacity={payload.order.opacity}
-                          stroke="#fff"
-                          strokeWidth={2}
-                          strokeOpacity={payload.order.opacity}
-                        />
-                      );
-                    }
-                    return null;
-                  }}
+                  dot={<OrderDot />}
                   activeDot={false}
                 />
                 {/* Add invisible lines for order legends */}
@@ -875,7 +919,7 @@ const Stock = () => {
                         <span className="news-provider">{content?.provider?.displayName || 'Unknown'}</span>
                         <span className="news-time">{displayTime}</span>
                         {content?.metadata?.editorsPick && (
-                          <span className="news-badge">Editor's Pick</span>
+                          <span className="news-badge">Editor&apos;s Pick</span>
                         )}
                       </div>
                     </div>
