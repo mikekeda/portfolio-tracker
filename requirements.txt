@@ -10,7 +10,7 @@ yfinance==0.2.66
 sqlalchemy[asyncio]==2.0.44
 psycopg2-binary==2.9.11
 alembic==1.17.1
-fastapi==0.121.0
+fastapi==0.121.1
 uvicorn[standard]==0.38.0
 asyncpg==0.30.0
 selenium==4.38.0
