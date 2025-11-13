@@ -183,7 +183,7 @@ const PortfolioChart = () => {
             <AreaChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
-              <YAxis />
+              <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} />
               <Tooltip content={<CombinedTooltip />} />
               {/* Base invested cost */}
               <Area type="monotone" dataKey="invested" name="Base Cost" stackId="1" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} />
