@@ -160,4 +160,4 @@ async def gen_market_breadth_indicator(db_session: AsyncSession, session: aiohtt
     if missing:
         logger.info("%d stocks are missing: %s", len(missing), missing)
 
-    return (advance - decline) / len(sp500_tickers)
+    return (advance - decline) / len(SP500)
