@@ -234,6 +234,44 @@ const getBuffettIndicatorTooltip = (buffettIndicator) => {
   return `Buffett Indicator: ${buffettIndicator.toFixed(1)}% (${level})\n\n${recommendation}\n\nThis measures total market cap as % of GDP, indicating overall market valuation.`;
 };
 
+// Helper function to get Market Breadth Indicator color
+const getMarketBreadthColor = (breadth) => {
+  if (breadth < -0.2) return 'negative'; // Bearish (more than 20% more decliners)
+  if (breadth > 0.2) return 'positive'; // Bullish (more than 20% more advancers)
+  return '';
+};
+
+// Helper function to generate Market Breadth Indicator tooltip
+const getMarketBreadthTooltip = (breadth) => {
+  let recommendation = '';
+  let level = '';
+
+  if (breadth < -0.3) {
+    level = 'Strongly Bearish';
+    recommendation = '🔴 STRONG SELL SIGNAL - Very weak market breadth. More than 30% more stocks declined than advanced. Consider defensive positioning and reducing exposure to high-beta stocks.';
+  } else if (breadth < -0.2) {
+    level = 'Bearish';
+    recommendation = '⚠️ CAUTION - Weak market breadth. More stocks declining than advancing suggests underlying weakness. Review your portfolio for defensive opportunities.';
+  } else if (breadth < -0.1) {
+    level = 'Slightly Bearish';
+    recommendation = '📊 SLIGHTLY BEARISH - Market breadth is weak but not extreme. Monitor closely and consider reducing risk exposure.';
+  } else if (breadth < 0.1) {
+    level = 'Neutral';
+    recommendation = '📊 NEUTRAL - Market breadth is balanced. Standard risk management and stock selection practices apply.';
+  } else if (breadth < 0.2) {
+    level = 'Slightly Bullish';
+    recommendation = '📈 SLIGHTLY BULLISH - Market breadth is positive. More stocks advancing suggests underlying strength. Consider quality growth opportunities.';
+  } else if (breadth < 0.3) {
+    level = 'Bullish';
+    recommendation = '✅ BULLISH - Strong market breadth. More stocks advancing indicates broad market participation. Good environment for diversified growth.';
+  } else {
+    level = 'Strongly Bullish';
+    recommendation = '🟢 STRONG BUY SIGNAL - Very strong market breadth. More than 30% more stocks advanced than declined. Broad market participation suggests healthy market conditions.';
+  }
+
+  return `Market Breadth: ${(breadth * 100).toFixed(1)}% (${level})\n\n${recommendation}\n\nThis measures the ratio of advancing to declining S&P 500 stocks compared with the previous trading session. A positive value indicates more stocks advanced (bullish), while a negative value indicates more stocks declined (bearish). Range: -100% to +100%.\n\nFormula: (Advancers - Decliners) / Total S&P 500 Stocks`;
+};
+
 const Dashboard = () => {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -291,125 +329,151 @@ const Dashboard = () => {
         )}
       </div>
 
-      {/* Portfolio Summary Cards */}
-      <div className="summary-cards">
-        <div className="card">
-          <h3>Total Value</h3>
-          <p className="value">£{summary.total_value.toLocaleString()}</p>
-        </div>
-        <div className="card">
-          <h3>Total Profit</h3>
-          <p className={`value ${summary.total_profit >= 0 ? 'positive' : 'negative'}`}>
-            £{summary.total_profit.toLocaleString()}
-          </p>
-        </div>
-        <div className="card">
-          <h3>Total Return</h3>
-          <p className={`value ${summary.total_return_pct >= 0 ? 'positive' : 'negative'}`}>
-            {summary.total_return_pct >= 0 ? '+' : ''}{summary.total_return_pct.toFixed(2)}%
-          </p>
-        </div>
-        <div className="card">
-          <h3>Positions</h3>
-          <p className="value">
-            {summary.total_holdings}
-            {typeof summary.profitable_holdings === 'number' && typeof summary.losing_holdings === 'number' && (
-              <span className="positions-breakdown"> (
-                <span className="pos">{summary.profitable_holdings}</span> / <span className="neg">{summary.losing_holdings}</span>
-              )</span>
-            )}
-          </p>
-        </div>
-        {summary.mwrr && (
-          <div className="card" title={getMwrrTooltip(summary.mwrr)}>
-            <h3>Money-Weighted RR</h3>
-            <p className={`value ${getMwrrColor(summary.mwrr)}`}>
-              {summary.mwrr.toFixed(2)}%
+      {/* Portfolio Indicators Section */}
+      <div className="indicators-section">
+        <h2 className="section-heading">Portfolio Indicators</h2>
+        <div className="summary-cards">
+          <div className="card">
+            <h3>Total Value</h3>
+            <p className="value">£{summary.total_value.toLocaleString()}</p>
+          </div>
+          <div className="card">
+            <h3>Total Profit</h3>
+            <p className={`value ${summary.total_profit >= 0 ? 'positive' : 'negative'}`}>
+              £{summary.total_profit.toLocaleString()}
             </p>
           </div>
-        )}
-        {summary.twrr && (
-          <div className="card" title={getTwrrTooltip(summary.twrr)}>
-            <h3>Time-Weighted RR</h3>
-            <p className={`value ${getTwrrColor(summary.twrr)}`}>
-              {summary.twrr.toFixed(2)}%
+          <div className="card">
+            <h3>Total Return</h3>
+            <p className={`value ${summary.total_return_pct >= 0 ? 'positive' : 'negative'}`}>
+              {summary.total_return_pct >= 0 ? '+' : ''}{summary.total_return_pct.toFixed(2)}%
             </p>
           </div>
-        )}
-        {summary.sortino_ratio && (
-          <div className="card" title={getSortinoTooltip(summary.sortino_ratio)}>
-            <h3>Sortino</h3>
-            <p className={`value ${getSortinoColor(summary.sortino_ratio)}`}>
-              {summary.sortino_ratio.toFixed(2)}
+          <div className="card">
+            <h3>Positions</h3>
+            <p className="value">
+              {summary.total_holdings}
+              {typeof summary.profitable_holdings === 'number' && typeof summary.losing_holdings === 'number' && (
+                <span className="positions-breakdown"> (
+                  <span className="pos">{summary.profitable_holdings}</span> / <span className="neg">{summary.losing_holdings}</span>
+                )</span>
+              )}
             </p>
           </div>
-        )}
-        {summary.beta && (
-          <div className="card" title={getBetaTooltip(summary.beta)}>
-            <h3>Beta</h3>
-            <p className={`value ${getBetaColor(summary.beta)}`}>
-              {summary.beta.toFixed(2)}
-            </p>
-          </div>
-        )}
-        {summary.buffett_indicator !== null && summary.buffett_indicator !== undefined && (
-          <div className="card" title={getBuffettIndicatorTooltip(summary.buffett_indicator)}>
-            <h3>Buffett Indicator</h3>
-            <a
-              href="https://currentmarketvaluation.com/models/buffett-indicator.php"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="value-link"
-            >
-              <p className={`value ${getBuffettIndicatorColor(summary.buffett_indicator)}`}>
-                {summary.buffett_indicator.toFixed(1)}%
+          {summary.mwrr && (
+            <div className="card" title={getMwrrTooltip(summary.mwrr)}>
+              <h3>Money-Weighted RR</h3>
+              <p className={`value ${getMwrrColor(summary.mwrr)}`}>
+                {summary.mwrr.toFixed(2)}%
               </p>
-            </a>
-          </div>
-        )}
-        {summary.yield_spread !== null && summary.yield_spread !== undefined && (
-          <div className="card" title={getYieldSpreadTooltip(summary.yield_spread)}>
-            <h3>Yield Spread</h3>
-            <a
-              href="https://fred.stlouisfed.org/series/T10Y2Y"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="value-link"
-            >
-              <p className={`value ${getYieldSpreadColor(summary.yield_spread)}`}>
-                {summary.yield_spread.toFixed(2)}%
+            </div>
+          )}
+          {summary.twrr && (
+            <div className="card" title={getTwrrTooltip(summary.twrr)}>
+              <h3>Time-Weighted RR</h3>
+              <p className={`value ${getTwrrColor(summary.twrr)}`}>
+                {summary.twrr.toFixed(2)}%
               </p>
-            </a>
-          </div>
-        )}
-        {summary.fear_greed_index && (
-          <div className="card" title={getFearGreedTooltip(summary.fear_greed_index)}>
-            <h3>Fear & Greed</h3>
-            <a
-              href="https://edition.cnn.com/markets/fear-and-greed"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="value-link"
-            >
-              <p className={`value ${getFearGreedColor(summary.fear_greed_index.label)}`}>
-                {summary.fear_greed_index.value.toFixed(1)}
+            </div>
+          )}
+          {summary.sortino_ratio && (
+            <div className="card" title={getSortinoTooltip(summary.sortino_ratio)}>
+              <h3>Sortino</h3>
+              <p className={`value ${getSortinoColor(summary.sortino_ratio)}`}>
+                {summary.sortino_ratio.toFixed(2)}
               </p>
-            </a>
-          </div>
-        )}
-        {summary.vix && (
-          <div className="card" title={getVixTooltip(summary.vix)}>
-            <h3>VIX</h3>
-            <a
-              href="https://markets.businessinsider.com/index/vix"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="value-link"
-            >
-              <p className="value">{summary.vix.toFixed(2)}</p>
-            </a>
-          </div>
-        )}
+            </div>
+          )}
+          {summary.beta && (
+            <div className="card" title={getBetaTooltip(summary.beta)}>
+              <h3>Beta</h3>
+              <p className={`value ${getBetaColor(summary.beta)}`}>
+                {summary.beta.toFixed(2)}
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Market Indicators Section */}
+      <div className="indicators-section">
+        <h2 className="section-heading">Market Indicators</h2>
+        <div className="summary-cards">
+          {summary.buffett_indicator !== null && summary.buffett_indicator !== undefined && (
+            <div className="card" title={getBuffettIndicatorTooltip(summary.buffett_indicator)}>
+              <h3>Buffett Indicator</h3>
+              <a
+                href="https://currentmarketvaluation.com/models/buffett-indicator.php"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="value-link"
+              >
+                <p className={`value ${getBuffettIndicatorColor(summary.buffett_indicator)}`}>
+                  {summary.buffett_indicator.toFixed(1)}%
+                </p>
+              </a>
+            </div>
+          )}
+          {summary.yield_spread !== null && summary.yield_spread !== undefined && (
+            <div className="card" title={getYieldSpreadTooltip(summary.yield_spread)}>
+              <h3>Yield Spread</h3>
+              <a
+                href="https://fred.stlouisfed.org/series/T10Y2Y"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="value-link"
+              >
+                <p className={`value ${getYieldSpreadColor(summary.yield_spread)}`}>
+                  {summary.yield_spread.toFixed(2)}%
+                </p>
+              </a>
+            </div>
+          )}
+          {summary.fear_greed_index && (
+            <div className="card" title={getFearGreedTooltip(summary.fear_greed_index)}>
+              <h3>Fear & Greed</h3>
+              <a
+                href="https://edition.cnn.com/markets/fear-and-greed"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="value-link"
+              >
+                <p className={`value ${getFearGreedColor(summary.fear_greed_index.label)}`}>
+                  {summary.fear_greed_index.value.toFixed(1)}
+                </p>
+              </a>
+            </div>
+          )}
+          {summary.vix && (
+            <div className="card" title={getVixTooltip(summary.vix)}>
+              <h3>VIX</h3>
+              <a
+                href="https://markets.businessinsider.com/index/vix"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="value-link"
+              >
+                <p className="value">{summary.vix.toFixed(2)}</p>
+              </a>
+            </div>
+          )}
+          {summary.market_breadth_indicator !== null && summary.market_breadth_indicator !== undefined && (
+            <div className="card" title={getMarketBreadthTooltip(summary.market_breadth_indicator)}>
+              <h3>Market Breadth</h3>
+              <a
+                href="https://www.investopedia.com/terms/a/advancedeclineline.asp"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="value-link"
+              >
+                <p className={`value ${getMarketBreadthColor(summary.market_breadth_indicator)}`}>
+                  {(summary.market_breadth_indicator * 100 >= 0 ? '+' : '')}
+                  {(summary.market_breadth_indicator * 100).toFixed(1)}%
+                </p>
+              </a>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Portfolio Analytics Charts */}

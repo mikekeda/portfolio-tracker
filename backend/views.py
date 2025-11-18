@@ -22,7 +22,12 @@ from sqlalchemy.orm import selectinload
 
 from backend.screener_config import get_screener_config
 from backend.utils.dcf import get_dcf_prices
-from backend.utils.market_data import gen_buffett_indicator, gen_fear_greed_index, get_yield_spread
+from backend.utils.market_data import (
+    gen_buffett_indicator,
+    gen_fear_greed_index,
+    get_yield_spread,
+    gen_market_breadth_indicator,
+)
 from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
@@ -279,7 +284,14 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
     ) as aiohttp_session:
-        holdings_result, vix_result, fear_greed_index, yield_spread, buffett_indicator = await asyncio.gather(
+        (
+            holdings_result,
+            vix_result,
+            fear_greed_index,
+            yield_spread,
+            buffett_indicator,
+            market_breadth_indicator,
+        ) = await asyncio.gather(
             session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)),
             session.execute(
                 select(PricesDaily.close_price)
@@ -292,6 +304,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             gen_fear_greed_index(aiohttp_session),
             get_yield_spread(aiohttp_session),
             gen_buffett_indicator(aiohttp_session),
+            gen_market_breadth_indicator(session, aiohttp_session),
         )
 
     holdings = holdings_result.scalars().all()
@@ -318,6 +331,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
         "sharpe_ratio": latest_snapshot.sharpe_ratio,
         "mwrr": latest_snapshot.mwrr,
         "twrr": latest_snapshot.twrr,
+        "market_breadth_indicator": market_breadth_indicator,
         "last_updated": latest_snapshot.updated_at.isoformat(),
         "vix": vix_result.scalar(),
         "fear_greed_index": fear_greed_index,

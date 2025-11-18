@@ -52,12 +52,27 @@
   }
 }
 
+/* Indicators Sections */
+.indicators-section {
+  margin-bottom: 50px;
+}
+
+.indicators-section:last-of-type {
+  margin-bottom: 40px;
+}
+
+.section-heading {
+  font-size: 20px;
+  font-weight: 600;
+  color: #333;
+  margin: 0 0 20px 0;
+}
+
 /* Summary Cards */
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
   gap: 20px;
-  margin-bottom: 40px;
 }
 
 .card {
@@ -271,6 +286,20 @@
 @media (max-width: 768px) {
   .dashboard-container {
     padding: 15px;
+  }
+
+  .indicators-section {
+    margin-bottom: 40px;
+  }
+
+  .indicators-section:last-of-type {
+    margin-bottom: 30px;
+  }
+
+  .section-heading {
+    font-size: 18px;
+    margin: 0 0 15px 0;
+    padding-bottom: 8px;
   }
 
   .summary-cards {

@@ -1,11 +1,18 @@
 import asyncio
+from collections import defaultdict
+from datetime import datetime, timedelta
 from io import StringIO
 from typing import Optional, Union
 
 import aiohttp
 import pandas as pd
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import FRED_API_KEY, logger
+from config import FRED_API_KEY, logger, TIMEZONE, PRICE_FIELD
+from models import PricesDaily
+
+PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
@@ -108,14 +115,50 @@ async def gen_buffett_indicator(session: aiohttp.ClientSession) -> Optional[floa
     return ratio_pct
 
 
-async def get_sp500_symbols(session: aiohttp.ClientSession) -> list[tuple[str, str]]:
+async def gen_sp500_symbols(session: aiohttp.ClientSession) -> list[str]:
     """Fetch current S&P500 tickers from Wikipedia."""
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     headers = {"User-Agent": UA}
     async with session.get(url, headers=headers) as r:
         html = await r.text()
     tables = pd.read_html(StringIO(html))
-    df = tables[0]
-    results = [(str(row["Symbol"]), str(row["Security"])) for _, row in df.iterrows()]
+    df = tables[1]
+    results = [str(row["Symbol"]) for _, row in df.iterrows()]
 
     return results
+
+
+async def gen_market_breadth_indicator(db_session: AsyncSession, session: aiohttp.ClientSession) -> float:
+    """Calculate a simple market breadth indicator for S&P 500 constituents."""
+    start_date = datetime.now(TIMEZONE).date() - timedelta(days=4)  # 4 to cover weekends (2 days) + 2 days
+
+    sp500_tickers = await gen_sp500_symbols(session)
+
+    prices_result = await db_session.execute(
+        select(PricesDaily.symbol, PRICE_COLUMN)
+        .where(PricesDaily.symbol.in_(sp500_tickers), PricesDaily.date >= start_date)
+        .order_by(PricesDaily.date.desc())
+    )
+    prices = defaultdict(list)
+    for row in prices_result:
+        prices[row.symbol].append(row.price)
+
+    advance = 0
+    decline = 0
+    missing = []
+
+    for ticker in sp500_tickers:
+        if not prices.get(ticker) or len(prices[ticker]) < 2:
+            missing.append(ticker)
+            continue
+
+        # prices[ticker][0] is latest (desc order), prices[ticker][1] is previous
+        if prices[ticker][0] > prices[ticker][1]:
+            advance += 1
+        elif prices[ticker][0] < prices[ticker][1]:
+            decline += 1
+
+    if missing:
+        logger.info("%d stocks are missing: %s", len(missing), missing)
+
+    return (advance - decline) / len(sp500_tickers)
