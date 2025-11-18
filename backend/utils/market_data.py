@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import FRED_API_KEY, logger, TIMEZONE, PRICE_FIELD
+from data import SP500
 from models import PricesDaily
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
@@ -132,11 +133,9 @@ async def gen_market_breadth_indicator(db_session: AsyncSession, session: aiohtt
     """Calculate a simple market breadth indicator for S&P 500 constituents."""
     start_date = datetime.now(TIMEZONE).date() - timedelta(days=4)  # 4 to cover weekends (2 days) + 2 days
 
-    sp500_tickers = await gen_sp500_symbols(session)
-
     prices_result = await db_session.execute(
         select(PricesDaily.symbol, PRICE_COLUMN)
-        .where(PricesDaily.symbol.in_(sp500_tickers), PricesDaily.date >= start_date)
+        .where(PricesDaily.symbol.in_(SP500), PricesDaily.date >= start_date)
         .order_by(PricesDaily.date.desc())
     )
     prices = defaultdict(list)
@@ -147,7 +146,7 @@ async def gen_market_breadth_indicator(db_session: AsyncSession, session: aiohtt
     decline = 0
     missing = []
 
-    for ticker in sp500_tickers:
+    for ticker in SP500:
         if not prices.get(ticker) or len(prices[ticker]) < 2:
             missing.append(ticker)
             continue
