@@ -84,6 +84,19 @@ async def get_yield_spread(session: aiohttp.ClientSession) -> Optional[float]:
     return obs[0]["value"]
 
 
+async def get_risk_free_rate(session: aiohttp.ClientSession) -> float:
+    """
+    Fetches the 10-Year Treasury Constant Maturity Rate (DGS10) from FRED.
+    Returns the value as a decimal (e.g., 0.045 for 4.5%).
+    """
+    obs = await gen_fred_latest(session, "DGS10", limit=1)
+    if not obs:
+        return 0.04  # Fallback to 4% if API fails
+
+    # FRED returns percent (e.g., 4.5), we want decimal (0.045)
+    return obs[0]["value"] / 100.0
+
+
 async def gen_buffett_indicator(session: aiohttp.ClientSession) -> Optional[float]:
     """
     Buffett-like ratio:

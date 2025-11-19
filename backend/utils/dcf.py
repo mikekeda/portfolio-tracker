@@ -1,7 +1,11 @@
 import asyncio
 from typing import Any, Optional, TypedDict
 
+import aiohttp
+
+from config import EQUITY_RISK_PREMIUM
 from models import Instrument
+from backend.utils.market_data import get_risk_free_rate
 
 # --- Constants ---
 # More conventional to set a standard terminal growth rate representing long-term economic growth.
@@ -37,32 +41,54 @@ def _clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
-def estimate_wacc(market_cap: Optional[float], operating_margin: Optional[float]) -> float:
+def calculate_cost_of_equity(risk_free_rate: float, beta: Optional[float]) -> float:
+    """Calculates Cost of Equity using CAPM."""
+    # If beta is missing (None), assume market average of 1.0
+    safe_beta = beta if isinstance(beta, (int, float)) else 1.0
+
+    # CAPM Formula
+    ke = risk_free_rate + (safe_beta * EQUITY_RISK_PREMIUM)
+
+    # Sanity check: Cost of Equity rarely drops below 6% or exceeds 20% for healthy firms
+    return _clamp(ke, 0.06, 0.20)
+
+
+def estimate_wacc_dynamic(
+    market_cap: Optional[float], total_debt: float, beta: Optional[float], risk_free_rate: float
+) -> float:
     """
-    Estimates the Weighted Average Cost of Capital (WACC) based on company size and profitability.
-    A higher WACC (discount rate) is used for smaller, less profitable companies.
+    Calculates WACC using Cost of Equity (CAPM) and Cost of Debt.
+    WACC = (E/V * Ke) + (D/V * Kd * (1 - Tax))
     """
+
+    # 1. Calculate Cost of Equity (Ke)
+    ke = calculate_cost_of_equity(risk_free_rate, beta)
+
+    # If we can't determine capital structure, return Ke (assumes 100% equity financing)
     if not market_cap:
-        return 0.10  # Default for unknown market cap
+        return ke
 
-    # Base rate by market cap tier
-    if market_cap > 2e11:  # Mega-cap (> $200B)
-        base = 0.08
-    elif market_cap > 2e10:  # Large-cap (> $20B)
-        base = 0.09
-    elif market_cap > 2e9:  # Mid-cap (> $2B)
-        base = 0.11
-    else:  # Small-cap
-        base = 0.13
+    # 2. Determine Capital Structure weights
+    enterprise_value = market_cap + total_debt
+    weight_equity = market_cap / enterprise_value
+    weight_debt = total_debt / enterprise_value
 
-    # Adjust for profitability
-    if isinstance(operating_margin, (int, float)):
-        if operating_margin < 0.05:  # Low margin
-            base += 0.02
-        elif operating_margin > 0.20:  # High margin
-            base -= 0.01
+    # 3. Estimate Cost of Debt (Kd)
+    # Hard to get exact interest rates from Yahoo info.
+    # Heuristic: RiskFree + Spread (1.5% for large cap, 3% for small cap)
+    credit_spread = 0.015 if market_cap > 10e9 else 0.03
+    kd = risk_free_rate + credit_spread
 
-    return _clamp(base, 0.07, 0.20)  # Clamp to a reasonable range
+    # 4. Estimate Tax Rate
+    # Heuristic: Standard corp tax rate or derived from financials.
+    # Using standard 21% (US) is safer than volatile effective rates.
+    tax_rate = 0.21
+
+    # 5. Final WACC Formula
+    wacc = (weight_equity * ke) + (weight_debt * kd * (1 - tax_rate))
+
+    # Clamp results to realistic bounds (e.g., 5% to 15%)
+    return _clamp(wacc, 0.05, 0.15)
 
 
 def _safe_number(x: Any) -> Optional[float]:
@@ -178,7 +204,7 @@ def _derive_shares_if_needed(info: dict[str, Any], candidate_shares: Optional[fl
     return candidate_shares
 
 
-def _estimate_dcf_inputs(instrument: Instrument) -> DcfInputs:
+def _estimate_dcf_inputs(instrument: Instrument, risk_free_rate: float) -> DcfInputs:
     """Estimates all necessary inputs for a DCF valuation from instrument data."""
     info = instrument.yahoo.info or {}
     cashflow = instrument.yahoo.cashflow or {}
@@ -204,8 +230,7 @@ def _estimate_dcf_inputs(instrument: Instrument) -> DcfInputs:
     initial_growth = _clamp(initial_growth, -0.20, 0.30)  # Clamp to a safer range
 
     market_cap = _safe_number(info.get("marketCap"))
-    margin = _safe_number(info.get("operatingMargins"))
-    wacc = estimate_wacc(market_cap, margin)
+    wacc = estimate_wacc_dynamic(market_cap, total_debt, info.get("beta"), risk_free_rate)
 
     return {
         "current_fcf": current_fcf,
@@ -226,13 +251,18 @@ async def get_dcf_prices(
     terminal: Optional[float] = None,
 ) -> list[Optional[float]]:
     """Calculates DCF prices for a list of instruments concurrently."""
+    async with aiohttp.ClientSession(
+        connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
+    ) as aiohttp_session:
+        risk_free_rate = await get_risk_free_rate(aiohttp_session)
     return await asyncio.gather(
-        *[_get_dcf_price(instrument, years, wacc, growth, terminal) for instrument in instruments]
+        *[_get_dcf_price(instrument, risk_free_rate, years, wacc, growth, terminal) for instrument in instruments]
     )
 
 
 async def _get_dcf_price(
     instrument: Instrument,
+    risk_free_rate: float,
     years: int = 10,
     wacc_override: Optional[float] = None,
     growth_override: Optional[float] = None,
@@ -251,7 +281,7 @@ async def _get_dcf_price(
     Returns:
         The calculated intrinsic value per share, or None if inputs are invalid.
     """
-    est = _estimate_dcf_inputs(instrument)
+    est = _estimate_dcf_inputs(instrument, risk_free_rate)
 
     # Apply any user-provided overrides
     wacc = wacc_override if wacc_override is not None else est["wacc"]
