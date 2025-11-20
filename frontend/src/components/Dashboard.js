@@ -276,6 +276,7 @@ const Dashboard = () => {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedPeriod, setSelectedPeriod] = useState('1d');
 
   useEffect(() => {
     const fetchData = async () => {
@@ -478,12 +479,12 @@ const Dashboard = () => {
 
       {/* Portfolio Analytics Charts */}
       <div className="portfolio-charts-section">
-        <PortfolioChart />
+        <PortfolioChart selectedPeriod={selectedPeriod} />
       </div>
 
       {/* Top Movers Section */}
       <div className="top-movers-section">
-        <TopMovers />
+        <TopMovers selectedPeriod={selectedPeriod} setSelectedPeriod={setSelectedPeriod} />
       </div>
 
     </div>

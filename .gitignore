@@ -1,7 +1,9 @@
 *.db
 celerybeat*
+.DS_Store
 
 .idea/
 __pycache__/
 node_modules/
 csv/
+.agent/

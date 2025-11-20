@@ -649,19 +649,17 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
     }
 
 
-@app.get("/api/market/top-movers")
-async def get_top_movers(
-    period: str = "1d", limit: int = 10, session: AsyncSession = Depends(get_db_session)
-) -> dict[str, Any]:
-    """Get top movers (gainers and losers) for a given period."""
-    # Validate period parameter
+@app.get("/api/market/movers")
+async def get_movers(
+    period: str = "1d",
+    session: AsyncSession = Depends(get_db_session),
+) -> list[dict[str, Any]]:
+    """Get all portfolio movers (holdings with price changes) for a given period."""
     valid_periods = {"1d": 1, "1w": 7, "1m": 30, "90d": 90}
     if period not in valid_periods:
         raise HTTPException(status_code=400, detail="Invalid period. Use: 1d, 1w, 1m, 90d")
 
     days = valid_periods[period]
-
-    # Get the latest available trading day
     today = datetime.now(TIMEZONE).date()
     start_date = today - timedelta(days=days)
 
@@ -713,24 +711,14 @@ async def get_top_movers(
                         "current_price": last_price,
                         "t212_code": symbol_data[0].t212_code,
                         "gain_pct": gain_pct,
+                        "value": market_value_gbp,
                     }
                 )
 
-    # Sort by percentage change
+    # Sort by percentage change (descending: highest gainers first)
     movers.sort(key=lambda x: x["change_pct"], reverse=True)
 
-    # Get top gainers and losers
-    gainers = movers[:limit]
-    losers = movers[-limit:][::-1]  # Reverse to show biggest losers first
-
-    return {
-        "period": period,
-        "gainers": gainers,
-        "losers": losers,
-        "total_symbols": len(movers),
-        "latest_trading_date": today.isoformat(),
-        "start_date": start_date.isoformat(),
-    }
+    return movers
 
 
 @app.get("/api/pies")

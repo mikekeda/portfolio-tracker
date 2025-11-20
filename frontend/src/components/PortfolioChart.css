@@ -56,6 +56,7 @@
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
   gap: 20px;
   margin-bottom: 30px;
+  min-height: 220px; /* Prevent height collapse during loading */
 }
 
 .allocation-charts {
@@ -69,6 +70,8 @@
   border-radius: 6px;
   padding: 15px;
   border: 1px solid #e9ecef;
+  position: relative;
+  min-height: 220px; /* Prevent height collapse */
 }
 
 .chart-panel h3 {
@@ -95,10 +98,16 @@
 }
 
 .recharts-tooltip-content {
-  background: rgba(0, 0, 0, 0.8) !important;
+  background: rgba(0, 0, 0, 0.9) !important;
   border: none !important;
   border-radius: 6px !important;
   color: white !important;
+}
+
+/* Ensure custom tooltip backgrounds are dark */
+.recharts-tooltip-wrapper .custom-tooltip,
+.recharts-tooltip-wrapper .treemap-tooltip {
+  background-color: rgba(0, 0, 0, 0.9) !important;
 }
 
 .recharts-tooltip-label {
@@ -120,7 +129,8 @@
 }
 
 /* Loading and Error States */
-.loading, .error {
+.loading,
+.error {
   text-align: center;
   padding: 40px 20px;
   color: #6c757d;
@@ -129,6 +139,40 @@
 
 .error {
   color: #dc3545;
+}
+
+.error-message {
+  margin-bottom: 20px;
+  padding: 10px;
+  background-color: #f8d7da;
+  color: #721c24;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.8);
+  z-index: 10;
+  border-radius: 8px;
+}
+
+.loading-overlay-tall {
+  height: 600px;
+}
+
+.performance-charts.loading,
+.asset-allocation-section.loading {
+  position: relative;
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
 }
 
 /* Responsive Design */
@@ -211,3 +255,149 @@
   stroke-width: 3;
 }
 
+/* Asset Allocation Section */
+.asset-allocation-section {
+  position: relative;
+  margin-top: 30px;
+  padding-top: 30px;
+  border-top: 1px solid #e9ecef;
+  min-height: 600px;
+}
+
+.asset-allocation-section h3 {
+  color: #333;
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Recharts Treemap customization */
+.recharts-treemap {
+  cursor: pointer;
+}
+
+.recharts-treemap rect {
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.recharts-treemap rect:hover {
+  opacity: 0.85;
+  filter: brightness(1.15);
+}
+
+.treemap-item {
+  transition: filter 0.2s ease;
+  cursor: pointer;
+}
+
+.treemap-item:hover rect {
+  filter: brightness(1.15);
+  opacity: 0.85;
+}
+
+/* Responsive adjustments for asset allocation */
+@media (max-width: 768px) {
+  .asset-allocation-section {
+    margin-top: 20px;
+    padding-top: 20px;
+  }
+
+}
+
+/* Treemap Legend */
+.treemap-legend-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 20px;
+  gap: 8px;
+}
+
+.treemap-legend {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin-top: 5px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #495057;
+}
+
+.legend-color {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.legend-color-strong-gain {
+  background-color: #00A846;
+}
+
+.legend-color-gain {
+  background-color: #0D3D22;
+}
+
+.legend-color-loss {
+  background-color: #5a1a1a;
+}
+
+.legend-color-strong-loss {
+  background-color: #CC2929;
+}
+
+/* Custom Tooltip Styles */
+.custom-tooltip {
+  background-color: rgba(0, 0, 0, 0.9) !important;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+}
+
+.treemap-tooltip {
+  background-color: rgba(0, 0, 0, 0.9) !important;
+}
+
+.tooltip-label,
+.tooltip-title {
+  color: #ffffff !important;
+  margin: 0 0 4px 0;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.tooltip-item,
+.tooltip-text {
+  margin: 0 0 2px 0;
+  font-size: 13px;
+  color: #e0e0e0 !important;
+}
+
+.tooltip-item:last-child,
+.tooltip-text:last-child {
+  margin-bottom: 0;
+}
+
+.tooltip-item.positive,
+.tooltip-text.positive {
+  color: #4ade80 !important;
+  font-weight: 500;
+}
+
+.tooltip-item.negative,
+.tooltip-text.negative {
+  color: #f87171 !important;
+  font-weight: 500;
+}
+
+.tooltip-item-base {
+  color: #8884d8 !important;
+}

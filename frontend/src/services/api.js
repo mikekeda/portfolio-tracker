@@ -108,9 +108,9 @@ export const portfolioAPI = {
     return response.data;
   },
 
-  // Get top movers (gainers and losers)
-  getTopMovers: async (period = '1d', limit = 10) => {
-    const response = await apiClient.get(`/api/market/top-movers?period=${period}&limit=${limit}`);
+  // Get all portfolio movers (holdings with price changes) for a given period
+  getTopMovers: async (period = '1d') => {
+    const response = await apiClient.get(`/api/market/movers?period=${period}`);
     return response.data;
   },
 

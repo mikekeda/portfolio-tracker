@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import PropTypes from 'prop-types';
 import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
 import './TopMovers.css';
 
-const TopMovers = () => {
+const TopMovers = ({ selectedPeriod, setSelectedPeriod }) => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [selectedPeriod, setSelectedPeriod] = useState('1d');
 
   const periods = [
     { value: '1d', label: '1 Day' },
@@ -20,8 +20,24 @@ const TopMovers = () => {
     try {
       setLoading(true);
       setError(null);
-      const result = await portfolioAPI.getTopMovers(selectedPeriod, 10);
-      setData(result);
+      const movers = await portfolioAPI.getTopMovers(selectedPeriod);
+
+      if (!Array.isArray(movers)) {
+        throw new Error('Invalid response format');
+      }
+
+      // Derive gainers and losers from movers array
+      const limit = 10;
+      const gainers = movers.slice(0, limit);
+      const losers = movers.slice(-limit).reverse(); // Reverse to show biggest losers first
+      const total_symbols = movers.length;
+
+      setData({
+        movers,
+        gainers,
+        losers,
+        total_symbols,
+      });
     } catch (err) {
       setError('Failed to fetch top movers data');
       console.error('Error fetching top movers:', err);
@@ -90,7 +106,7 @@ const TopMovers = () => {
             <button
               key={period.value}
               className={`period-btn ${selectedPeriod === period.value ? 'active' : ''}`}
-              onClick={() => setSelectedPeriod(period.value)}
+              onClick={() => setSelectedPeriod && setSelectedPeriod(period.value)}
             >
               {period.label}
             </button>
@@ -114,7 +130,7 @@ const TopMovers = () => {
             </thead>
             <tbody>
               {data.gainers && data.gainers.length > 0 ? (
-                data.gainers.map((stock, index) => (
+                data.gainers.map((stock) => (
                   <tr key={stock.symbol}>
                     <td className="symbol">
                       <Link className="symbol" to={`/stock/${encodeURIComponent(stock.symbol)}`}>{stock.symbol}</Link>
@@ -161,7 +177,7 @@ const TopMovers = () => {
             </thead>
             <tbody>
               {data.losers && data.losers.length > 0 ? (
-                data.losers.map((stock, index) => (
+                data.losers.map((stock) => (
                   <tr key={stock.symbol}>
                     <td className="symbol">
                       <Link className="symbol" to={`/stock/${encodeURIComponent(stock.symbol)}`}>{stock.symbol}</Link>
@@ -201,6 +217,16 @@ const TopMovers = () => {
       ) : null}
     </div>
   );
+};
+
+TopMovers.propTypes = {
+  selectedPeriod: PropTypes.string,
+  setSelectedPeriod: PropTypes.func,
+};
+
+TopMovers.defaultProps = {
+  selectedPeriod: '1d',
+  setSelectedPeriod: undefined,
 };
 
 export default TopMovers;
