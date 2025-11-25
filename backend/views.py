@@ -16,7 +16,7 @@ import numpy as np
 from backend.app import app, get_db_session
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -416,25 +416,20 @@ async def get_portfolio_history(
     return {"history": history_data, "days": days, "benchmark": BENCHES}
 
 
-@app.get("/api/instruments")
+@app.get("/api/tickers")
 async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> dict[str, list[dict[str, Any]]]:
     """Get all instruments in the database for autocomplete."""
+    name_col = func.coalesce(Instrument.name, PricesDaily.symbol)
     result = await session.execute(
-        select(Instrument).filter(Instrument.yahoo_symbol.isnot(None)).order_by(Instrument.name)
+        select(PricesDaily.symbol, name_col.label("name"))
+        .outerjoin(Instrument, and_(Instrument.yahoo_symbol == PricesDaily.symbol, Instrument.yahoo_symbol.isnot(None)))
+        .distinct()
+        .order_by(name_col)
     )
-    instruments = result.scalars().all()
 
-    return {
-        "instruments": [
-            {
-                "id": instrument.id,
-                "symbol": instrument.yahoo_symbol,
-                "name": instrument.name,
-                "t212_code": instrument.t212_code,
-            }
-            for instrument in instruments
-        ]
-    }
+    instruments = [{"symbol": row.symbol, "name": row.name} for row in result.all()]
+
+    return {"instruments": instruments}
 
 
 @app.get("/api/instrument/{symbol}")
@@ -564,8 +559,8 @@ async def get_chart_metric(symbols: str, days: int, metric: str, session: AsyncS
     if not symbols:
         raise HTTPException(status_code=400, detail="No symbols provided")
 
-    # Parse symbols from comma-separated string
-    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    # Parse symbols from comma-separated or space-separated string
+    symbol_list = [s.strip().upper() for s in symbols.replace(",", " ").split() if s.strip()]
 
     # Calculate date range
     start_date = datetime.now(TIMEZONE).date() - timedelta(days=days)

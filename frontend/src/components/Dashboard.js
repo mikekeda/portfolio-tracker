@@ -449,7 +449,7 @@ const Dashboard = () => {
             <div className="card" title={getVixTooltip(summary.vix)}>
               <h3>VIX</h3>
               <a
-                href="https://markets.businessinsider.com/index/vix"
+                href="/chart?symbols=^VIX&days=365"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="value-link"

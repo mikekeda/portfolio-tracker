@@ -90,7 +90,7 @@ export const portfolioAPI = {
 
   // Get all instruments for autocomplete
   getInstruments: async () => {
-    const response = await apiClient.get('/api/instruments');
+    const response = await apiClient.get('/api/tickers');
     return response.data;
   },
 

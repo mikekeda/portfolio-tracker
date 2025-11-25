@@ -1,22 +1,84 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import SharedTooltip from './SharedTooltip';
 import './Chart.css';
 
+// Days selector configuration
+const DAYS_OPTIONS = [
+  { label: '5D', value: 5 },
+  { label: '1M', value: 30 },
+  { label: '3M', value: 90 },
+  { label: '6M', value: 180 },
+  { label: 'YTD', value: 'ytd' },
+  { label: '1Y', value: 365 },
+  { label: '2Y', value: 730 },
+  { label: '5Y', value: 1825 },
+  { label: '10Y', value: 3650 },
+];
+
+// Helper function to calculate YTD days
+const calculateYTDDays = () => {
+  const now = new Date();
+  const startOfYear = new Date(now.getFullYear(), 0, 1);
+  const diffTime = Math.abs(now - startOfYear);
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+};
+
 const Chart = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Initialize selectedSymbols from URL or default
+  const getSymbolsFromURL = useCallback(() => {
+    const symbolsParam = searchParams.get('symbols');
+    if (symbolsParam) {
+      // Handle space-separated (appears as + in URL)
+      if (symbolsParam.includes(' ')) {
+        return symbolsParam.split(' ').filter(s => s.trim());
+      }
+      // Handle legacy comma-separated
+      if (symbolsParam.includes(',')) {
+        return symbolsParam.split(',').filter(s => s.trim());
+      }
+      // Single symbol
+      return [symbolsParam.trim()];
+    }
+
+    // Fallback: check for multiple 'symbols' params (legacy from previous step)
+    const multipleParams = searchParams.getAll('symbols');
+    if (multipleParams.length > 0) {
+      return multipleParams.filter(s => s.trim());
+    }
+
+    return ["VUAG.L", "XNAS.L"];
+  }, [searchParams]);
+
   const [instruments, setInstruments] = useState([]);
-  const [selectedSymbols, setSelectedSymbols] = useState(["VUAG.L", "XNAS.L"]);
+  const [selectedSymbols, setSelectedSymbols] = useState(getSymbolsFromURL);
   const [chartData, setChartData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingInstruments, setLoadingInstruments] = useState(true);
   const [error, setError] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [showAutocomplete, setShowAutocomplete] = useState(false);
-  const [days, setDays] = useState(30);
+  const [highlightedIndex, setHighlightedIndex] = useState(-1);
+
+  // Days selector state - get from URL or default to 30 (1M)
+  const getDaysFromURL = useCallback(() => {
+    const daysParam = searchParams.get('days');
+    if (daysParam) {
+      const parsed = daysParam === 'ytd' ? 'ytd' : Number(daysParam);
+      return parsed || 30;
+    }
+    return 30; // Default to 1M
+  }, [searchParams]);
+
+  const [days, setDays] = useState(getDaysFromURL);
   const [selectedMetric, setSelectedMetric] = useState('price');
   const autocompleteRef = useRef(null);
   const inputRef = useRef(null);
+  const listRef = useRef(null);
 
   // Load instruments for autocomplete
   useEffect(() => {
@@ -49,6 +111,26 @@ const Chart = () => {
     };
   }, []);
 
+  // Update URL when selectedSymbols or days change (skip on initial mount to avoid replacing URL)
+  const isInitialMount = useRef(true);
+  useEffect(() => {
+    // Skip URL update on initial mount since we're reading from URL
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return;
+    }
+
+    const params = new URLSearchParams();
+    if (selectedSymbols.length > 0) {
+      // Join with space, which URLSearchParams encodes as +
+      params.set('symbols', selectedSymbols.join(' '));
+    }
+    const daysValue = days === 'ytd' ? 'ytd' : String(days);
+    params.set('days', daysValue);
+    // Use replace: true to avoid creating history entries for each change
+    setSearchParams(params, { replace: true });
+  }, [selectedSymbols, days, setSearchParams]);
+
   // Load chart data when symbols, days, or metric change
   useEffect(() => {
     const loadChartData = async () => {
@@ -61,11 +143,14 @@ const Chart = () => {
         setLoading(true);
         setError(null);
 
+        // Convert days to number for API call
+        const daysParam = days === 'ytd' ? calculateYTDDays() : days;
+
         let response;
         if (selectedMetric === 'price' || selectedMetric === 'price_pct_change') {
-          response = await portfolioAPI.getChartPrices(selectedSymbols, days);
+          response = await portfolioAPI.getChartPrices(selectedSymbols, daysParam);
         } else {
-          response = await portfolioAPI.getChartMetrics(selectedSymbols, days, selectedMetric);
+          response = await portfolioAPI.getChartMetrics(selectedSymbols, daysParam, selectedMetric);
         }
 
         if (response.error) {
@@ -157,25 +242,40 @@ const Chart = () => {
     });
   };
 
-  // Filter instruments based on search term
+  // Filter instruments based on search term - remove duplicates by symbol
   const filteredInstruments = useMemo(() => {
-    if (!searchTerm) return instruments.slice(0, 10);
+    if (!searchTerm.trim()) return instruments.slice(0, 10);
 
-    return instruments
-      .filter(instrument =>
-        instrument.symbol?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        instrument.name?.toLowerCase().includes(searchTerm.toLowerCase())
-      )
-      .slice(0, 10);
+    const searchLower = searchTerm.toLowerCase().trim();
+    const filtered = instruments.filter(instrument => {
+      const symbol = instrument.symbol?.toLowerCase() || '';
+      const name = instrument.name?.toLowerCase() || '';
+      return symbol.includes(searchLower) || name.includes(searchLower);
+    });
+
+    // Remove duplicates by symbol (keep first occurrence)
+    const seen = new Set();
+    const unique = filtered.filter(instrument => {
+      if (!instrument.symbol) return false;
+      const symbol = instrument.symbol.trim();
+      if (!symbol || seen.has(symbol)) return false;
+      seen.add(symbol);
+      return true;
+    });
+
+    return unique.slice(0, 10);
   }, [instruments, searchTerm]);
 
   // Add symbol to chart
   const addSymbol = (symbol) => {
-    if (!selectedSymbols.includes(symbol)) {
-      setSelectedSymbols([...selectedSymbols, symbol]);
+    if (!symbol || !symbol.trim()) return;
+    const trimmedSymbol = symbol.trim();
+    if (!selectedSymbols.includes(trimmedSymbol)) {
+      setSelectedSymbols([...selectedSymbols, trimmedSymbol]);
     }
     setSearchTerm('');
     setShowAutocomplete(false);
+    setHighlightedIndex(-1);
   };
 
   // Remove symbol from chart
@@ -220,10 +320,13 @@ const Chart = () => {
 
   return (
     <div className="chart-container">
-      <h1>Stock {getMetricDisplayName(selectedMetric)} Chart</h1>
+      {/* Header */}
+      <div className="chart-header">
+        <h1>Stock {getMetricDisplayName(selectedMetric)} Chart</h1>
+      </div>
 
-      {/* Controls */}
-      <div className="chart-controls">
+      {/* Controls Row 1: Search and Selected Stocks */}
+      <div className="chart-controls-row">
         <div className="symbol-input-container" ref={autocompleteRef}>
           <input
             ref={inputRef}
@@ -233,33 +336,101 @@ const Chart = () => {
             onChange={(e) => {
               setSearchTerm(e.target.value);
               setShowAutocomplete(true);
+              setHighlightedIndex(-1);
             }}
             onFocus={() => setShowAutocomplete(true)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setShowAutocomplete(false);
+                setHighlightedIndex(-1);
+                inputRef.current?.blur();
+              } else if (e.key === 'ArrowDown' && showAutocomplete && filteredInstruments.length > 0) {
+                e.preventDefault();
+                setHighlightedIndex(prev =>
+                  prev < filteredInstruments.length - 1 ? prev + 1 : prev
+                );
+              } else if (e.key === 'ArrowUp' && showAutocomplete) {
+                e.preventDefault();
+                setHighlightedIndex(prev => prev > 0 ? prev - 1 : -1);
+              } else if (e.key === 'Enter' && highlightedIndex >= 0 && filteredInstruments.length > 0) {
+                e.preventDefault();
+                const selectedInstrument = filteredInstruments[highlightedIndex];
+                if (selectedInstrument?.symbol) {
+                  addSymbol(selectedInstrument.symbol);
+                  setHighlightedIndex(-1);
+                }
+              }
+            }}
             className="symbol-input"
             disabled={loadingInstruments}
           />
 
-          {showAutocomplete && (
-            <div className="autocomplete-dropdown">
-              {filteredInstruments.map((instrument) => (
-                <div
-                  key={instrument.id}
-                  className="autocomplete-item"
-                  onClick={() => addSymbol(instrument.symbol)}
-                >
-                  <span className="symbol">{instrument.symbol}</span>
-                  <span className="name">{instrument.name}</span>
-                </div>
-              ))}
-              {filteredInstruments.length === 0 && (
+          {showAutocomplete && searchTerm.trim() && (
+            <div className="autocomplete-dropdown" ref={listRef}>
+              {filteredInstruments.length > 0 ? (
+                filteredInstruments.map((instrument, index) => {
+                  // Use symbol as key, fallback to index if symbol is missing
+                  const uniqueKey = instrument.symbol || `instrument-${index}`;
+                  const isHighlighted = index === highlightedIndex;
+                  return (
+                    <div
+                      key={uniqueKey}
+                      className={`autocomplete-item ${isHighlighted ? 'highlighted' : ''}`}
+                      onClick={() => {
+                        addSymbol(instrument.symbol);
+                        setHighlightedIndex(-1);
+                      }}
+                      onMouseEnter={() => setHighlightedIndex(index)}
+                    >
+                      <span className="symbol">{instrument.symbol || 'N/A'}</span>
+                      <span className="name">{instrument.name || instrument.symbol || 'Unknown'}</span>
+                    </div>
+                  );
+                })
+              ) : (
                 <div className="autocomplete-item no-results">
-                  No instruments found
+                  <span>No instruments found for &quot;{searchTerm}&quot;</span>
                 </div>
               )}
             </div>
           )}
         </div>
 
+        {/* Selected Symbols - Integrated into controls */}
+        {selectedSymbols.length > 0 && (
+          <div className="selected-symbols-inline">
+            <span className="selected-label">Selected:</span>
+            <div className="symbol-tags">
+              {selectedSymbols.map((symbol, index) => {
+                // Find instrument name for better display
+                const instrument = instruments.find(i => i.symbol === symbol);
+                const displayName = instrument?.name || symbol;
+                return (
+                  <span
+                    key={symbol}
+                    className="symbol-tag"
+                    style={{ backgroundColor: colors[index % colors.length] }}
+                    title={displayName}
+                  >
+                    {symbol}
+                    <button
+                      onClick={() => removeSymbol(symbol)}
+                      className="remove-symbol"
+                      aria-label={`Remove ${symbol}`}
+                      type="button"
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Controls Row 2: Metric and Range */}
+      <div className="chart-controls-row">
         <div className="metric-selector">
           <label>Metric:</label>
           <select value={selectedMetric} onChange={(e) => setSelectedMetric(e.target.value)}>
@@ -272,46 +443,29 @@ const Chart = () => {
           </select>
         </div>
 
-        <div className="days-selector">
-          <label>Days:</label>
-          <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
-            <option value={7}>7 days</option>
-            <option value={30}>30 days</option>
-            <option value={90}>90 days</option>
-            <option value={180}>180 days</option>
-            <option value={365}>1 year</option>
-            <option value={1827}>5 year</option>
-            <option value={3652}>10 year</option>
-          </select>
+        <div className="range-selector">
+          <label>Range:</label>
+          <div className="range-buttons">
+            {DAYS_OPTIONS.map((option) => {
+              const isSelected = days === option.value;
+              return (
+                <button
+                  key={option.label}
+                  type="button"
+                  className={`range-btn ${isSelected ? 'active' : ''}`}
+                  onClick={() => setDays(option.value)}
+                  aria-label={`Select ${option.label} range`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* Selected Symbols */}
-      {selectedSymbols.length > 0 && (
-        <div className="selected-symbols">
-          <h3>Selected Stocks:</h3>
-          <div className="symbol-tags">
-            {selectedSymbols.map((symbol, index) => (
-              <span
-                key={symbol}
-                className="symbol-tag"
-                style={{ backgroundColor: colors[index % colors.length] }}
-              >
-                {symbol}
-                <button
-                  onClick={() => removeSymbol(symbol)}
-                  className="remove-symbol"
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
       {/* Chart */}
-      <div className="chart-wrapper">
+      <div className={`chart-wrapper ${loading ? 'loading' : ''}`}>
         {loading && <div className="loading">Loading chart data...</div>}
         {error && <div className="error">{error}</div>}
 
@@ -353,7 +507,11 @@ const Chart = () => {
         )}
 
         {!loading && !error && selectedSymbols.length === 0 && (
-          <div className="no-symbols">Add stocks to see the chart</div>
+          <div className="empty-state">
+            <div className="empty-state-icon">📈</div>
+            <h3>No stocks selected</h3>
+            <p>Search and add stocks above to view their chart</p>
+          </div>
         )}
       </div>
     </div>
