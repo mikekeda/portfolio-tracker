@@ -45,6 +45,34 @@ celery -A celery_tasks.celery_app worker --loglevel=info
 celery -A celery_tasks.celery_app beat --loglevel=info
 ```
 
+## Database Migrations
+
+The project uses **Alembic** for database migrations.
+
+### Creating a Migration
+
+To create a new migration after modifying `models.py`:
+
+```bash
+alembic revision --autogenerate -m "Description of changes"
+```
+
+### Applying Migrations
+
+To apply pending migrations to the database:
+
+```bash
+alembic upgrade head
+```
+
+### Reverting Migrations
+
+To revert the last applied migration:
+
+```bash
+alembic downgrade -1
+```
+
 ### Running Scripts Manually
 
 All scripts are located in the `scripts/` directory. When running manually, you must set the `PYTHONPATH` environment variable to the project root:
