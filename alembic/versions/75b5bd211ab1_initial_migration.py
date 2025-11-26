@@ -52,6 +52,7 @@ def upgrade() -> None:
     op.alter_column('instruments_yahoo', 'splits',
                existing_type=postgresql.JSONB(astext_type=sa.Text()),
                nullable=False)
+    op.execute("UPDATE instruments_yahoo SET news = '[]' WHERE news IS NULL")
     op.alter_column('instruments_yahoo', 'news',
                existing_type=postgresql.JSONB(astext_type=sa.Text()),
                nullable=False)
