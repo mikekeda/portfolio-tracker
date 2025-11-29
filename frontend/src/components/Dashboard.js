@@ -272,6 +272,35 @@ const getMarketBreadthTooltip = (breadth) => {
   return `Market Breadth: ${(breadth * 100).toFixed(1)}% (${level})\n\n${recommendation}\n\nThis measures the ratio of advancing to declining S&P 500 stocks compared with the previous trading session. A positive value indicates more stocks advanced (bullish), while a negative value indicates more stocks declined (bearish). Range: -100% to +100%.\n\nFormula: (Advancers - Decliners) / Total S&P 500 Stocks`;
 };
 
+// Helper function to get SMA200 color
+const getSma200Color = (value) => {
+  if (value < 40) return 'negative';
+  if (value > 60) return 'positive';
+  return '';
+};
+
+// Helper function to generate SMA200 tooltip
+const getSma200Tooltip = (value) => {
+  let recommendation = '';
+  let level = '';
+
+  if (value < 30) {
+    level = 'Oversold';
+    recommendation = 'Major market weakness. Most stocks are in a downtrend. Potential long-term buying opportunity if capitulation occurs.';
+  } else if (value < 50) {
+    level = 'Bearish';
+    recommendation = 'Market is weak. More than half of stocks are in a downtrend. Caution advised.';
+  } else if (value < 70) {
+    level = 'Bullish';
+    recommendation = 'Market is healthy. Majority of stocks are in an uptrend. Good environment for trend following.';
+  } else {
+    level = 'Overbought';
+    recommendation = 'Strong broad market participation. Watch for potential exhaustion if it stays extremely high for too long.';
+  }
+
+  return `% > SMA200: ${value.toFixed(1)}% (${level})\n\n${recommendation}\n\nPercentage of S&P 500 stocks trading above their 200-day Simple Moving Average. A long-term trend indicator.`;
+};
+
 const Dashboard = () => {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -470,6 +499,21 @@ const Dashboard = () => {
                 <p className={`value ${getMarketBreadthColor(summary.market_breadth_indicator)}`}>
                   {(summary.market_breadth_indicator * 100 >= 0 ? '+' : '')}
                   {(summary.market_breadth_indicator * 100).toFixed(1)}%
+                </p>
+              </a>
+            </div>
+          )}
+          {summary.sp500_above_sma200 !== null && summary.sp500_above_sma200 !== undefined && (
+            <div className="card" title={getSma200Tooltip(summary.sp500_above_sma200)}>
+              <h3>% &gt; SMA200</h3>
+              <a
+                href="https://stockcharts.com/h-sc/ui?s=$SPXA200R"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="value-link"
+              >
+                <p className={`value ${getSma200Color(summary.sp500_above_sma200)}`}>
+                  {summary.sp500_above_sma200.toFixed(1)}%
                 </p>
               </a>
             </div>

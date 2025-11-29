@@ -18,6 +18,59 @@ PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_pr
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 
+async def gen_sp500_above_sma200(session: AsyncSession) -> float:
+    """Calculate percentage of S&P 500 stocks above their 200-day SMA."""
+    # We need enough history for 200-day SMA. 300 days (calendar) is ~215 trading days.
+    # Let's fetch 400 days to be safe and ensure we have 200 trading days.
+    start_date = datetime.now(TIMEZONE).date() - timedelta(days=400)
+
+    # Fetch prices for SP500 symbols
+    result = await session.execute(
+        select(PricesDaily.symbol, PricesDaily.date, PRICE_COLUMN)
+        .where(
+            PricesDaily.symbol.in_(SP500),
+            PricesDaily.date >= start_date
+        )
+        .order_by(PricesDaily.symbol, PricesDaily.date)
+    )
+
+    prices_by_symbol = defaultdict(list)
+    for row in result:
+        prices_by_symbol[row.symbol].append(row.price)
+
+    above_count = 0
+    total_count = 0
+    missing = []
+
+    for symbol in SP500:
+        prices = prices_by_symbol.get(symbol, [])
+        if not prices:
+            missing.append(symbol)
+            continue
+
+        # We need at least 200 days of data
+        if len(prices) < 200:
+            missing.append(symbol)
+            continue
+
+        sma_200 = sum(prices[-200:]) / 200
+
+        if sma_200 is not None:
+            if prices[-1] > sma_200:
+                above_count += 1
+            total_count += 1
+        else:
+            missing.append(symbol)
+
+    if missing:
+        logger.info("%d stocks are missing: %s", len(missing), missing)
+
+    if total_count == 0:
+        return 0.0
+
+    return (above_count / total_count) * 100.0
+
+
 async def gen_fear_greed_index(session: aiohttp.ClientSession) -> Optional[dict[str, Union[str, float]]]:
     """Scrape Fear & Greed Index from CNN"""
     url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"

@@ -53,4 +53,18 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=5, hour="0,8,16", day_of_week="sat-sun"),
         "args": (),
     },
+    # Update market metrics during market hours: Every 4 hours
+    # Runs at 0:30, 8:30, 12:30, 16:30, 20:30 (30 minutes after update_data)
+    "update_market_metrics_market_hours": {
+        "task": "celery_tasks.tasks.update_market_metrics_task",
+        "schedule": crontab(minute=30, hour="0,8,12,16,20", day_of_week="mon-fri"),
+        "args": (),
+    },
+    # Update market metrics weekends: Every 8 hours
+    # Runs at 0:30, 12:30
+    "update_market_metrics_weekends": {
+        "task": "celery_tasks.tasks.update_market_metrics_task",
+        "schedule": crontab(minute=30, hour="0,12", day_of_week="sat-sun"),
+        "args": (),
+    },
 }

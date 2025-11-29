@@ -487,3 +487,22 @@ class TransactionHistory(Base):
             return f"<TransactionHistory({self.timestamp.date().isoformat()} {self.action} {qty:.4f} {self.ticker}{price_str}, net_cost=£{self.net_cost:.2f})>"
         else:
             return f"<TransactionHistory({self.timestamp.date().isoformat()} {self.action} {self.ticker or 'N/A'} £{self.total:.2f}, net_cost=£{self.net_cost:.2f})>"
+
+
+class MarketMetricsDaily(Base):
+    """Daily market metrics (buffett_indicator, yield_spread, fear_greed_index, etc.)"""
+
+    __tablename__ = "market_metrics_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False, unique=True, index=True)
+
+    buffett_indicator: Mapped[float] = mapped_column(Float, nullable=True)
+    yield_spread: Mapped[float] = mapped_column(Float, nullable=True)
+    fear_greed_index: Mapped[float] = mapped_column(Float, nullable=True)
+    vix: Mapped[float] = mapped_column(Float, nullable=True)
+    market_breadth_indicator: Mapped[float] = mapped_column(Float, nullable=True)
+    sp500_above_sma200: Mapped[float] = mapped_column(Float, nullable=True)
+
+    # Metadata
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

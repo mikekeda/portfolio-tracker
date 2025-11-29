@@ -7,6 +7,7 @@ from alembic import context
 # Add the project root to the path so we can import config and models
 import sys
 import os
+
 sys.path.append(os.getcwd())
 
 from config import DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
@@ -91,9 +92,7 @@ def run_migrations_online() -> None:
     print(configuration)
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()
