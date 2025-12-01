@@ -949,21 +949,173 @@ const Holdings = () => {
     columnResizeMode: 'onChange',
   });
 
-  if (loading) {
-    return (
-      <div className="holdings-container">
-        <div className="loading">Loading holdings...</div>
-      </div>
-    );
-  }
+  // CSV Export Function - Must be defined before any conditional returns
+  const exportToCSV = useCallback(() => {
+    if (!table) return;
+    // Get the filtered/visible rows
+    const rowsToExport = table.getFilteredRowModel().rows;
 
-  if (error) {
-    return (
-      <div className="holdings-container">
-        <div className="error">{error}</div>
-      </div>
-    );
-  }
+    if (rowsToExport.length === 0) {
+      alert('No data to export');
+      return;
+    }
+
+    // Define CSV headers - map all available fields to readable names
+    const headerMap = {
+      'yahoo_symbol': 'Symbol',
+      'name': 'Name',
+      'portfolio_pct': '%',
+      'market_value': 'Value (£)',
+      'profit': 'Profit (£)',
+      'return_pct': 'Return',
+      'dividend_yield': 'Dividend',
+      'prediction': 'Prediction',
+      'institutional_ownership': 'Instit',
+      'market_cap': 'Market Cap',
+      'peg_ratio': 'PEG',
+      'pe_ratio': 'PE',
+      'ps_ratio': 'PS',
+      'beta': 'Beta',
+      'profit_margins': 'Margins',
+      'revenue_growth': 'Growth',
+      'roic': 'ROIC',
+      'free_cashflow_yield': 'FCF Yield',
+      'quickRatio': 'Quick',
+      'debtToEquity': 'D/E',
+      'recommendation_mean': 'Rec',
+      'recommendation_trend': 'Rec Trend',
+      'fifty_two_week_high_distance': '52WH Change',
+      'short_percent_of_float': 'Short',
+      'rsi': 'RSI',
+      'screener_score': 'Score',
+      'passedScreeners': 'Screeners',
+      'country': 'Country',
+      'sector': 'Sector',
+      'quote_type': 'Type',
+      'currency': 'Currency',
+      'dcf_diff': 'DCF Diff',
+      'current_price': 'Price',
+    };
+
+    // Get all available keys from the data (for columns not shown in UI)
+    const allAvailableKeys = new Set();
+    rowsToExport.forEach(row => {
+      Object.keys(row.original).forEach(key => {
+        if (!key.startsWith('_') && key !== 'analyst_price_targets') {
+          allAvailableKeys.add(key);
+        }
+      });
+    });
+
+    // Get visible column order from table (matching the page display order)
+    // Exclude 'select' column (checkbox) and 'date' column
+    const visibleColumns = table.getAllColumns().filter(col => {
+      const colDef = col.columnDef;
+      // Skip select column (checkbox)
+      if (colDef.id === 'select') return false;
+      // Skip date column (it's in the filename)
+      if (colDef.accessorKey === 'date') return false;
+      // Only include columns with accessorKey (data columns)
+      return colDef.accessorKey !== undefined;
+    });
+
+    // Extract visible columns first (in page order)
+    const keysToExport = [];
+    const headers = [];
+    const visibleKeys = new Set();
+
+    visibleColumns.forEach(col => {
+      const colDef = col.columnDef;
+      const accessorKey = colDef.accessorKey;
+
+      if (!accessorKey) return;
+
+      // Get header from column definition (all headers are strings)
+      const headerText = typeof colDef.header === 'string'
+        ? colDef.header
+        : headerMap[accessorKey] || accessorKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+      keysToExport.push(accessorKey);
+      headers.push(headerText);
+      visibleKeys.add(accessorKey);
+    });
+
+    // Add remaining columns (not shown in UI) after visible columns, alphabetically
+    const remainingKeys = Array.from(allAvailableKeys).filter(key =>
+      !visibleKeys.has(key) &&
+      key !== 'date' // Skip date column
+    ).sort();
+
+    remainingKeys.forEach(key => {
+      keysToExport.push(key);
+      headers.push(headerMap[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()));
+    });
+
+    // Helper function to format CSV value
+    const formatCSVValue = (value, key) => {
+      if (value === null || value === undefined) {
+        return '';
+      }
+
+      // Handle arrays (like passedScreeners)
+      if (Array.isArray(value)) {
+        return value.join('; ');
+      }
+
+      // Handle objects - skip complex objects for now
+      if (typeof value === 'object') {
+        return '';
+      }
+
+      // Handle numbers - format appropriately
+      if (typeof value === 'number') {
+        // For percentages and ratios, format with 2 decimals
+        const percentKeys = ['portfolio_pct', 'return_pct', 'dividend_yield', 'prediction',
+                            'institutional_ownership', 'profit_margins', 'revenue_growth',
+                            'roic', 'free_cashflow_yield', 'fifty_two_week_high_distance',
+                            'short_percent_of_float', 'dcf_diff'];
+        if (percentKeys.includes(key)) {
+          return value.toFixed(2);
+        }
+        return value.toString();
+      }
+
+      // Handle strings - escape commas and quotes
+      let stringValue = String(value);
+      if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+        stringValue = `"${stringValue.replace(/"/g, '""')}"`;
+      }
+      return stringValue;
+    };
+
+    // Extract data for each row
+    const csvRows = rowsToExport.map(row => {
+      return keysToExport.map(key => formatCSVValue(row.original[key], key));
+    });
+
+    // Combine headers and rows
+    const csvContent = [
+      headers.join(','),
+      ...csvRows.map(row => row.join(','))
+    ].join('\n');
+
+    // Create blob and download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().split('T')[0];
+    const filename = `holdings_export_${timestamp}.csv`;
+
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [table]);
 
   return (
     <div className="holdings-container">
@@ -1031,6 +1183,22 @@ const Holdings = () => {
             )}
           </div>
           </div>
+        </div>
+
+        {/* Export Button */}
+        <div className="export-controls">
+          <button
+            onClick={exportToCSV}
+            className="btn-export"
+            title="Export filtered holdings to CSV"
+            aria-label="Export filtered holdings to CSV"
+            disabled={table.getFilteredRowModel().rows.length === 0}
+          >
+            <svg className="export-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M8 11L8 3M8 11L5.5 8.5M8 11L10.5 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2.5 12.5H13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
         </div>
 
         <div className="table-info">

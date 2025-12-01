@@ -30,6 +30,12 @@ const getBetaColor = (beta) => {
   return '';
 };
 
+// Helper function to get VIX color
+const getVIXColor = (vix) => {
+  if (vix > 25) return 'positive';
+  return '';
+};
+
 // Helper function to generate Sortino Ratio tooltip
 const getSortinoTooltip = (sortino) => {
   let recommendation = '';
@@ -483,7 +489,7 @@ const Dashboard = () => {
                 rel="noopener noreferrer"
                 className="value-link"
               >
-                <p className="value">{summary.vix.toFixed(2)}</p>
+                <p className={`value ${getVIXColor(summary.vix)}`}>{summary.vix.toFixed(2)}</p>
               </a>
             </div>
           )}
