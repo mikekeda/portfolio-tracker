@@ -27,10 +27,7 @@ async def gen_sp500_above_sma200(session: AsyncSession) -> float:
     # Fetch prices for SP500 symbols
     result = await session.execute(
         select(PricesDaily.symbol, PricesDaily.date, PRICE_COLUMN)
-        .where(
-            PricesDaily.symbol.in_(SP500),
-            PricesDaily.date >= start_date
-        )
+        .where(PricesDaily.symbol.in_(SP500), PricesDaily.date >= start_date)
         .order_by(PricesDaily.symbol, PricesDaily.date)
     )
 

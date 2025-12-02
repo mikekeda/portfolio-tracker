@@ -1,3 +1,4 @@
+import asyncio
 from celery_tasks.celery_app import app
 from scripts.backfill_portfolio_daily import backfill_portfolio_daily
 from scripts.update_data import update_data
@@ -16,4 +17,4 @@ def update_data_task():
 
 @app.task
 def update_market_metrics_task():
-    update_market_metrics()
+    asyncio.run(update_market_metrics())
