@@ -62,7 +62,9 @@ CombinedTooltip.defaultProps = {
 };
 
 // Treemap content renderer for Asset Allocation
-const TreemapContent = ({ x, y, width, height, payload, navigate }) => {
+const TreemapContent = (props) => {
+  const { x, y, width, height, payload, navigate } = props;
+
   // Defensive checks for rendering
   if (
     typeof x !== 'number' ||
@@ -76,7 +78,7 @@ const TreemapContent = ({ x, y, width, height, payload, navigate }) => {
   }
 
   // Fallback for data access
-  const itemData = payload || {};
+  const itemData = payload || props;
   const name = itemData.name || itemData.root?.name || 'N/A';
 
   // Only render leaf nodes (items with no children) or items with explicit values
@@ -121,14 +123,14 @@ const TreemapContent = ({ x, y, width, height, payload, navigate }) => {
         onClick={handleTileClick}
         style={{ cursor: 'pointer' }}
       />
-      {width > 60 && height > 40 && (
+      {width > 30 && height > 30 && (
         <>
           <text
             x={x + width / 2}
-            y={y + height / 2 - 6}
+            y={y + height / 2 - 2}
             textAnchor="middle"
             fill="white"
-            fontSize={Math.min(16, width / 5, height / 3)}
+            fontSize={Math.max(9, Math.min(14, width / 4))}
             fontWeight="700"
             style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)', pointerEvents: 'none' }}
           >
@@ -136,10 +138,10 @@ const TreemapContent = ({ x, y, width, height, payload, navigate }) => {
           </text>
           <text
             x={x + width / 2}
-            y={y + height / 2 + 12}
+            y={y + height / 2 + (height < 50 ? 10 : 15)}
             textAnchor="middle"
             fill="white"
-            fontSize={Math.min(12, width / 6, height / 4)}
+            fontSize={Math.max(8, Math.min(11, width / 5))}
             fontWeight="500"
             style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)', pointerEvents: 'none' }}
           >
@@ -463,117 +465,9 @@ const PortfolioChart = ({ selectedPeriod }) => {
               stroke="#fff"
               fill="#fff"
               isAnimationActive={false}
-              content={(props) => {
-                const { x, y, width, height, payload } = props;
-
-                // Defensive checks for rendering
-                if (
-                  typeof x !== 'number' ||
-                  typeof y !== 'number' ||
-                  typeof width !== 'number' ||
-                  typeof height !== 'number' ||
-                  width <= 0 ||
-                  height <= 0
-                ) {
-                  return null;
-                }
-
-                // Fallback for data access
-                const itemData = payload || props;
-                const name = itemData.name || itemData.root?.name || 'N/A';
-
-                // Only render leaf nodes (items with no children) or items with explicit values
-                if (!itemData.change_pct && itemData.change_pct !== 0 && !itemData.value) {
-                  return null;
-                }
-
-                const changePct = itemData.change_pct || 0;
-                const isPositive = changePct >= 0;
-
-                let bgColor;
-                // Trading212-like colors: Bright for significant moves, Dark/Muted for small moves
-                if (changePct >= 2.0) {
-                  bgColor = '#00A846'; // Bright Green (> 2%)
-                } else if (changePct >= 0) {
-                  bgColor = '#0D3D22'; // Dark Green (0 - 2%)
-                } else if (changePct >= -2.0) {
-                  bgColor = '#5a1a1a'; // Lighter Dark Red (-2% - 0) - Adjusted from #421010
-                } else {
-                  bgColor = '#CC2929'; // Bright Red (< -2%)
-                }
-
-                const handleTileClick = () => {
-                  const symbol = itemData.name || itemData.root?.name;
-                  if (symbol && symbol !== 'N/A') {
-                    navigate(`/stock/${encodeURIComponent(symbol)}`);
-                  }
-                };
-
-                return (
-                  <g className="treemap-item">
-                    <rect
-                      x={x}
-                      y={y}
-                      width={width}
-                      height={height}
-                      fill={bgColor}
-                      stroke="#fff"
-                      strokeWidth={2}
-                      rx={6} // Rounded corners
-                      ry={6}
-                      onClick={handleTileClick}
-                      style={{ cursor: 'pointer' }}
-                    />
-                    {width > 60 && height > 40 && (
-                      <>
-                        <text
-                          x={x + width / 2}
-                          y={y + height / 2 - 6}
-                          textAnchor="middle"
-                          fill="white"
-                          fontSize={Math.min(16, width / 5, height / 3)}
-                          fontWeight="700"
-                          style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)', pointerEvents: 'none' }}
-                        >
-                          {name}
-                        </text>
-                        <text
-                          x={x + width / 2}
-                          y={y + height / 2 + 12}
-                          textAnchor="middle"
-                          fill="white"
-                          fontSize={Math.min(12, width / 6, height / 4)}
-                          fontWeight="500"
-                          style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)', pointerEvents: 'none' }}
-                        >
-                          {isPositive ? '+' : ''}{changePct.toFixed(2)}%
-                        </text>
-                      </>
-                    )}
-                  </g>
-                );
-              }}
+              content={<TreemapContent navigate={navigate} />}
             >
-              <Tooltip
-                content={({ active, payload }) => {
-                  if (active && payload && payload.length) {
-                    const data = payload[0].payload;
-                    const changePct = data.change_pct || 0;
-                    const isPositive = changePct >= 0;
-
-                    return (
-                      <div className="custom-tooltip treemap-tooltip">
-                        <p className="tooltip-title">{data.fullName || data.name}</p>
-                        <p className="tooltip-text">allocation: {data.allocation_pct.toFixed(2)}%</p>
-                        <p className={`tooltip-text ${isPositive ? 'positive' : 'negative'}`}>
-                          {isPositive ? 'up' : 'down'}: {Math.abs(changePct).toFixed(2)}%
-                        </p>
-                      </div>
-                    );
-                  }
-                  return null;
-                }}
-              />
+              <Tooltip content={<TreemapTooltip />} />
             </Treemap>
           </ResponsiveContainer>
         ) : (
