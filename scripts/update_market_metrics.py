@@ -38,11 +38,6 @@ from backend.utils.market_data import (
     gen_sp500_above_sma200,
 )
 
-# Setup Async Database Connection
-DB_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-engine = create_async_engine(DB_URL, echo=False)
-AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
-
 
 async def get_vix(session: AsyncSession) -> Optional[float]:
     """Get latest VIX close price from DB (async)."""
@@ -56,55 +51,63 @@ async def update_market_metrics():
     """Update all market metrics asynchronously."""
     logger.info("Updating market metrics (Async)...")
 
-    async with AsyncSessionLocal() as db_session:
-        async with aiohttp.ClientSession() as http_session:
-            today = datetime.now(TIMEZONE).date()
+    # Setup Async Database Connection
+    DB_URL = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    engine = create_async_engine(DB_URL, echo=False)
+    AsyncSessionLocal = async_sessionmaker(bind=engine, expire_on_commit=False)
 
-            # Run independent tasks concurrently
-            # Note: breadth and sma200 need db_session, others need http_session
-            # VIX needs db_session
+    try:
+        async with AsyncSessionLocal() as db_session:
+            async with aiohttp.ClientSession() as http_session:
+                today = datetime.now(TIMEZONE).date()
 
-            # 1. Fetch external API data concurrently
-            logger.info("Fetching external data...")
-            buffett, yield_spread, fear_greed_data = await asyncio.gather(
-                gen_buffett_indicator(http_session),
-                get_yield_spread(http_session),
-                gen_fear_greed_index(http_session),
-            )
+                # Run independent tasks concurrently
+                # Note: breadth and sma200 need db_session, others need http_session
+                # VIX needs db_session
 
-            # 2. Fetch/Calculate DB-dependent metrics
-            # We run these sequentially because they share the same db_session,
-            # and SQLAlchemy AsyncSession is not concurrency-safe for parallel operations.
-            logger.info("Calculating DB metrics...")
-            vix = await get_vix(db_session)
-            breadth = await gen_market_breadth_indicator(db_session, http_session)
-            sma200_pct = await gen_sp500_above_sma200(db_session)
+                # 1. Fetch external API data concurrently
+                logger.info("Fetching external data...")
+                buffett, yield_spread, fear_greed_data = await asyncio.gather(
+                    gen_buffett_indicator(http_session),
+                    get_yield_spread(http_session),
+                    gen_fear_greed_index(http_session),
+                )
 
-            # Extract value from Fear & Greed result
-            fear_greed = fear_greed_data["value"] if fear_greed_data else None
+                # 2. Fetch/Calculate DB-dependent metrics
+                # We run these sequentially because they share the same db_session,
+                # and SQLAlchemy AsyncSession is not concurrency-safe for parallel operations.
+                logger.info("Calculating DB metrics...")
+                vix = await get_vix(db_session)
+                breadth = await gen_market_breadth_indicator(db_session, http_session)
+                sma200_pct = await gen_sp500_above_sma200(db_session)
 
-            logger.info(
-                f"Metrics: Buffett={buffett}, Yield={yield_spread}, F&G={fear_greed}, VIX={vix}, Breadth={breadth}, SMA200%={sma200_pct}"
-            )
+                # Extract value from Fear & Greed result
+                fear_greed = fear_greed_data["value"] if fear_greed_data else None
 
-            # Upsert into DB
-            result = await db_session.execute(select(MarketMetricsDaily).filter(MarketMetricsDaily.date == today))
-            metric = result.scalars().first()
+                logger.info(
+                    f"Metrics: Buffett={buffett}, Yield={yield_spread}, F&G={fear_greed}, VIX={vix}, Breadth={breadth}, SMA200%={sma200_pct}"
+                )
 
-            if not metric:
-                metric = MarketMetricsDaily(date=today)
-                db_session.add(metric)
+                # Upsert into DB
+                result = await db_session.execute(select(MarketMetricsDaily).filter(MarketMetricsDaily.date == today))
+                metric = result.scalars().first()
 
-            metric.buffett_indicator = buffett
-            metric.yield_spread = yield_spread
-            metric.fear_greed_index = fear_greed
-            metric.vix = vix
-            metric.market_breadth_indicator = breadth
-            metric.sp500_above_sma200 = sma200_pct
-            metric.updated_at = datetime.now(TIMEZONE).replace(tzinfo=None)
+                if not metric:
+                    metric = MarketMetricsDaily(date=today)
+                    db_session.add(metric)
 
-            await db_session.commit()
-            logger.info("Market metrics updated successfully.")
+                metric.buffett_indicator = buffett
+                metric.yield_spread = yield_spread
+                metric.fear_greed_index = fear_greed
+                metric.vix = vix
+                metric.market_breadth_indicator = breadth
+                metric.sp500_above_sma200 = sma200_pct
+                metric.updated_at = datetime.now(TIMEZONE).replace(tzinfo=None)
+
+                await db_session.commit()
+                logger.info("Market metrics updated successfully.")
+    finally:
+        await engine.dispose()
 
 
 def main():
