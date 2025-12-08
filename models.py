@@ -108,6 +108,7 @@ class Instrument(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     yahoo_symbol: Mapped[str] = mapped_column(String(20), nullable=True, index=True)
     isin: Mapped[str] = mapped_column(String(12), nullable=True, index=True, unique=True)
+    cik: Mapped[str] = mapped_column(String(10), nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
