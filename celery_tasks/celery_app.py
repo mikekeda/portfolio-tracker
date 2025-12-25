@@ -74,4 +74,11 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=2),
         "args": (),
     },
+    # Update Trading212 pies: Daily at 3 AM UTC (night time)
+    # Runs every day at 3:00 AM UTC to update pie data from Trading212 API
+    "update_pies_nightly": {
+        "task": "celery_tasks.tasks.update_pies_task",
+        "schedule": crontab(minute=0, hour=3),
+        "args": (),
+    },
 }
