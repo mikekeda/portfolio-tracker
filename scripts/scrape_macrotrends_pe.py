@@ -1,23 +1,6 @@
-#!/usr/bin/env python3
 """
 Scrape Macrotrends PE ratio historical data table for a given stock.
-
-Usage examples:
-  - By full URL (recommended):
-      python tools/scrape_macrotrends_pe.py --url https://macrotrends.net/stocks/charts/NVDA/nvidia/pe-ratio
-
-  - By ticker and slug (slug is the company name part in the URL, lowercased):
-      python tools/scrape_macrotrends_pe.py --ticker NVDA --slug nvidia
-
-Outputs JSON to stdout by default. Use --out csv to output CSV.
-
-Notes:
-  - Macrotrends pages may change; this scraper targets the table titled
-    "<TICKER> PE Ratio Historical Data" (columns: Date, Stock Price, TTM Net EPS, PE Ratio).
-  - Requires: requests, pandas, beautifulsoup4
 """
-
-from __future__ import annotations
 
 import re
 from datetime import datetime
@@ -28,6 +11,7 @@ from typing import Optional
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
+from sqlalchemy import select, func, text as sql_text
 from sqlalchemy.orm import selectinload
 
 from config import TIMEZONE
@@ -165,9 +149,26 @@ def parse_pe_table(html: str) -> dict[str, dict[str, Optional[float]]]:
     return records
 
 
-if __name__ == "__main__":
+def update_pe_data(limit: int = 100) -> None:
+    """Update PE ratio historical data from Macrotrends for instruments with oldest PE data."""
     with get_session() as session:
-        rows = session.query(InstrumentYahoo).options(selectinload(InstrumentYahoo.instrument)).all()
+        # Sort tickers by pe date, old first, get pe for the first 100 tickers
+        last_pe_date_expr = (
+            select(func.max(sql_text("key")))
+            .select_from(func.jsonb_object_keys(InstrumentYahoo.pes).alias("key"))
+            .correlate(InstrumentYahoo)
+            .scalar_subquery()
+        )
+
+        query = (
+            select(InstrumentYahoo)
+            .where(InstrumentYahoo.pes != {})
+            .order_by(last_pe_date_expr.nulls_first())
+            .limit(limit)
+            .options(selectinload(InstrumentYahoo.instrument))
+        )
+
+        rows = session.execute(query).scalars().all()
 
         for row in rows:
             ticker = row.instrument.yahoo_symbol
@@ -183,3 +184,7 @@ if __name__ == "__main__":
                 # json.dump(row.pes, sys.stdout, indent=2)
 
             sleep(15)
+
+
+if __name__ == "__main__":
+    update_pe_data(limit=100)

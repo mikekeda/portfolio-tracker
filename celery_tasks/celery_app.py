@@ -67,4 +67,11 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour="0,12", day_of_week="sat-sun"),
         "args": (),
     },
+    # Update PE data from Macrotrends: Daily at 2 AM UTC (night time)
+    # Runs every day at 2:00 AM UTC to update PE history for instruments with oldest data
+    "update_pe_data_nightly": {
+        "task": "celery_tasks.tasks.update_pe_data_task",
+        "schedule": crontab(minute=0, hour=2),
+        "args": (),
+    },
 }
