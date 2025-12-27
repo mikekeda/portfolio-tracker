@@ -1,23 +1,6 @@
-#!/usr/bin/env python3
 """
 Scrape Wisesheets PE ratio historical data for a given stock.
-
-Usage examples:
-  - By full URL (recommended):
-      python tools/scrape_wisesheets_pe.py --url https://www.wisesheets.io/pe-ratio/MDA.TO
-
-  - By ticker:
-      python tools/scrape_wisesheets_pe.py --ticker MDA.TO
-
-Outputs JSON to stdout by default. Use --out csv to output CSV.
-
-Notes:
-  - Wisesheets pages may change; this scraper targets the PE ratio tables
-    with quarterly and annual data.
-  - Requires: requests, pandas, beautifulsoup4
 """
-
-from __future__ import annotations
 
 import sys
 from collections import defaultdict
@@ -32,9 +15,11 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
+from sqlalchemy import func, select
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import selectinload
 
-from config import TIMEZONE
+from config import TIMEZONE, logger
 from models import InstrumentYahoo
 from scripts.update_data import get_session
 
@@ -90,7 +75,7 @@ def fetch_html(url: str) -> str:
             for selector in selectors:
                 try:
                     quarterly_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                    print(f"Found quarterly button with selector: {selector}", file=sys.stderr)
+                    logger.debug(f"Found quarterly button with selector: {selector}", file=sys.stderr)
                     break
                 except Exception:
                     continue
@@ -99,12 +84,12 @@ def fetch_html(url: str) -> str:
                 quarterly_button.click()
                 # Wait a moment for the data to update
                 sleep(3)
-                print("Successfully clicked quarterly button", file=sys.stderr)
+                logger.debug("Successfully clicked quarterly button", file=sys.stderr)
             else:
-                print("Warning: Could not find quarterly button with any selector", file=sys.stderr)
+                logger.warning("Could not find quarterly button with any selector", file=sys.stderr)
 
         except Exception as e:
-            print(f"Warning: Could not click Quarterly (TTM) button: {e}", file=sys.stderr)
+            logger.warning(f"Could not click Quarterly (TTM) button: {e}", file=sys.stderr)
             # Continue anyway, we might still get some data
 
         # Get the updated HTML
@@ -264,14 +249,32 @@ def _parse_date(date_text: str) -> Optional[str]:
     return None
 
 
-if __name__ == "__main__":
+def update_pe_data(limit: int = 100) -> None:
+    """Update PE ratio historical data from Wisesheets for instruments with oldest PE data."""
     with get_session() as session:
-        rows = session.query(InstrumentYahoo).options(selectinload(InstrumentYahoo.instrument)).all()
+        # Sort tickers by pe date, old first, get pe for the first N tickers
+        last_pe_date_expr = (
+            select(func.max(sql_text("key")))
+            .select_from(func.jsonb_object_keys(InstrumentYahoo.pes).alias("key"))
+            .correlate(InstrumentYahoo)
+            .scalar_subquery()
+        )
+
+        query = (
+            select(InstrumentYahoo)
+            .where(InstrumentYahoo.pes != {})
+            .order_by(last_pe_date_expr.nulls_first())
+            .limit(limit)
+            .options(selectinload(InstrumentYahoo.instrument))
+        )
+
+        rows = session.execute(query).scalars().all()
+        tickers = [row.instrument.yahoo_symbol for row in rows][:10]
+        logger.info(f"Found {len(rows)} instruments to update: {tickers},...")
 
         for row in rows:
             ticker = row.instrument.yahoo_symbol
             url = build_url(ticker)
-            print(f"Scraping {url} for instrument_id={row.instrument_id}")
 
             try:
                 html = fetch_html(url)
@@ -289,10 +292,15 @@ if __name__ == "__main__":
                 row.pes = formatted_data
                 row.updated_at = datetime.now(TIMEZONE)
                 session.commit()
-                print(f"Successfully scraped {len(formatted_data)} PE data points for {ticker}")
 
             except Exception as e:
-                print(f"Error scraping {ticker}: {e}")
+                logger.error(f"Error scraping {ticker} (instrument_id={row.instrument_id}): {e}", exc_info=True)
+                session.rollback()
+                sleep(20)
                 continue
 
             sleep(15)  # Be respectful to the server
+
+
+if __name__ == "__main__":
+    update_pe_data(limit=10)

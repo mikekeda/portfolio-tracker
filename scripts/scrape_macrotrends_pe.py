@@ -11,10 +11,11 @@ from typing import Optional
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
-from sqlalchemy import select, func, text as sql_text
+from sqlalchemy import func, select
+from sqlalchemy import text as sql_text
 from sqlalchemy.orm import selectinload
 
-from config import TIMEZONE
+from config import TIMEZONE, logger
 from models import InstrumentYahoo
 from scripts.update_data import get_session
 
@@ -169,21 +170,30 @@ def update_pe_data(limit: int = 100) -> None:
         )
 
         rows = session.execute(query).scalars().all()
+        tickers = [row.instrument.yahoo_symbol for row in rows][:10]
+        logger.info(f"Found {len(rows)} instruments to update: {tickers},...")
 
         for row in rows:
             ticker = row.instrument.yahoo_symbol
             slug = row.instrument.name.lower().replace(" ", "-")
             url = f"https://macrotrends.net/stocks/charts/{ticker}/{slug}/pe-ratio"
-            print(url, row.instrument_id)
-            pes = parse_pe_table(fetch_html(url))
+
+            try:
+                html = fetch_html(url)
+            except Exception as e:
+                logger.error(f"Error fetching HTML for {ticker} (instrument_id={row.instrument_id}): {e}")
+                sleep(20)
+                continue
+
+            pes = parse_pe_table(html)
             if pes:
                 row.pes = pes
                 row.updated_at = datetime.now(TIMEZONE)
                 session.commit()
-                # import sys, json
-                # json.dump(row.pes, sys.stdout, indent=2)
+            else:
+                logger.warning(f"No PE data found for {ticker}")
 
-            sleep(15)
+            sleep(15)  # Be respectful to the server
 
 
 if __name__ == "__main__":

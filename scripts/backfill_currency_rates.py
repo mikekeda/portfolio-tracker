@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Backfill CurrencyRateDaily with historical currency rates.
 

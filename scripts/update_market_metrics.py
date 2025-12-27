@@ -6,8 +6,8 @@ into the MarketMetricsDaily table using async logic and shared backend utilities
 """
 
 import asyncio
-import sys
 import os
+import sys
 
 # Add project root to path to allow imports from backend
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -17,26 +17,17 @@ from typing import Optional
 
 import aiohttp
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from config import (
-    DB_HOST,
-    DB_NAME,
-    DB_PASSWORD,
-    DB_PORT,
-    DB_USER,
-    TIMEZONE,
-    VIX,
-    logger,
-)
-from models import MarketMetricsDaily, PricesDaily
 from backend.utils.market_data import (
     gen_buffett_indicator,
-    get_yield_spread,
     gen_fear_greed_index,
     gen_market_breadth_indicator,
     gen_sp500_above_sma200,
+    get_yield_spread,
 )
+from config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER, TIMEZONE, VIX, logger
+from models import MarketMetricsDaily, PricesDaily
 
 
 async def get_vix(session: AsyncSession) -> Optional[float]:

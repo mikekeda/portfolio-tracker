@@ -1,7 +1,7 @@
 import asyncio
 from celery_tasks.celery_app import app
 from scripts.backfill_portfolio_daily import backfill_portfolio_daily
-from scripts.scrape_macrotrends_pe import update_pe_data
+from scripts.scrape_wisesheets_pe import update_pe_data
 from scripts.update_data import update_data
 from scripts.update_market_metrics import update_market_metrics
 from scripts.update_pies import update_pies
