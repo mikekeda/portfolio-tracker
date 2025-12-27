@@ -11,7 +11,7 @@ from typing import Optional
 # import pandas as pd  # Not needed for this scraper
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
 from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -42,17 +42,17 @@ def build_url(ticker: str) -> str:
 def fetch_html(url: str) -> str:
     """Fetch HTML from Wisesheets, handling the Quarterly/Annual toggle."""
     # Set up Chrome options for headless browsing
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument(f"--user-agent={HEADERS['User-Agent']}")
+    browser_options = Options()
+    browser_options.add_argument("--headless")
+    browser_options.add_argument("--no-sandbox")
+    browser_options.add_argument("--disable-dev-shm-usage")
+    browser_options.add_argument("--disable-gpu")
+    browser_options.add_argument("--window-size=1920,1080")
+    browser_options.add_argument(f"--user-agent={HEADERS['User-Agent']}")
 
     driver = None
     try:
-        driver = webdriver.Chrome(options=chrome_options)
+        driver = webdriver.Firefox(options=browser_options)
         driver.get(url)
 
         # Wait for the page to load and look for the Quarterly (TTM) toggle
