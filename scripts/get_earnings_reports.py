@@ -273,7 +273,7 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
         # Convert back to dict for storage (Pydantic model to dict)
         result = validated_result.model_dump()
         
-        eps_guidance = result.get("guidance", {}).get("eps_guidance", {})
+        eps_guidance = (result.get("guidance") or {}).get("eps_guidance") or {}
         logger.info(
             f"Extracted structured data for {ticker} - EPS guidance: next_q={eps_guidance.get('next_quarter')}, "
             f"next_y={eps_guidance.get('next_year')}, growth={eps_guidance.get('growth_pct')}%"
