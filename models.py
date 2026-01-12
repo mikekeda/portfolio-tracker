@@ -19,6 +19,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -128,6 +129,8 @@ class Instrument(Base):
         foreign_keys="[TransactionHistory.ticker]",
         primaryjoin="Instrument.t212_code == TransactionHistory.ticker",
     )
+    # Earnings reports summaries
+    earnings_reports: Mapped[list["EarningsReport"]] = relationship(back_populates="instrument")
 
     def __repr__(self) -> str:
         return f"<Instrument(t212_code='{self.t212_code}', name='{self.name}')>"
@@ -507,3 +510,31 @@ class MarketMetricsDaily(Base):
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class EarningsReport(Base):
+    """Earnings Report"""
+
+    __tablename__ = "earnings_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False, index=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=True)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    # Relationships
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="earnings_reports")
+
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "date", name="uq_earnings_reports_instrument_date"),
+        Index("idx_earnings_reports_instrument_date", "instrument_id", "date"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<EarningsReport(instrument_id={self.instrument_id}, date='{self.date}')>"

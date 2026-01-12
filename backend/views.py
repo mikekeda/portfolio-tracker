@@ -6,28 +6,29 @@ FastAPI backend for Trading212 Portfolio Manager
 import asyncio
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Optional
 
 # Third-party imports
 import aiohttp
 import numpy as np
-
-# Local imports
-from backend.app import app, get_db_session
 from dateutil.relativedelta import relativedelta
 from fastapi import Depends, HTTPException
+from fastapi.responses import HTMLResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+# Local imports
+from backend.app import app, get_db_session
 from backend.screener_config import get_screener_config
 from backend.utils.dcf import get_dcf_prices
 from backend.utils.market_data import (
     gen_buffett_indicator,
     gen_fear_greed_index,
-    get_yield_spread,
     gen_market_breadth_indicator,
     gen_sp500_above_sma200,
+    get_yield_spread,
 )
 from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
@@ -445,7 +446,9 @@ async def get_instrument(
     start_date = end_date - timedelta(days=days)
 
     instrument_result = await session.execute(
-        select(Instrument).filter(Instrument.yahoo_symbol == symbol).options(selectinload(Instrument.yahoo))
+        select(Instrument)
+        .filter(Instrument.yahoo_symbol == symbol)
+        .options(selectinload(Instrument.yahoo), selectinload(Instrument.earnings_reports))
     )
     instrument = instrument_result.scalars().first()
     if not instrument:
@@ -532,6 +535,16 @@ async def get_instrument(
         "splits": {k: v for k, v in instrument.yahoo.splits.items() if date.fromisoformat(k) >= start_date},
         "recommendations": instrument.yahoo.recommendations or {},
         "news": instrument.yahoo.news,
+        "earnings_reports": [
+            {
+                "id": report.id,
+                "date": report.date.isoformat(),
+                "summary": report.summary,
+                "metrics": report.metrics,
+                "created_at": report.created_at.isoformat() if report.created_at else None,
+            }
+            for report in sorted(instrument.earnings_reports, key=lambda x: x.date, reverse=True)
+        ],
     }
 
 
@@ -761,3 +774,25 @@ async def get_pies(session: AsyncSession = Depends(get_db_session)):
     ]
 
     return pies_data
+
+
+@app.get("/api/earnings-report/{symbol}/{report_date}", response_class=HTMLResponse)
+async def get_earnings_report_html(symbol: str, report_date: str) -> HTMLResponse:
+    """
+    Get the full HTML earnings report file for a given symbol and date.
+    For local dev server only - production should use nginx to serve static files directly.
+    """
+    project_root = Path(__file__).parent.parent
+    filings_dir = project_root / "data" / "filings" / symbol
+
+    if not filings_dir.exists():
+        raise HTTPException(status_code=404, detail=f"Report directory not found for {symbol}")
+
+    matching_files = sorted(filings_dir.glob(f"{report_date}_*.html"))
+
+    if not matching_files:
+        raise HTTPException(status_code=404, detail=f"Report file not found for {symbol} on {report_date}")
+
+    html_content = matching_files[0].read_text(encoding="utf-8")
+
+    return HTMLResponse(content=html_content, status_code=200, media_type="text/html")

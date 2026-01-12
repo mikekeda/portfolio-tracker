@@ -125,6 +125,14 @@ export const portfolioAPI = {
     const response = await apiClient.get('/api/pies');
     return response.data;
   },
+
+  // Get earnings report HTML
+  getEarningsReportHtml: async (symbol, reportDate) => {
+    const response = await apiClient.get(`/api/earnings-report/${encodeURIComponent(symbol)}/${reportDate}`, {
+      responseType: 'text',  // Get as text/HTML, not JSON
+    });
+    return response.data;
+  },
 };
 
 // Export the apiClient for use in other modules

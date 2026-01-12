@@ -1,7 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, {useEffect, useMemo, useState} from 'react';
 import PropTypes from 'prop-types';
-import { useParams } from 'react-router-dom';
-import { portfolioAPI } from '../services/api';
+import {useParams} from 'react-router-dom';
+import {portfolioAPI} from '../services/api';
 import SharedTooltip from './SharedTooltip';
 import {
   Bar,
@@ -203,6 +203,53 @@ const formatShort = (n) => {
 
 const formatRatio = (n) => (n === null || n === undefined || isNaN(n) ? '-' : Number(n).toFixed(2));
 
+// Convert markdown to HTML (handles headers, bold, lists, etc.)
+const markdownToHtml = (markdown) => {
+  if (!markdown) return '';
+
+  const lines = markdown.split('\n');
+  const output = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    
+    // Headers (### -> h3, ## -> h2, # -> h1)
+    if (line.match(/^### (.+)$/)) {
+      output.push(`<h3>${line.replace(/^### /, '')}</h3>`);
+      continue;
+    }
+    if (line.match(/^## (.+)$/)) {
+      output.push(`<h2>${line.replace(/^## /, '')}</h2>`);
+      continue;
+    }
+    if (line.match(/^# (.+)$/)) {
+      output.push(`<h1>${line.replace(/^# /, '')}</h1>`);
+      continue;
+    }
+    
+    // Bullet points (- or * -> <li>)
+    const bulletMatch = line.match(/^[\s]*[-*] (.+)$/);
+    if (bulletMatch) {
+      // Process bold inside list items
+      const content = bulletMatch[1].replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      output.push(`<li>${content}</li>`);
+      continue;
+    }
+    
+    // Regular paragraph lines
+    if (line.trim()) {
+      // Process bold
+      let processedLine = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      output.push(`<p>${processedLine}</p>`);
+    } else {
+      // Empty line
+      output.push('');
+    }
+  }
+  
+  return output.join('\n');
+};
+
 const Stock = () => {
   const { symbol } = useParams();
   const [data, setData] = useState(null);
@@ -210,6 +257,9 @@ const Stock = () => {
   const [error, setError] = useState(null);
   const [chartLoading, setChartLoading] = useState(false);
   const [showFullSummary, setShowFullSummary] = useState(false);
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [reportHtml, setReportHtml] = useState(null);
+  const [loadingReport, setLoadingReport] = useState(false);
   const [chartDays, setChartDays] = useState(() => {
     const stored = localStorage.getItem('stock_chart_days') || '365';
     return stored === 'ytd' ? 'ytd' : Number(stored);
@@ -237,13 +287,33 @@ const Stock = () => {
     setShowFullSummary(prev => !prev);
   };
 
+  const openReportModal = async (symbol, reportDate) => {
+    setSelectedReport({ symbol, reportDate });
+    setLoadingReport(true);
+    setReportHtml(null);
+    
+    try {
+      const response = await portfolioAPI.getEarningsReportHtml(symbol, reportDate);
+      setReportHtml(response);
+    } catch (error) {
+      console.error('Error loading report:', error);
+      setReportHtml('<p>Error loading report. Please try again.</p>');
+    } finally {
+      setLoadingReport(false);
+    }
+  };
+
+  const closeReportModal = () => {
+    setSelectedReport(null);
+    setReportHtml(null);
+  };
+
   // Helper function to calculate YTD days
   const calculateYTDDays = () => {
     const now = new Date();
     const startOfYear = new Date(now.getFullYear(), 0, 1);
     const diffTime = Math.abs(now - startOfYear);
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays;
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   };
 
   useEffect(() => {
@@ -880,6 +950,107 @@ const Stock = () => {
           ) : <div className="empty">No recommendations data</div>}
         </div>
 
+        {/* Earnings Reports Section */}
+        {data?.earnings_reports && data.earnings_reports.length > 0 && (
+          <div className="panel">
+            <h3>Earnings Reports</h3>
+            <div className="earnings-reports-list">
+              {data.earnings_reports.map((report) => {
+                const metrics = report.metrics || {};
+                const guidance = metrics.guidance || {};
+                const epsGuidance = guidance.eps_guidance || {};
+                const revenueGuidance = guidance.revenue_guidance || {};
+                const consensus = metrics.consensus_comparison || {};
+                
+                return (
+                  <div key={report.id} className="earnings-report-item">
+                    <div className="earnings-report-header">
+                      <h4 
+                        className="earnings-report-date-link"
+                        onClick={() => openReportModal(symbol, report.date)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            openReportModal(symbol, report.date);
+                          }
+                        }}
+                      >
+                        {new Date(report.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+                      </h4>
+                    </div>
+                    
+                    {(epsGuidance.next_quarter || epsGuidance.next_year || revenueGuidance.next_quarter || revenueGuidance.next_year) && (
+                      <div className="earnings-guidance">
+                        <h5>Guidance</h5>
+                        <div className="guidance-metrics">
+                          {epsGuidance.next_year && (
+                            <div className="guidance-metric">
+                              <span className="guidance-label">EPS (Full Year):</span>
+                              <span className="guidance-value">${epsGuidance.next_year.toFixed(2)}</span>
+                              {epsGuidance.growth_pct && (
+                                <span className={`guidance-growth ${epsGuidance.growth_pct >= 0 ? 'positive' : 'negative'}`}>
+                                  {epsGuidance.growth_pct >= 0 ? '+' : ''}{epsGuidance.growth_pct.toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {epsGuidance.next_quarter && (
+                            <div className="guidance-metric">
+                              <span className="guidance-label">EPS (Next Q):</span>
+                              <span className="guidance-value">${epsGuidance.next_quarter.toFixed(2)}</span>
+                            </div>
+                          )}
+                          {revenueGuidance.next_year && (
+                            <div className="guidance-metric">
+                              <span className="guidance-label">Revenue (Full Year):</span>
+                              <span className="guidance-value">${(revenueGuidance.next_year / 1000).toFixed(2)}B</span>
+                              {revenueGuidance.growth_pct && (
+                                <span className={`guidance-growth ${revenueGuidance.growth_pct >= 0 ? 'positive' : 'negative'}`}>
+                                  {revenueGuidance.growth_pct >= 0 ? '+' : ''}{revenueGuidance.growth_pct.toFixed(1)}%
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          {consensus.guidance_vs_consensus && (
+                            <div className="guidance-metric">
+                              <span className="guidance-label">vs Consensus:</span>
+                              <span className={`guidance-value ${consensus.guidance_vs_consensus === 'above' ? 'positive' : consensus.guidance_vs_consensus === 'below' ? 'negative' : ''}`}>
+                                {consensus.guidance_vs_consensus === 'above' ? '↑ Above' : consensus.guidance_vs_consensus === 'below' ? '↓ Below' : '→ In-Line'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {consensus.eps_beat_pct !== null && consensus.eps_beat_pct !== undefined && (
+                      <div className="consensus-beat">
+                        <span className="beat-label">EPS Beat:</span>
+                        <span className={`beat-value ${consensus.eps_beat_pct >= 0 ? 'positive' : 'negative'}`}>
+                          {consensus.eps_beat_pct >= 0 ? '+' : ''}{consensus.eps_beat_pct.toFixed(2)}%
+                        </span>
+                      </div>
+                    )}
+                    
+                    {report.summary && (
+                      <div className="earnings-summary">
+                        <div 
+                          className="earnings-summary-content"
+                          dangerouslySetInnerHTML={{ 
+                            __html: markdownToHtml(report.summary)
+                          }} 
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* News Section */}
         <div className="panel">
           <h3>Latest News</h3>
@@ -944,6 +1115,32 @@ const Stock = () => {
           )}
         </div>
       </div>
+
+      {/* Earnings Report Modal */}
+      {selectedReport && (
+        <div className="modal-overlay" onClick={closeReportModal}>
+          <div className="modal-content earnings-report-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Earnings Report - {selectedReport.symbol} - {new Date(selectedReport.reportDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</h2>
+              <button className="modal-close" onClick={closeReportModal}>&times;</button>
+            </div>
+            <div className="modal-body">
+              {loadingReport ? (
+                <div className="loading">Loading report...</div>
+              ) : reportHtml ? (
+                <iframe 
+                  srcDoc={reportHtml}
+                  className="earnings-report-iframe"
+                  title="Earnings Report"
+                  sandbox="allow-same-origin"
+                />
+              ) : (
+                <div className="error">Failed to load report</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -57,6 +57,7 @@ DB_PORT = get_env_var("DB_PORT", "5432")
 API_TOKEN = get_env_var("API_TOKEN")
 DOMAIN = get_env_var("DOMAIN", "http://localhost:3000")
 FRED_API_KEY = get_env_var("FRED_API_KEY")
+GEMINI_API_KEY = get_env_var("GEMINI_API_KEY")
 
 # Yahoo Finance Configuration
 PRICE_FIELD = "Adj Close"  # or "close_price" if you prefer raw closes
