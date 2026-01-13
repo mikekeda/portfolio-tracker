@@ -81,4 +81,11 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=3),
         "args": (),
     },
+    # Fetch earnings reports from SEC EDGAR: Daily at 4 AM UTC (night time)
+    # Runs every day at 4:00 AM UTC to fetch latest 10-Q/10-K filings and generate LLM summaries
+    "fetch_earnings_reports_nightly": {
+        "task": "celery_tasks.tasks.fetch_earnings_reports_task",
+        "schedule": crontab(minute=0, hour=4),
+        "args": (100,),
+    },
 }

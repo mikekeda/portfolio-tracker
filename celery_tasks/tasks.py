@@ -1,6 +1,7 @@
 import asyncio
 from celery_tasks.celery_app import app
 from scripts.backfill_portfolio_daily import backfill_portfolio_daily
+from scripts.get_earnings_reports import get_earnings_reports
 from scripts.scrape_wisesheets_pe import update_pe_data
 from scripts.update_data import update_data
 from scripts.update_market_metrics import update_market_metrics
@@ -32,3 +33,9 @@ def update_pe_data_task():
 def update_pies_task():
     """Update Trading212 pies data from API."""
     update_pies()
+
+
+@app.task
+def fetch_earnings_reports_task(limit: int = 100):
+    """Fetch and process earnings reports from SEC EDGAR API."""
+    get_earnings_reports(limit=limit)
