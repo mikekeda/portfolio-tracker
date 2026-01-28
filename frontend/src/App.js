@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import Navigation from './components/Navigation';
 import Dashboard from './components/Dashboard';
@@ -13,6 +13,26 @@ import './App.css';
 function AppContent() {
   const location = useLocation();
   const isLoginPage = location.pathname === '/login';
+  const pageLoadTime = useRef(Date.now());
+  const RELOAD_THRESHOLD_MS = 15 * 1000; // 15 minutes
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      // Only reload when tab becomes visible (user switches back to it)
+      if (document.visibilityState === 'visible') {
+        const timeSinceLoad = Date.now() - pageLoadTime.current;
+        if (timeSinceLoad >= RELOAD_THRESHOLD_MS) {
+          window.location.reload();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [RELOAD_THRESHOLD_MS]);
 
   return (
     <div className="App">
