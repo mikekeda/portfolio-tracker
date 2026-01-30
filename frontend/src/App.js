@@ -14,7 +14,7 @@ function AppContent() {
   const location = useLocation();
   const isLoginPage = location.pathname === '/login';
   const pageLoadTime = useRef(Date.now());
-  const RELOAD_THRESHOLD_MS = 15 * 1000; // 15 minutes
+  const RELOAD_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
 
   useEffect(() => {
     const handleVisibilityChange = () => {
