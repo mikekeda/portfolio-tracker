@@ -38,8 +38,8 @@ HoldingRow.propTypes = {
 
 const Holdings = () => {
   const [holdings, setHoldings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [, setLoading] = useState(true);
+  const [, setError] = useState(null);
   const [globalFilter, setGlobalFilter] = useState('');
   const [sorting, setSorting] = useState([]);
   const [selectedScreeners, setSelectedScreeners] = useState([]);

@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useHideAmounts } from '../context/HideAmountsContext';
 import './Navigation.css';
 
 const Navigation = () => {
   const location = useLocation();
+  const { hideAmounts, setHideAmounts } = useHideAmounts();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   // Close mobile menu when route changes
@@ -70,6 +72,16 @@ const Navigation = () => {
           <Link to="/chart" className={linkClass('/chart')} onClick={handleLinkClick}>
             Chart
           </Link>
+          <label className="nav-hide-amounts">
+            <span className="nav-hide-amounts-label">Hide amounts</span>
+            <input
+              type="checkbox"
+              checked={hideAmounts}
+              onChange={(e) => setHideAmounts(e.target.checked)}
+              aria-label="Hide portfolio amounts"
+            />
+            <span className="nav-hide-amounts-slider" />
+          </label>
         </div>
       </div>
     </nav>

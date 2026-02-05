@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { HideAmountsProvider } from './context/HideAmountsContext';
 import Navigation from './components/Navigation';
 import Dashboard from './components/Dashboard';
 import Holdings from './components/Holdings';
@@ -55,7 +56,9 @@ function AppContent() {
 function App() {
   return (
     <Router>
-      <AppContent />
+      <HideAmountsProvider>
+        <AppContent />
+      </HideAmountsProvider>
     </Router>
   );
 }

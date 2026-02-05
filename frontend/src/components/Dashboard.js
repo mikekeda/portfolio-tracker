@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { portfolioAPI } from '../services/api';
+import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import TopMovers from './TopMovers';
 import PortfolioChart from './PortfolioChart';
 import './Dashboard.css';
@@ -308,6 +309,7 @@ const getSma200Tooltip = (value) => {
 };
 
 const Dashboard = () => {
+  const { hideAmounts } = useHideAmounts();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -371,12 +373,12 @@ const Dashboard = () => {
         <div className="summary-cards">
           <div className="card">
             <h3>Total Value</h3>
-            <p className="value">£{summary.total_value.toLocaleString()}</p>
+            <p className="value">{hideAmounts ? MASK : `£${summary.total_value.toLocaleString()}`}</p>
           </div>
           <div className="card">
             <h3>Total Profit</h3>
             <p className={`value ${summary.total_profit >= 0 ? 'positive' : 'negative'}`}>
-              £{summary.total_profit.toLocaleString()}
+              {hideAmounts ? MASK : `£${summary.total_profit.toLocaleString()}`}
             </p>
           </div>
           <div className="card">
@@ -392,7 +394,7 @@ const Dashboard = () => {
               {typeof summary.profitable_holdings === 'number' && typeof summary.losing_holdings === 'number' && (
                 <span className="positions-breakdown"> (
                   <span className="pos">{summary.profitable_holdings}</span> / <span className="neg">{summary.losing_holdings}</span>
-                )</span>
+                </span>
               )}
             </p>
           </div>

@@ -14,11 +14,12 @@ import {
   Treemap
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
+import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import './PortfolioChart.css';
 import SharedTooltip from './SharedTooltip';
 
 // Custom tooltip for combined Total Value + Profit/Loss chart
-const CombinedTooltip = ({ active, payload, label }) => {
+const CombinedTooltip = ({ active, payload, label, hideAmounts }) => {
   if (active && payload && payload.length) {
     const getVal = (key) => {
       const entry = payload.find((p) => p.dataKey === key);
@@ -28,7 +29,7 @@ const CombinedTooltip = ({ active, payload, label }) => {
     const invested = getVal('invested');
     const profit = getVal('profitPos') + getVal('lossNeg'); // lossNeg is negative
 
-    const fmt = (n) => `£${Number(n).toLocaleString()}`;
+    const fmt = (n) => (hideAmounts ? MASK : `£${Number(n).toLocaleString()}`);
 
     return (
       <div className="custom-tooltip">
@@ -53,12 +54,14 @@ CombinedTooltip.propTypes = {
     })
   ),
   label: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
+  hideAmounts: PropTypes.bool,
 };
 
 CombinedTooltip.defaultProps = {
   active: false,
   payload: [],
   label: '',
+  hideAmounts: false,
 };
 
 // Treemap content renderer for Asset Allocation
@@ -188,15 +191,15 @@ const TreemapTooltip = ({ active, payload }) => {
     const data = payload[0].payload || {};
     const changePct = data.change_pct || 0;
     const isPositive = changePct >= 0;
+    const allocText = typeof data.allocation_pct === 'number' ? data.allocation_pct.toFixed(2) : '0.00';
+    const changeText = Math.abs(changePct).toFixed(2);
 
     return (
       <div className="custom-tooltip treemap-tooltip">
         <p className="tooltip-title">{data.fullName || data.name || 'N/A'}</p>
-        <p className="tooltip-text">
-          allocation: {typeof data.allocation_pct === 'number' ? data.allocation_pct.toFixed(2) : '0.00'}%
-        </p>
+        <p className="tooltip-text">allocation: {allocText}%</p>
         <p className={`tooltip-text ${isPositive ? 'positive' : 'negative'}`}>
-          {isPositive ? 'up' : 'down'}: {Math.abs(changePct).toFixed(2)}%
+          {isPositive ? 'up' : 'down'}: {changeText}%
         </p>
       </div>
     );
@@ -225,6 +228,7 @@ TreemapTooltip.defaultProps = {
 
 const PortfolioChart = ({ selectedPeriod }) => {
   const navigate = useNavigate();
+  const { hideAmounts } = useHideAmounts();
   const [chartData, setChartData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -380,8 +384,8 @@ const PortfolioChart = ({ selectedPeriod }) => {
             <AreaChart data={chartData || []} isAnimationActive={false}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
-              <YAxis tickFormatter={(value) => `${(value / 1000).toFixed(0)}k`} domain={['auto', 'auto']} />
-              <Tooltip content={<CombinedTooltip />} />
+              <YAxis tickFormatter={(value) => (hideAmounts ? MASK : `${(value / 1000).toFixed(0)}k`)} domain={['auto', 'auto']} />
+              <Tooltip content={<CombinedTooltip hideAmounts={hideAmounts} />} />
               {/* Base invested cost */}
               <Area type="monotone" dataKey="invested" name="Base Cost" stackId="1" stroke="#8884d8" fill="#8884d8" fillOpacity={0.3} isAnimationActive={false} />
               {/* Profit overlay (positive values) */}

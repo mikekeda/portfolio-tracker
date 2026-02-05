@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
+import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import './Pies.css';
 
 // Constants - Expanded color palette for pies with many instruments
@@ -267,7 +268,7 @@ const RoundBar = ({
 };
 
 // PieCard Component
-const PieCard = React.memo(({ pie, isExpanded, onToggle }) => {
+const PieCard = React.memo(({ pie, isExpanded, onToggle, hideAmounts }) => {
   // State for interactive highlighting
   const [hoveredInstrument, setHoveredInstrument] = useState(null);
 
@@ -343,13 +344,13 @@ const PieCard = React.memo(({ pie, isExpanded, onToggle }) => {
             <div className="pie-name">
               <h3>{pie.name || `Pie ${pie.id}`}</h3>
               {pie.goal && (
-                <span className="pie-goal">Goal: {formatCurrency(pie.goal)}</span>
+                <span className="pie-goal">Goal: {hideAmounts ? MASK : formatCurrency(pie.goal)}</span>
               )}
             </div>
             <div className="pie-value-section">
-              <span className="value">{formatCurrency(pie.result.priceAvgValue)}</span>
+              <span className="value">{hideAmounts ? MASK : formatCurrency(pie.result.priceAvgValue)}</span>
               <span className="profit">
-                {formatCurrency(pie.result.priceAvgResult)} ({formatPercentage(pie.result.priceAvgResultCoef * 100)})
+                {hideAmounts ? MASK : formatCurrency(pie.result.priceAvgResult)} ({formatPercentage(pie.result.priceAvgResultCoef * 100)})
               </span>
             </div>
           </div>
@@ -414,9 +415,9 @@ const PieCard = React.memo(({ pie, isExpanded, onToggle }) => {
                 </div>
 
                 <div className="instrument-value">
-                  <span className="value">{formatCurrency(instrument.result.priceAvgValue)}</span>
+                  <span className="value">{hideAmounts ? MASK : formatCurrency(instrument.result.priceAvgValue)}</span>
                   <span className="profit">
-                    {formatCurrency(instrument.result.priceAvgResult)} ({formatPercentage(instrument.result.priceAvgResultCoef * 100)})
+                    {hideAmounts ? MASK : formatCurrency(instrument.result.priceAvgResult)} ({formatPercentage(instrument.result.priceAvgResultCoef * 100)})
                   </span>
                 </div>
               </div>
@@ -454,7 +455,12 @@ PieCard.propTypes = {
     }).isRequired
   }).isRequired,
   isExpanded: PropTypes.bool.isRequired,
-  onToggle: PropTypes.func.isRequired
+  onToggle: PropTypes.func.isRequired,
+  hideAmounts: PropTypes.bool,
+};
+
+PieCard.defaultProps = {
+  hideAmounts: false,
 };
 
 PieCard.displayName = 'PieCard';
@@ -506,6 +512,7 @@ RoundBar.defaultProps = {
 
 // Main Pies Component
 const Pies = () => {
+  const { hideAmounts } = useHideAmounts();
   const [pies, setPies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -572,6 +579,7 @@ const Pies = () => {
               pie={pie}
               isExpanded={expandedPies.has(pie.id)}
               onToggle={togglePieExpansion}
+              hideAmounts={hideAmounts}
             />
           ))}
         </div>
