@@ -394,7 +394,7 @@ const Dashboard = () => {
               {typeof summary.profitable_holdings === 'number' && typeof summary.losing_holdings === 'number' && (
                 <span className="positions-breakdown"> (
                   <span className="pos">{summary.profitable_holdings}</span> / <span className="neg">{summary.losing_holdings}</span>
-                </span>
+                )</span>
               )}
             </p>
           </div>
