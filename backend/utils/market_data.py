@@ -134,6 +134,19 @@ async def get_yield_spread(session: aiohttp.ClientSession) -> Optional[float]:
     return obs[0]["value"]
 
 
+async def get_consumer_sentiment(session: aiohttp.ClientSession) -> Optional[float]:
+    """
+    University of Michigan Consumer Sentiment Index via FRED.
+    Series: UMCSENT (index, base 1966:Q1 = 100). Monthly.
+    Low values often coincide with fear/recession; high with optimism.
+    Useful for long-term: depressed sentiment can signal contrarian entry.
+    """
+    obs = await gen_fred_latest(session, "UMCSENT", limit=1)
+    if not obs:
+        return None
+    return obs[0]["value"]
+
+
 async def get_risk_free_rate(session: aiohttp.ClientSession) -> float:
     """
     Fetches the 10-Year Treasury Constant Maturity Rate (DGS10) from FRED.

@@ -308,6 +308,35 @@ const getSma200Tooltip = (value) => {
   return `% > SMA200: ${value.toFixed(1)}% (${level})\n\n${recommendation}\n\nPercentage of S&P 500 stocks trading above their 200-day Simple Moving Average. A long-term trend indicator.`;
 };
 
+// Helper function to get Consumer Sentiment color (contrarian: low = potential opportunity)
+const getConsumerSentimentColor = (value) => {
+  if (value < 70) return 'positive';  // Depressed sentiment, contrarian buy
+  if (value > 90) return 'negative';  // Euphoria, caution
+  return '';
+};
+
+// Helper function to generate Consumer Sentiment tooltip
+const getConsumerSentimentTooltip = (value) => {
+  let level = '';
+  let recommendation = '';
+
+  if (value < 60) {
+    level = 'Very Low';
+    recommendation = 'Contrarian signal: Consumer sentiment is deeply depressed. For long-term buy & hold, historically this has often coincided with better entry points.';
+  } else if (value < 75) {
+    level = 'Low';
+    recommendation = 'Below-average sentiment. Can indicate fear or recession concerns. Long-term investors often find value when others are fearful.';
+  } else if (value < 90) {
+    level = 'Neutral to Optimistic';
+    recommendation = 'Sentiment in a normal range. No strong contrarian signal either way.';
+  } else {
+    level = 'High / Euphoria';
+    recommendation = 'Consumers are very optimistic. Historically, extreme optimism has sometimes preceded pullbacks. Stay disciplined with your plan.';
+  }
+
+  return `Consumer Sentiment: ${value.toFixed(1)} (${level})\n\n${recommendation}\n\nUniversity of Michigan index (base 1966 = 100). Monthly survey of consumer expectations; low readings often align with fear, high with optimism.`;
+};
+
 const Dashboard = () => {
   const { hideAmounts } = useHideAmounts();
   const [summary, setSummary] = useState(null);
@@ -522,6 +551,21 @@ const Dashboard = () => {
               >
                 <p className={`value ${getSma200Color(summary.sp500_above_sma200)}`}>
                   {summary.sp500_above_sma200.toFixed(1)}%
+                </p>
+              </a>
+            </div>
+          )}
+          {summary.consumer_sentiment !== null && summary.consumer_sentiment !== undefined && (
+            <div className="card" title={getConsumerSentimentTooltip(summary.consumer_sentiment)}>
+              <h3>Consumer Sentiment</h3>
+              <a
+                href="https://fred.stlouisfed.org/series/UMCSENT"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="value-link"
+              >
+                <p className={`value ${getConsumerSentimentColor(summary.consumer_sentiment)}`}>
+                  {summary.consumer_sentiment.toFixed(1)}
                 </p>
               </a>
             </div>

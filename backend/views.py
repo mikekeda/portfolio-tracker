@@ -28,6 +28,7 @@ from backend.utils.market_data import (
     gen_fear_greed_index,
     gen_market_breadth_indicator,
     gen_sp500_above_sma200,
+    get_consumer_sentiment,
     get_yield_spread,
 )
 from backend.utils.roic import get_roic
@@ -294,6 +295,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             buffett_indicator,
             market_breadth_indicator,
             sp500_above_sma200,
+            consumer_sentiment,
         ) = await asyncio.gather(
             session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)),
             session.execute(
@@ -309,6 +311,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             gen_buffett_indicator(aiohttp_session),
             gen_market_breadth_indicator(session, aiohttp_session),
             gen_sp500_above_sma200(session),
+            get_consumer_sentiment(aiohttp_session),
         )
 
     holdings = holdings_result.scalars().all()
@@ -342,6 +345,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
         "fear_greed_index": fear_greed_index,
         "yield_spread": yield_spread,
         "buffett_indicator": buffett_indicator,
+        "consumer_sentiment": consumer_sentiment,
     }
 
 
