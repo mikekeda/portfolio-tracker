@@ -29,6 +29,67 @@
   flex-wrap: wrap;
 }
 
+/* Show all – same slider style as nav Hide amounts */
+.holdings-show-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.holdings-show-all-label {
+  font-size: 13px;
+  color: #6c757d;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.holdings-show-all input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.holdings-show-all-slider {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  background-color: #ccc;
+  border-radius: 22px;
+  transition: background-color 0.2s ease;
+}
+.holdings-show-all-slider::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  left: 2px;
+  top: 2px;
+  background-color: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.2s ease;
+}
+.holdings-show-all input:checked + .holdings-show-all-slider {
+  background-color: #007bff;
+}
+.holdings-show-all input:checked + .holdings-show-all-slider::after {
+  transform: translateX(18px);
+}
+.holdings-show-all:hover .holdings-show-all-slider {
+  background-color: #bbb;
+}
+.holdings-show-all input:checked:hover + .holdings-show-all-slider {
+  background-color: #0056b3;
+}
+
+.holdings-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
 .search-box {
   flex: 1;
   min-width: 300px;
@@ -36,12 +97,6 @@
   margin-top: auto;
 }
 
-.export-controls {
-  display: flex;
-  align-items: center;
-  margin-top: auto;
-  margin-left: auto;
-}
 
 .btn-export {
   padding: 10px;

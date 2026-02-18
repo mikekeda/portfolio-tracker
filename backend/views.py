@@ -7,6 +7,7 @@ import asyncio
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 # Third-party imports
@@ -120,51 +121,101 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
 
 
 @app.get("/api/portfolio/current")
-async def get_current_portfolio(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
-    """Get current portfolio holdings with detailed information."""
+async def get_current_portfolio(session: AsyncSession = Depends(get_db_session), show_all: bool = False) -> dict[str, Any]:
+    """Get current portfolio holdings with detailed information. show_all=true: all monitored instruments."""
     # Get the latest snapshot date
     result = await session.execute(select(func.max(HoldingDaily.date)))
     latest_date = result.scalar()
 
-    if not latest_date:
-        return {"holdings": [], "total_holdings": 0, "last_updated": None}
-
-    # Query holdings with instrument data in the same session
-    holdings_result = await session.execute(
-        select(HoldingDaily)
-        .join(Instrument)
-        .filter(HoldingDaily.date == latest_date)
-        .order_by(Instrument.name)
-        .options(selectinload(HoldingDaily.instrument).selectinload(Instrument.yahoo))
-    )
-    holdings = holdings_result.scalars().all()
-
-    # Get currency rates
-    currency_rates = await get_rates(session)
+    if show_all:
+        # All monitored instruments: real holdings where held, mock (quantity=0) for others
+        instruments_result = await session.execute(
+            select(Instrument)
+            .where(Instrument.yahoo_symbol.isnot(None))
+            .order_by(Instrument.name)
+            .options(selectinload(Instrument.yahoo))
+        )
+        instruments = list(instruments_result.scalars().all())
+        if not instruments:
+            return {"holdings": [], "total_holdings": 0, "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS, "last_updated": None}
+        holdings_result = await session.execute(
+            select(HoldingDaily)
+            .join(Instrument)
+            .filter(HoldingDaily.date == latest_date)
+            .options(selectinload(HoldingDaily.instrument).selectinload(Instrument.yahoo))
+        )
+        holdings_list = holdings_result.scalars().all()
+        holding_by_symbol = {(h.instrument.yahoo_symbol or h.instrument.t212_code): h for h in holdings_list}
+        symbols_held = set(holding_by_symbol.keys())
+        currency_rates = await get_rates(session)
+        total_portfolio_value = sum(
+            h.quantity * h.current_price * currency_rates.get(h.instrument.currency, 1.0)
+            for h in holdings_list
+        )
+        items = []
+        for inst in instruments:
+            sym = inst.yahoo_symbol
+            if not sym:
+                continue
+            if sym in symbols_held:
+                items.append(holding_by_symbol[sym])
+            else:
+                info = (inst.yahoo.info or {}) if inst.yahoo else {}
+                price = (info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")) or 0
+                if not isinstance(price, (int, float)):
+                    price = 0
+                items.append(SimpleNamespace(
+                    instrument=inst,
+                    quantity=0,
+                    avg_price=None,
+                    current_price=float(price) if price else 0,
+                    ppl=None,
+                    fx_ppl=None,
+                    date=latest_date or datetime.now(TIMEZONE).date(),
+                ))
+        symbols_for_technical = [i.yahoo_symbol for i in instruments if i.yahoo_symbol]
+        instruments_for_dcf = instruments
+    else:
+        if not latest_date:
+            return {"holdings": [], "total_holdings": 0, "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS, "last_updated": None}
+        # Query holdings with instrument data in the same session
+        holdings_result = await session.execute(
+            select(HoldingDaily)
+            .join(Instrument)
+            .filter(HoldingDaily.date == latest_date)
+            .order_by(Instrument.name)
+            .options(selectinload(HoldingDaily.instrument).selectinload(Instrument.yahoo))
+        )
+        holdings = holdings_result.scalars().all()
+        # Get currency rates
+        currency_rates = await get_rates(session)
+        total_portfolio_value = 0.0
+        for holding in holdings:
+            market_value_native = holding.quantity * holding.current_price
+            market_value_gbp = market_value_native * currency_rates[holding.instrument.currency]
+            total_portfolio_value += market_value_gbp
+        items = holdings
+        symbols_for_technical = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
+        instruments_for_dcf = [h.instrument for h in holdings]
 
     # Calculate technical indicators using centralized function
-    symbols_for_technical = [h.instrument.yahoo_symbol for h in holdings if h.instrument.yahoo_symbol]
     rsi_data, technical_data = await calculate_technical_indicators_for_symbols(symbols_for_technical, session)
-    dcf_prices = await get_dcf_prices([h.instrument for h in holdings])
+    dcf_prices = await get_dcf_prices(instruments_for_dcf)
     dcf_prices_dict = dict(zip(symbols_for_technical, dcf_prices))
 
-    # Calculate total portfolio value for percentage calculation
-    total_portfolio_value = 0.0
-    for holding in holdings:
-        market_value_native = holding.quantity * holding.current_price
-        market_value_gbp = market_value_native * currency_rates[holding.instrument.currency]
-        total_portfolio_value += market_value_gbp
-
     portfolio_data = []
-    for holding in holdings:
+    for holding in items:
         market_value_native = holding.quantity * holding.current_price
-        market_value_gbp = market_value_native * currency_rates[holding.instrument.currency]
+        market_value_gbp = market_value_native * currency_rates.get(holding.instrument.currency, 1.0)
         portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
-        dcf_price = dcf_prices_dict[holding.instrument.yahoo_symbol]
+        dcf_price = dcf_prices_dict.get(holding.instrument.yahoo_symbol)
 
         # Yahoo Finance info for this instrument
-        info = holding.instrument.yahoo.info
+        info = (holding.instrument.yahoo.info or {}) if holding.instrument.yahoo else {}
         trends = calculate_historical_trends(holding)
+        profit = holding.ppl if holding.ppl is not None else 0
+        cost_basis = (market_value_gbp - holding.ppl) if holding.ppl is not None else 0
+        return_pct = (holding.ppl / cost_basis * 100.0) if holding.ppl is not None and cost_basis > 0 else 0.0
 
         portfolio_data.append(
             {
@@ -172,27 +223,25 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                 "name": holding.instrument.name,
                 "yahoo_symbol": holding.instrument.yahoo_symbol,
                 "currency": holding.instrument.currency,
-                "sector": holding.instrument.yahoo.info.get("sector"),
-                "country": holding.instrument.yahoo.info.get("country"),
+                "sector": info.get("sector"),
+                "country": info.get("country"),
                 "quantity": holding.quantity,
                 "avg_price": holding.avg_price,
                 "current_price": holding.current_price,
-                "analyst_price_targets": holding.instrument.yahoo.analyst_price_targets,
+                "analyst_price_targets": holding.instrument.yahoo.analyst_price_targets if holding.instrument.yahoo else None,
                 "dcf_price": dcf_price,
-                "dcf_diff": dcf_price / holding.current_price - 1 if dcf_price else None,
+                "dcf_diff": (dcf_price / holding.current_price - 1) if (dcf_price and holding.current_price) else None,
                 "ppl": holding.ppl,
                 "fx_ppl": holding.fx_ppl,
                 "market_cap": info.get("marketCap"),
                 "pe_ratio": info.get("trailingPE"),
-                "ps_ratio": holding.instrument.yahoo.info.get("priceToSalesTrailing12Months"),
-                "avg_pe": holding.instrument.yahoo.avg_pe_5y,
+                "ps_ratio": info.get("priceToSalesTrailing12Months"),
+                "avg_pe": getattr(holding.instrument.yahoo, "avg_pe_5y", None) if holding.instrument.yahoo else None,
                 "beta": info.get("beta"),
-                "date": holding.date.isoformat(),
+                "date": holding.date.isoformat() if hasattr(holding.date, "isoformat") else str(holding.date),
                 "market_value": market_value_gbp,  # Now in GBP
-                "profit": holding.ppl,  # Total profit (same as terminal - ppl already includes FX)
-                "return_pct": (holding.ppl / (market_value_gbp - holding.ppl) * 100.0)
-                if (market_value_gbp - holding.ppl) > 0
-                else 0.0,
+                "profit": profit,  # Total profit (same as terminal - ppl already includes FX)
+                "return_pct": return_pct,
                 "portfolio_pct": portfolio_pct,
                 "dividend_yield": info.get("dividendYield"),
                 "business_summary": info.get("longBusinessSummary"),
@@ -222,12 +271,12 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                 if (info.get("freeCashflow") and info.get("marketCap", 0) > 0)
                 else None,
                 "quickRatio": info.get("quickRatio")
-                if holding.instrument.yahoo.info.get("sector") != "Financial Services"
+                if info.get("sector") != "Financial Services"
                 else None,
                 "debtToEquity": info.get("debtToEquity"),
                 "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
                 "recommendation_key": info.get("recommendationKey"),
-                "recommendations": holding.instrument.yahoo.recommendations,
+                "recommendations": holding.instrument.yahoo.recommendations if holding.instrument.yahoo else None,
                 "number_of_analyst_opinions": info.get("numberOfAnalystOpinions"),
                 "fifty_two_week_high_distance": round(info["fiftyTwoWeekHighChangePercent"] * 100)
                 if info.get("fiftyTwoWeekHighChangePercent")
@@ -238,7 +287,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
                 "short_percent_of_float": info["shortPercentOfFloat"] * 100
                 if info.get("shortPercentOfFloat")
                 else None,
-                "rsi": rsi_data[holding.instrument.yahoo_symbol],
+                "rsi": rsi_data.get(holding.instrument.yahoo_symbol),
                 "rule_of_40_score": (info.get("revenueGrowth", 0) * 100) + (info.get("profitMargins", 0) * 100)
                 if (info.get("revenueGrowth") is not None and info.get("profitMargins") is not None)
                 else None,  # Keep full precision
@@ -265,11 +314,12 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session))
     # Calculate screener results for each holding
     calculate_screener_results(portfolio_data)
 
+    last_updated = latest_date.isoformat() if latest_date else datetime.now(TIMEZONE).date().isoformat()
     return {
         "holdings": portfolio_data,
         "total_holdings": len(portfolio_data),
         "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS,
-        "last_updated": latest_date.isoformat(),
+        "last_updated": last_updated,
     }
 
 

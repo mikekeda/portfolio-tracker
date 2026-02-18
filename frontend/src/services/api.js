@@ -60,9 +60,9 @@ apiClient.interceptors.response.use(
 
 // Portfolio API methods
 export const portfolioAPI = {
-  // Get current portfolio holdings
-  getCurrentHoldings: async () => {
-    const response = await apiClient.get('/api/portfolio/current');
+  // Get portfolio holdings. showAll=false (default): current holdings only. showAll=true: all monitored instruments.
+  getCurrentHoldings: async (showAll = false) => {
+    const response = await apiClient.get('/api/portfolio/current', { params: { show_all: showAll } });
     return response.data;
   },
 

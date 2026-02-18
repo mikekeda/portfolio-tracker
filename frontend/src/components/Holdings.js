@@ -15,6 +15,8 @@ import { calculateBarWidth, getBarColorScheme, calculateMinMax, getBarStyle, sho
 import { getAvailableScreeners } from '../services/screeners';
 import './Holdings.css';
 
+const POSITION_ONLY_COLUMN_IDS = ['portfolio_pct', 'market_value', 'profit', 'return_pct'];
+
 // This component will only re-render if its own props change
 const HoldingRow = React.memo(({ row, isSelected }) => {
   return (
@@ -37,8 +39,9 @@ HoldingRow.propTypes = {
 };
 
 const Holdings = () => {
+  const [showAll, setShowAll] = useState(false);
   const [holdings, setHoldings] = useState([]);
-  const [, setLoading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [, setError] = useState(null);
   const [globalFilter, setGlobalFilter] = useState('');
   const [sorting, setSorting] = useState([]);
@@ -136,7 +139,8 @@ const Holdings = () => {
   }, [filteredHoldings]);
 
   const columns = useMemo(
-    () => [
+    () => {
+      const cols = [
       columnHelper.display({
         id: 'select',
         header: ({ table }) => {
@@ -260,6 +264,7 @@ const Holdings = () => {
         header: 'Return',
         cell: (info) => {
           const value = info.getValue();
+          if (value === null || value === undefined) return <span className="return">—</span>;
           return (
             <span className={`return ${value >= 0 ? 'positive' : 'negative'}`}>
               {value >= 0 ? '+' : ''}{Math.round(value)}%
@@ -845,15 +850,17 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 80,
       }),
-    ],
-    [columnHelper, barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners]
+    ];
+      return showAll ? cols.filter(col => !POSITION_ONLY_COLUMN_IDS.includes(col.id)) : cols;
+    },
+    [columnHelper, barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners, showAll]
   );
 
   useEffect(() => {
     const fetchHoldings = async () => {
       try {
         setLoading(true);
-        const data = await portfolioAPI.getCurrentHoldings();
+        const data = await portfolioAPI.getCurrentHoldings(showAll);
         setHoldings(data.holdings || []);
         setQuickRatioThresholds(data.quick_ratio_thresholds || {});
         setError(null);
@@ -866,7 +873,7 @@ const Holdings = () => {
     };
 
     fetchHoldings();
-  }, []);
+  }, [showAll]);
 
   // Fetch available screeners
   useEffect(() => {
@@ -944,7 +951,7 @@ const Holdings = () => {
     getFilteredRowModel: getFilteredRowModel(),
     globalFilterFn: 'includesString',
     initialState: {
-      sorting: [{ id: 'market_value', desc: true }], // Sort by market value descending by default
+      sorting: showAll ? [{ id: 'name', desc: false }] : [{ id: 'market_value', desc: true }],
     },
     columnResizeMode: 'onChange',
   });
@@ -1119,7 +1126,7 @@ const Holdings = () => {
 
   return (
     <div className="holdings-container">
-      <h2>Current Holdings</h2>
+      <h2>{showAll ? 'All instruments' : 'Current Holdings'}</h2>
 
       {/* Search and Filter Controls */}
       <div className="table-controls">
@@ -1133,6 +1140,25 @@ const Holdings = () => {
             className="search-input"
           />
         </div>
+        <div className="holdings-actions">
+          <label className="holdings-show-all">
+            <span className="holdings-show-all-label">Show all</span>
+            <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} aria-label="Show all monitored instruments" />
+            <span className="holdings-show-all-slider" />
+          </label>
+          <button
+            onClick={exportToCSV}
+            className="btn-export"
+            title="Export filtered instruments to CSV"
+            aria-label="Export filtered instruments to CSV"
+            disabled={table.getFilteredRowModel().rows.length === 0}
+          >
+            <svg className="export-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M8 11L8 3M8 11L5.5 8.5M8 11L10.5 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M2.5 12.5H13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+        </div>
 
         <div className="screener-badges-section">
           <label>Available Screeners:</label>
@@ -1144,9 +1170,9 @@ const Holdings = () => {
                 <button
                   className={`screener-badge all-holdings ${selectedScreeners.length === 0 ? 'active' : ''}`}
                   onClick={() => handleScreenerChange('')}
-                  title="Show all holdings"
+                  title="Clear screener filters"
                 >
-                  <span className="screener-name">All Holdings</span>
+                  <span className="screener-name">All</span>
                   <span className="screener-count">({holdingsWithScreeners.length})</span>
                 </button>
                 {availableScreeners
@@ -1185,25 +1211,9 @@ const Holdings = () => {
           </div>
         </div>
 
-        {/* Export Button */}
-        <div className="export-controls">
-          <button
-            onClick={exportToCSV}
-            className="btn-export"
-            title="Export filtered holdings to CSV"
-            aria-label="Export filtered holdings to CSV"
-            disabled={table.getFilteredRowModel().rows.length === 0}
-          >
-            <svg className="export-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-              <path d="M8 11L8 3M8 11L5.5 8.5M8 11L10.5 8.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M2.5 12.5H13.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-            </svg>
-          </button>
-        </div>
-
         <div className="table-info">
           <span>
-            Showing {table.getFilteredRowModel().rows.length} of {holdings.length} holdings
+            Showing {table.getFilteredRowModel().rows.length} of {holdings.length} instruments
             {selectedScreeners.length > 0 && (
               <span className="filter-status">
                 {' '}(filtered by {selectedScreeners.length === 1
@@ -1244,6 +1254,9 @@ const Holdings = () => {
 
       {/* Table */}
       <div className="holdings-table-container">
+        {loading ? (
+          <div className="loading">Loading instruments...</div>
+        ) : (
         <table className="holdings-table">
           <thead>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -1291,12 +1304,12 @@ const Holdings = () => {
                 <td colSpan={columns.length} className="no-results">
                   {selectedScreeners.length > 0 ? (
                     <div className="no-screener-results">
-                      <p>No holdings match the selected screener{selectedScreeners.length > 1 ? 's' : ''} criteria.</p>
-                      <p>Try selecting different screener{selectedScreeners.length > 1 ? 's' : ''} or clear the filter to see all holdings.</p>
+                      <p>No instruments match the selected screener{selectedScreeners.length > 1 ? 's' : ''} criteria.</p>
+                      <p>Try selecting different screener{selectedScreeners.length > 1 ? 's' : ''} or clear the filter to see all instruments.</p>
                     </div>
                   ) : (
                     <div className="no-holdings">
-                      <p>No holdings found.</p>
+                      <p>No instruments found.</p>
                     </div>
                   )}
                 </td>
@@ -1304,12 +1317,13 @@ const Holdings = () => {
             )}
           </tbody>
         </table>
+        )}
       </div>
 
       {/* Summary */}
       <div className="holdings-summary">
-        <p>Total Holdings: {holdings.length}</p>
-        <p>Filtered Holdings: {table.getFilteredRowModel().rows.length}</p>
+        <p>Total instruments: {holdings.length}</p>
+        <p>Filtered instruments: {table.getFilteredRowModel().rows.length}</p>
         <p>Last Updated: {holdings.length > 0 ? new Date(holdings[0].date).toLocaleDateString() : ''}</p>
       </div>
     </div>
