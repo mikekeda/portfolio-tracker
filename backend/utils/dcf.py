@@ -206,6 +206,16 @@ def _derive_shares_if_needed(info: dict[str, Any], candidate_shares: Optional[fl
 
 def _estimate_dcf_inputs(instrument: Instrument, risk_free_rate: float) -> DcfInputs:
     """Estimates all necessary inputs for a DCF valuation from instrument data."""
+    if instrument.yahoo is None:
+        return {
+            "current_fcf": None,
+            "shares_outstanding": None,
+            "total_cash": 0.0,
+            "total_debt": 0.0,
+            "wacc": 0.10,
+            "initial_growth_rate": TERMINAL_GROWTH_RATE,
+            "terminal_growth_rate": TERMINAL_GROWTH_RATE,
+        }
     info = instrument.yahoo.info or {}
     cashflow = instrument.yahoo.cashflow or {}
     sector = info.get("sector") or ""
