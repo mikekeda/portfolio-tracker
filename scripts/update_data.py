@@ -266,14 +266,36 @@ def update_holdings() -> list[HoldingDaily]:
         instruments = session.query(Instrument).order_by(Instrument.updated_at).all()
 
         instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
-        # Update this data only once a day
-        yahoo_datas = get_yahoo_ticker_data(
-            [
-                i.yahoo_symbol
-                for i in instruments
-                if i.updated_at > datetime.now() - timedelta(days=YAHOO_UPDATE_INTERVAL_DAYS)
-            ][:YAHOO_UPDATE_LIMIT]
+
+        # Prioritize instruments that have NO InstrumentYahoo (backfill) - these cause 500s on portfolio page.
+        # Then include recently-updated ones for refresh. Cap at YAHOO_UPDATE_LIMIT.
+        instruments_without_yahoo_ids = set(
+            row[0]
+            for row in session.execute(
+                select(Instrument.id)
+                .outerjoin(InstrumentYahoo, Instrument.id == InstrumentYahoo.instrument_id)
+                .where(InstrumentYahoo.instrument_id.is_(None))
+                .where(Instrument.yahoo_symbol.isnot(None))
+            ).all()
         )
+        cutoff = datetime.now(TIMEZONE) - timedelta(days=YAHOO_UPDATE_INTERVAL_DAYS)
+        symbols_to_fetch: list[str] = [i.yahoo_symbol for i in instruments if i.id in instruments_without_yahoo_ids][
+            :YAHOO_UPDATE_LIMIT
+        ]
+        for i in instruments:
+            if len(symbols_to_fetch) >= YAHOO_UPDATE_LIMIT:
+                break
+            if i.yahoo_symbol in symbols_to_fetch:
+                continue
+            inst_updated = i.updated_at.replace(tzinfo=TIMEZONE) if i.updated_at.tzinfo is None else i.updated_at
+            if inst_updated > cutoff:
+                symbols_to_fetch.append(i.yahoo_symbol)
+        if instruments_without_yahoo_ids:
+            logger.info(
+                "Backfilling InstrumentYahoo for %d instruments missing Yahoo data",
+                len(instruments_without_yahoo_ids),
+            )
+        yahoo_datas = get_yahoo_ticker_data(symbols_to_fetch)
 
         # Delete sold holdings
         deleted = (
