@@ -78,6 +78,9 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
         "pe_5y_avg_vs_current_pct": None,
     }
 
+    if holding.instrument.yahoo is None:
+        return trends
+
     # --- 1. Recommendation Trend ---
     recs = holding.instrument.yahoo.recommendations
     trends["recommendation_trend"] = 0.0
@@ -533,7 +536,7 @@ async def get_instrument(
             "total": order.total,
         }
 
-    yd = instrument.yahoo.info or {}
+    yd = (instrument.yahoo.info or {}) if instrument.yahoo else {}
 
     fundamentals = {
         "marketCap": yd.get("marketCap"),
@@ -566,6 +569,7 @@ async def get_instrument(
         "_rawCurrency": yd.get("financialCurrency"),
     }
 
+    yh = instrument.yahoo
     return {
         "instrument": {
             "id": instrument.id,
@@ -573,22 +577,22 @@ async def get_instrument(
             "t212_code": instrument.t212_code,
             "name": instrument.name,
             "currency": instrument.currency,
-            "sector": instrument.yahoo.info.get("sector"),
-            "country": instrument.yahoo.info.get("country"),
+            "sector": yd.get("sector"),
+            "country": yd.get("country"),
             "business_summary": yd.get("longBusinessSummary"),
             "quote_type": yd.get("quoteType"),
         },
         "fundamentals": fundamentals,
-        "earnings": instrument.yahoo.earnings or {},
-        "cashflow": instrument.yahoo.cashflow or {},
+        "earnings": (yh.earnings or {}) if yh else {},
+        "cashflow": (yh.cashflow or {}) if yh else {},
         "prices": chart_price_data,
         "orders": chart_orders_data,
         "pe_history": {
-            k: v["pe_ratio"] for k, v in instrument.yahoo.pes.items() if date.fromisoformat(k) >= start_date
-        },
-        "splits": {k: v for k, v in instrument.yahoo.splits.items() if date.fromisoformat(k) >= start_date},
-        "recommendations": instrument.yahoo.recommendations or {},
-        "news": instrument.yahoo.news,
+            k: v["pe_ratio"] for k, v in (yh.pes or {}).items() if date.fromisoformat(k) >= start_date
+        } if yh else {},
+        "splits": {k: v for k, v in (yh.splits or {}).items() if date.fromisoformat(k) >= start_date} if yh else {},
+        "recommendations": (yh.recommendations or {}) if yh else {},
+        "news": yh.news if yh else [],
         "earnings_reports": [
             {
                 "id": report.id,

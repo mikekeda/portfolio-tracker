@@ -42,7 +42,7 @@ const Holdings = () => {
   const [showAll, setShowAll] = useState(false);
   const [holdings, setHoldings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [, setError] = useState(null);
+  const [error, setError] = useState(null);
   const [globalFilter, setGlobalFilter] = useState('');
   const [sorting, setSorting] = useState([]);
   const [selectedScreeners, setSelectedScreeners] = useState([]);
@@ -860,12 +860,15 @@ const Holdings = () => {
     const fetchHoldings = async () => {
       try {
         setLoading(true);
+        setError(null);
         const data = await portfolioAPI.getCurrentHoldings(showAll);
         setHoldings(data.holdings || []);
         setQuickRatioThresholds(data.quick_ratio_thresholds || {});
-        setError(null);
       } catch (err) {
-        setError('Failed to fetch holdings data');
+        const msg = err.response?.data?.detail;
+        setError(
+          typeof msg === 'string' ? msg : Array.isArray(msg) ? msg.map((e) => e.msg || JSON.stringify(e)).join('; ') : 'Failed to fetch holdings data'
+        );
         console.error('Error fetching holdings:', err);
       } finally {
         setLoading(false);
@@ -1127,6 +1130,12 @@ const Holdings = () => {
   return (
     <div className="holdings-container">
       <h2>{showAll ? 'All instruments' : 'Current Holdings'}</h2>
+
+      {error && (
+        <div className="holdings-error" role="alert">
+          {error}
+        </div>
+      )}
 
       {/* Search and Filter Controls */}
       <div className="table-controls">
