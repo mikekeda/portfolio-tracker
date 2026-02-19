@@ -344,6 +344,7 @@ def update_holdings() -> list[HoldingDaily]:
                         analyst_price_targets=yahoo_datas[yahoo_symbol]["analyst_price_targets"],
                         splits=yahoo_datas[yahoo_symbol]["splits"],
                         news=yahoo_datas[yahoo_symbol]["news"],
+                        pes={},  # Populated by scrape_wisesheets_pe / scrape_macrotrends_pe
                     )
                 )
 
