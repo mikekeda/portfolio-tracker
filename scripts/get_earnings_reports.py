@@ -72,14 +72,46 @@ class ConsensusComparison(BaseModel):
     )
 
 
+class InvestmentAssessment(BaseModel):
+    """LLM assessment of whether the stock is a good buy based on the report."""
+
+    recommendation: Literal["buy", "hold", "avoid", "consider"] = Field(
+        ..., description="Overall recommendation: buy (attractive), hold (neutral), avoid (unattractive), consider (worth researching)"
+    )
+    conviction: Literal["high", "medium", "low"] = Field(
+        ..., description="Confidence in the recommendation based on clarity of data"
+    )
+    rationale: str = Field(
+        "",
+        description="2-3 sentence rationale for the recommendation",
+        max_length=500,
+    )
+    key_catalysts: list[str] = Field(
+        default_factory=list,
+        description="Top 2-4 positive catalysts or growth drivers from the report",
+    )
+    key_concerns: list[str] = Field(
+        default_factory=list,
+        description="Top 2-4 risks or headwinds from the report",
+    )
+    quality_signals: Literal["strong", "adequate", "weak"] | None = Field(
+        None,
+        description="Earnings quality: FCF vs net income, margin trends, capital allocation",
+    )
+
+
 class EarningsReportMetrics(BaseModel):
     """Structured metrics extracted from earnings report - focused on forward-looking data."""
 
     guidance: Guidance = Field(..., description="Forward-looking guidance from management - CRITICAL for valuation")
     consensus_comparison: ConsensusComparison | None = None
+    investment_assessment: InvestmentAssessment | None = Field(
+        None,
+        description="Assessment of whether the stock is a good buy based on the report",
+    )
     summary: str = Field(
         ...,
-        description="Markdown-formatted summary (300-500 words) with sections: Key Financial Results, Strategic Highlights, Risks & Headwinds, Future Outlook. Use bold for key numbers, include specific percentages and comparisons.",
+        description="Markdown-formatted summary (300-500 words) with sections: Key Financial Results, Strategic Highlights, Risks & Headwinds, Future Outlook, Investment Thesis, Bottom Line. Use bold for key numbers, include specific percentages and comparisons.",
     )
 
 
@@ -200,70 +232,62 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
             text = text[:max_chars]
 
         prompt = f"""
-        You are a financial analyst. Analyze this {form} earnings report for {ticker} and extract structured metrics while generating a comprehensive summary.
+        You are a value-oriented financial analyst helping a retail investor decide whether {ticker} is a good buy for their portfolio. Analyze this {form} earnings report and extract structured metrics while generating a comprehensive summary.
 
         **CRITICAL: EPS Guidance is the highest priority** - Stock price = EPS × PE ratio. If EPS guidance grows 10%, stock should theoretically grow 10% with same PE.
 
-        **Extract ONLY the following structured data (focus on forward-looking metrics):**
+        **Extract the following structured data:**
 
         1. **Guidance (MOST IMPORTANT - REQUIRED):**
            - Look for EPS guidance in sections like "Outlook", "Guidance", "Forecast", "Expectations", "Q4 2025", "FY 2025", etc.
-           - EPS guidance may be stated as: "expects EPS of $X.XX", "forecasts EPS between $X and $Y", "guidance of $X.XX", "expects earnings per share of $X.XX"
-           - Extract next quarter EPS guidance if provided (e.g., "Q4 2025 EPS of $1.50")
-           - Extract full year EPS guidance if provided (e.g., "FY 2025 EPS of $5.50")
-           - Calculate growth_pct by comparing guidance to prior year actual EPS (if available in report)
-           - Revenue guidance: Look for statements like "expects revenue of $XX billion", "forecasts revenue between $X and $Y million"
-           - Extract revenue guidance in millions for next quarter and full year
-           - Calculate revenue growth_pct if prior period revenue is available
+           - EPS guidance may be stated as: "expects EPS of $X.XX", "forecasts EPS between $X and $Y", "guidance of $X.XX"
+           - Extract next quarter EPS guidance if provided; extract full year EPS guidance if provided
+           - Calculate growth_pct by comparing guidance to prior year actual EPS (if available)
+           - Revenue guidance: extract in millions for next quarter and full year; calculate growth_pct if prior period available
            - **IMPORTANT**: If management does NOT provide specific guidance numbers, set all guidance fields to null. Do NOT infer or estimate.
 
         2. **Consensus Comparison (if available):**
-           - Look for mentions of "consensus", "analyst estimates", "Street estimates", "beats", "misses"
-           - Extract how actual revenue compared to consensus (beat_pct = (actual - consensus) / consensus * 100)
-           - Extract how actual EPS compared to consensus
-           - Note if guidance is "above", "below", or "in-line" with consensus estimates
-           - **IMPORTANT**: Only extract if explicitly mentioned. Do NOT calculate if consensus is not stated.
+           - Look for "consensus", "analyst estimates", "Street estimates", "beats", "misses"
+           - Extract revenue_beat_pct and eps_beat_pct; note guidance_vs_consensus (above/below/in-line)
+           - Only extract if explicitly mentioned. Do NOT calculate if consensus is not stated.
 
-        **Generate Summary (Markdown, 300-500 words):**
+        3. **Investment Assessment (REQUIRED - answer "is this a good buy?"):**
+           - **recommendation**: "buy" (attractive), "hold" (neutral), "avoid" (unattractive), or "consider" (worth researching)
+           - **conviction**: "high", "medium", or "low" based on clarity of data and management credibility
+           - **rationale**: 2-3 sentences explaining why (e.g., "Strong guidance raise and margin expansion support buy. Debt paydown reduces risk.")
+           - **key_catalysts**: 2-4 positive drivers (e.g., "AI revenue accelerating", "Market share gains", "Buyback program")
+           - **key_concerns**: 2-4 risks (e.g., "Macro headwinds", "Customer concentration", "Margin pressure")
+           - **quality_signals**: "strong" (FCF > net income, margins expanding), "adequate", or "weak" (FCF concerns, margin compression)
+           - Base assessment on: growth vs valuation, earnings quality, risk/reward, management credibility
 
-        Follow this exact structure with the same level of detail as these examples:
+        **Generate Summary (Markdown, 350-550 words):**
 
         ### Key Financial Results
         - Lead with revenue, EPS, net income with YoY/QoQ comparisons
         - Include gross margin and operating margin with basis point changes
-        - Segment performance with specific percentages (if applicable)
-        - Beat/miss vs. consensus if mentioned
+        - Segment performance with specific percentages; beat/miss vs. consensus if mentioned
 
         ### Strategic Highlights
-        - Major strategic initiatives with specific details
-        - Operational improvements or changes
-        - Capital allocation actions (buybacks, dividends, debt)
+        - Major strategic initiatives; operational improvements; capital allocation (buybacks, dividends, debt)
 
         ### Risks & Headwinds
-        - Top 3-5 risks with specific details
-        - Regulatory, competitive, macroeconomic concerns
-        - Legal or geopolitical issues
+        - Top 3-5 risks with specific details; regulatory, competitive, macro concerns
 
         ### Future Outlook
         - **EPS guidance prominently featured** (next quarter/year with growth %)
-        - Revenue guidance
-        - CapEx plans
-        - Management commentary on trends
-        - Capital allocation plans
+        - Revenue guidance; CapEx plans; management commentary; capital allocation plans
 
-        **Formatting Requirements:**
-        - Use **bold** for all key numbers and percentages
-        - Include specific comparisons (e.g., "up from $1.87 YoY", "220 basis points")
-        - Use bullet points for scannability
-        - Keep paragraphs concise (2-3 sentences)
-        - Include segment breakdowns when available
-        - Be specific with numbers (e.g., "$2.29 billion" not "2.29B")
+        ### Investment Thesis
+        - 2-3 bullet points: bull case, bear case, key metric to watch
 
-        **Important:**
-        - For all monetary values, use millions as the unit (e.g., $13,640 million not $13.64 billion)
-        - Extract exact values from financial statements
-        - If a metric is not available, use null
-        - Focus on forward-looking information (guidance) as it's most valuable for investors
+        ### Bottom Line
+        - 1-2 sentences: Direct answer "Good buy because..." or "Avoid because..." or "Hold and watch..."
+        - Include the single most important factor from the report
+
+        **Formatting:**
+        - Use **bold** for key numbers and percentages
+        - Use millions as unit (e.g., $13,640 million not $13.64 billion)
+        - Be specific with numbers; if a metric is not available, use null
 
         --- REPORT TEXT ---
         {text}
@@ -287,9 +311,11 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
         result = validated_result.model_dump()
 
         eps_guidance = (result.get("guidance") or {}).get("eps_guidance") or {}
+        assessment = result.get("investment_assessment") or {}
         logger.info(
             f"Extracted structured data for {ticker} - EPS guidance: next_q={eps_guidance.get('next_quarter')}, "
-            f"next_y={eps_guidance.get('next_year')}, growth={eps_guidance.get('growth_pct')}%"
+            f"next_y={eps_guidance.get('next_year')}, growth={eps_guidance.get('growth_pct')}% | "
+            f"Assessment: {assessment.get('recommendation', 'N/A')} ({assessment.get('conviction', 'N/A')})"
         )
         return result
 
