@@ -131,6 +131,10 @@ class Instrument(Base):
     )
     # Earnings reports summaries
     earnings_reports: Mapped[list["EarningsReport"]] = relationship(back_populates="instrument")
+    # 13F institutional holdings (when cusip matches)
+    form13f_holdings: Mapped[list["Form13FHolding"]] = relationship(
+        "Form13FHolding", back_populates="instrument"
+    )
 
     def __repr__(self) -> str:
         return f"<Instrument(t212_code='{self.t212_code}', name='{self.name}')>"
@@ -538,3 +542,84 @@ class EarningsReport(Base):
 
     def __repr__(self) -> str:
         return f"<EarningsReport(instrument_id={self.instrument_id}, date='{self.date}')>"
+
+
+# ─── Form 13F (Institutional Holdings) ──────────────────────────────────────
+
+
+class Form13FManager(Base):
+    """SEC 13F institutional investment manager (e.g. Berkshire, Baupost)."""
+
+    __tablename__ = "form13f_managers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    cik: Mapped[str] = mapped_column(String(10), unique=True, nullable=False)
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
+
+    # Relationships
+    filings: Mapped[list["Form13FFiling"]] = relationship(
+        "Form13FFiling", back_populates="manager", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self) -> str:
+        return f"<Form13FManager(name='{self.name}', cik='{self.cik}')>"
+
+
+class Form13FFiling(Base):
+    """A single 13F-HR or 13F-HR/A filing (one report period per manager)."""
+
+    __tablename__ = "form13f_filings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    manager_id: Mapped[int] = mapped_column(Integer, ForeignKey("form13f_managers.id"), nullable=False, index=True)
+    report_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    form: Mapped[str] = mapped_column(String(20), nullable=False)  # 13F-HR, 13F-HR/A
+    accession_number: Mapped[str] = mapped_column(String(30), nullable=False)
+    total_value: Mapped[int] = mapped_column(BigInteger, nullable=False)  # USD, nearest dollar
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
+
+    # Relationships
+    manager: Mapped["Form13FManager"] = relationship("Form13FManager", back_populates="filings")
+    holdings: Mapped[list["Form13FHolding"]] = relationship(
+        "Form13FHolding", back_populates="filing", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("manager_id", "report_date", name="uq_form13f_manager_report_date"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<Form13FFiling(manager_id={self.manager_id}, report_date='{self.report_date}')>"
+
+
+class Form13FHolding(Base):
+    """Individual holding from a 13F filing (issuer, CUSIP, value, shares)."""
+
+    __tablename__ = "form13f_holdings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    filing_id: Mapped[int] = mapped_column(Integer, ForeignKey("form13f_filings.id"), nullable=False, index=True)
+    instrument_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("instruments.id"), nullable=True, index=True
+    )
+    issuer: Mapped[str] = mapped_column(String(200), nullable=False)
+    cusip: Mapped[str] = mapped_column(String(9), nullable=False)
+    title_of_class: Mapped[str] = mapped_column(String(50), nullable=False, default="COM")
+    value: Mapped[int] = mapped_column(BigInteger, nullable=False)  # USD, nearest dollar
+    shares: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    # Relationships
+    filing: Mapped["Form13FFiling"] = relationship("Form13FFiling", back_populates="holdings")
+    instrument: Mapped[Optional["Instrument"]] = relationship(
+        "Instrument", back_populates="form13f_holdings"
+    )
+
+    __table_args__ = (Index("idx_form13f_holding_cusip", "cusip"),)
+
+    def __repr__(self) -> str:
+        return f"<Form13FHolding(issuer='{self.issuer}', cusip='{self.cusip}', value={self.value})>"

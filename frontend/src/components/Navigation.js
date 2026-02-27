@@ -32,7 +32,8 @@ const Navigation = () => {
     setIsMobileMenuOpen(false);
   };
 
-  const linkClass = (path) => (location.pathname === path ? 'active' : '');
+  const linkClass = (path) =>
+    location.pathname === path || (path !== '/' && location.pathname.startsWith(path)) ? 'active' : '';
 
   return (
     <nav className="navigation">
@@ -71,6 +72,9 @@ const Navigation = () => {
           </Link>
           <Link to="/chart" className={linkClass('/chart')} onClick={handleLinkClick}>
             Chart
+          </Link>
+          <Link to="/13f" className={linkClass('/13f')} onClick={handleLinkClick}>
+            13F
           </Link>
           <label className="nav-hide-amounts">
             <span className="nav-hide-amounts-label">Hide amounts</span>

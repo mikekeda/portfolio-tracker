@@ -60,7 +60,7 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour="0,8,12,16,20", day_of_week="mon-fri"),
         "args": (),
     },
-    # Update market metrics weekends: Every 8 hours
+    # Update market metrics weekends: Every 12 hours
     # Runs at 0:30, 12:30
     "update_market_metrics_weekends": {
         "task": "celery_tasks.tasks.update_market_metrics_task",
@@ -87,5 +87,13 @@ app.conf.beat_schedule = {
         "task": "celery_tasks.tasks.fetch_earnings_reports_task",
         "schedule": crontab(minute=0, hour=4),
         "args": (100,),
+    },
+    # Scrape SEC 13F institutional holdings: Weekly on Monday at 1 AM UTC
+    # 13F filings are due quarterly (~45 days after quarter end: May 15, Aug 14, Nov 14, Feb 14).
+    # Weekly cadence catches new filings within days of publication; no-op when already up to date.
+    "scrape_13f_weekly": {
+        "task": "celery_tasks.tasks.scrape_13f_task",
+        "schedule": crontab(minute=0, hour=1, day_of_week="mon"),
+        "args": (),
     },
 }

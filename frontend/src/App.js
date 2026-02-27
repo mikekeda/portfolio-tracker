@@ -9,6 +9,7 @@ import Chart from './components/Chart';
 import Stock from './components/Stock';
 import Allocations from './components/Allocations';
 import Login from './components/Login';
+import Form13F from './components/Form13F';
 import './App.css';
 
 function AppContent() {
@@ -47,6 +48,8 @@ function AppContent() {
           <Route path="/pies" element={<Pies />} />
           <Route path="/chart" element={<Chart />} />
           <Route path="/stock/:symbol" element={<Stock />} />
+          <Route path="/13f" element={<Form13F />} />
+          <Route path="/13f/:managerId" element={<Form13F />} />
         </Routes>
       </main>
     </div>

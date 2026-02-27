@@ -6,6 +6,72 @@
   box-sizing: border-box;
 }
 
+.stock-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+  color: #6c757d;
+}
+
+.stock-breadcrumb a {
+  color: #0d6efd;
+  text-decoration: none;
+}
+
+.stock-breadcrumb a:hover {
+  text-decoration: underline;
+}
+
+.breadcrumb-sep {
+  color: #adb5bd;
+}
+
+.my-position-card {
+  background: #e7f3ff;
+  border: 1px solid #b6d4fe;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 12px;
+}
+
+.my-position-card h4 {
+  margin: 0 0 8px 0;
+  font-size: 0.95rem;
+  color: #084298;
+}
+
+.my-position-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+}
+
+.my-position-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.my-position-label {
+  font-size: 0.8rem;
+  color: #6c757d;
+}
+
+.my-position-value {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.my-position-value.positive {
+  color: #198754;
+}
+
+.my-position-value.negative {
+  color: #dc3545;
+}
+
 .chart-loading {
   background: #f8f9fa;
   border: 1px solid #e9ecef;
@@ -48,6 +114,7 @@
   border: 1px solid #e9ecef;
   border-radius: 6px;
   padding: 8px 10px;
+  cursor: help;
 }
 
 .kpi-label {
@@ -115,6 +182,74 @@
   gap: 8px 12px;
   width: 100%;
   box-sizing: border-box;
+}
+
+/* Institutional Holders (13F) */
+.form13f-as-of {
+  font-weight: 400;
+  color: #6c757d;
+  font-size: 0.9em;
+}
+
+.form13f-link {
+  color: #0d6efd;
+  text-decoration: none;
+}
+
+.form13f-link:hover {
+  text-decoration: underline;
+}
+
+.form13f-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.form13f-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px;
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.form13f-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.form13f-value {
+  font-weight: 600;
+  color: #212529;
+}
+
+.form13f-change {
+  font-size: 0.85rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e9ecef;
+  color: #6c757d;
+}
+
+.form13f-change.positive {
+  background: #d4edda;
+  color: #155724;
+}
+
+.form13f-change.negative {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.form13f-empty {
+  color: #6c757d;
+  font-size: 0.9rem;
+  margin: 0;
+  padding: 8px 0;
 }
 
 .inline-controls {
@@ -614,6 +749,112 @@
 
 .beat-value.negative {
   color: #dc3545;
+}
+
+.earnings-assessment-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.earnings-recommendation-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.earnings-recommendation-badge.recommendation-buy {
+  background: #d4edda;
+  color: #155724;
+}
+
+.earnings-recommendation-badge.recommendation-hold {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.earnings-recommendation-badge.recommendation-avoid {
+  background: #f8d7da;
+  color: #721c24;
+}
+
+.earnings-recommendation-badge.recommendation-consider {
+  background: #cce5ff;
+  color: #004085;
+}
+
+.earnings-conviction-badge,
+.earnings-quality-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: #6c757d;
+  background: #e9ecef;
+}
+
+.earnings-assessment-rationale {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: #fff;
+  border-radius: 4px;
+  border-left: 4px solid #0d6efd;
+}
+
+.earnings-assessment-rationale p {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #495057;
+}
+
+.earnings-catalysts-concerns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin: 12px 0;
+}
+
+@media (max-width: 600px) {
+  .earnings-catalysts-concerns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.earnings-catalysts,
+.earnings-concerns {
+  padding: 10px 12px;
+  background: #fff;
+  border-radius: 4px;
+}
+
+.earnings-catalysts {
+  border-left: 4px solid #28a745;
+}
+
+.earnings-concerns {
+  border-left: 4px solid #dc3545;
+}
+
+.earnings-catalysts h5,
+.earnings-concerns h5 {
+  margin: 0 0 8px 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #495057;
+}
+
+.earnings-catalysts ul,
+.earnings-concerns ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #495057;
 }
 
 .earnings-summary {

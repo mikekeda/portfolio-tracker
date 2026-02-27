@@ -618,7 +618,120 @@
   border: 1px solid #ffcdd2;
 }
 
+/* 13F Score - same color scheme as screener score */
+.form13f-score {
+  font-weight: 600;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  min-width: 40px;
+  text-align: center;
+}
 
+.form13f-score.excellent {
+  background: #e8f5e8;
+  color: #2e7d32;
+  border: 1px solid #a5d6a7;
+}
+
+.form13f-score.good {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #bbdefb;
+}
+
+.form13f-score.average {
+  background: #fff3e0;
+  color: #ef6c00;
+  border: 1px solid #ffcc02;
+}
+
+.form13f-score.poor {
+  background: #fce4ec;
+  color: #c2185b;
+  border: 1px solid #f8bbd9;
+}
+
+.form13f-score.very-poor {
+  background: #ffebee;
+  color: #d32f2f;
+  border: 1px solid #ffcdd2;
+}
+
+/* 13F Holder badges - similar to screener badges */
+.form13f-holder-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.no-form13f-holders {
+  color: transparent;
+  font-size: 12px;
+  min-height: 20px;
+  display: inline-block;
+}
+
+.form13f-holder-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 12px;
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid transparent;
+  text-decoration: none;
+}
+
+.form13f-holder-badge--link {
+  cursor: pointer;
+}
+
+.form13f-holder-badge--link:hover {
+  filter: brightness(0.88);
+  text-decoration: none;
+}
+
+/* Below-threshold holders: shown for information but don't contribute to score */
+.form13f-holder-badge--noise {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+.form13f-holder-badge.form13f-new {
+  background: #e8f5e8;
+  color: #2e7d32;
+  border-color: #a5d6a7;
+}
+
+.form13f-holder-badge.form13f-increase {
+  background: #e3f2fd;
+  color: #1565c0;
+  border-color: #bbdefb;
+}
+
+.form13f-holder-badge.form13f-stable {
+  background: #f5f5f5;
+  color: #616161;
+  border-color: #e0e0e0;
+}
+
+.form13f-holder-badge.form13f-trimmed {
+  background: #fff3e0;
+  color: #ef6c00;
+  border-color: #ffcc02;
+}
+
+.form13f-holder-badge.form13f-closed {
+  background: #ffebee;
+  color: #d32f2f;
+  border-color: #ffcdd2;
+}
 
 .holdings-table-container {
   background: white;

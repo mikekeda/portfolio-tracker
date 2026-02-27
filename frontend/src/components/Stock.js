@@ -1,6 +1,6 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import PropTypes from 'prop-types';
-import {useParams} from 'react-router-dom';
+import {Link, useParams} from 'react-router-dom';
 import {portfolioAPI} from '../services/api';
 import SharedTooltip from './SharedTooltip';
 import {
@@ -180,6 +180,15 @@ const formatDate = (dateString) => {
     day: 'numeric',
     year: '2-digit'
   });
+};
+
+const formatDateShort = (dateString) => {
+  if (!dateString) return '';
+  const d = new Date(dateString + 'T12:00:00');
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
 };
 
 const getTransactionCategory = (action) => {
@@ -521,40 +530,102 @@ const Stock = () => {
   const i = data.instrument;
   const f = data.fundamentals || {};
 
+  const kpiTooltips = {
+    'Market Cap': 'Total market value of all outstanding shares',
+    'PE': 'Price-to-Earnings ratio (trailing 12 months)',
+    'PEG': 'PE divided by expected earnings growth rate',
+    'Dividend': 'Annual dividend yield',
+    'Beta': 'Stock volatility vs market (1 = market)',
+    'Debt': 'Total debt',
+    'Cash': 'Cash and equivalents',
+    'FCF Yield': 'Free cash flow as % of market cap',
+    '52W': '52-week high and low price range',
+  };
+
   const kpis = [
-    { label: 'Market Cap', value: formatShort(f.marketCap) },
-    { label: 'PE', value: f.peRatio ?? '-' },
-    { label: 'PEG', value: f.pegRatio ?? '-' },
-    { label: 'Dividend', value: f.dividendYield ? `${f.dividendYield.toFixed(2)}%` : '-' },
-    { label: 'Beta', value: f.beta ?? '-' },
-    { label: 'Debt', value: formatShort(f.totalDebt) },
-    { label: 'Cash', value: formatShort(f.totalCash) },
+    { label: 'Market Cap', value: formatShort(f.marketCap), tooltip: kpiTooltips['Market Cap'] },
+    { label: 'PE', value: f.peRatio ?? '-', tooltip: kpiTooltips['PE'] },
+    { label: 'PEG', value: f.pegRatio ?? '-', tooltip: kpiTooltips['PEG'] },
+    { label: 'Dividend', value: f.dividendYield ? `${f.dividendYield.toFixed(2)}%` : '-', tooltip: kpiTooltips['Dividend'] },
+    { label: 'Beta', value: f.beta ?? '-', tooltip: kpiTooltips['Beta'] },
+    { label: 'Debt', value: formatShort(f.totalDebt), tooltip: kpiTooltips['Debt'] },
+    { label: 'Cash', value: formatShort(f.totalCash), tooltip: kpiTooltips['Cash'] },
     { label: 'FCF Yield', value: (f.freeCashflow && f.marketCap && f.marketCap > 0)
-      ? `${((f.freeCashflow / f.marketCap) * 100).toFixed(2)}%` : '-' },
+      ? `${((f.freeCashflow / f.marketCap) * 100).toFixed(2)}%` : '-', tooltip: kpiTooltips['FCF Yield'] },
+    { label: '52W', value: (f.fiftyTwoWeekLow != null && f.fiftyTwoWeekHigh != null)
+      ? `${Number(f.fiftyTwoWeekLow).toFixed(2)} - ${Number(f.fiftyTwoWeekHigh).toFixed(2)}` : '-', tooltip: kpiTooltips['52W'] },
   ];
 
+  const valuationTooltips = {
+    'EV': 'Enterprise value (market cap + debt - cash)',
+    'EV/EBITDA': 'Enterprise value to earnings before interest, taxes, depreciation',
+    'EV/Sales': 'Enterprise value to revenue',
+    'P/S (TTM)': 'Price-to-sales (trailing 12 months)',
+    'P/B': 'Price-to-book value',
+    'Net Debt': 'Total debt minus cash',
+    'Net Debt/EBITDA': 'Net debt to EBITDA (leverage)',
+    'Price/FCF': 'Price to free cash flow',
+  };
+
   const valuation = [
-    { label: 'EV', value: formatShort(f.enterpriseValue) },
-    { label: 'EV/EBITDA', value: formatRatio(f.enterpriseToEbitda) },
-    { label: 'EV/Sales', value: formatRatio(f.enterpriseToRevenue) },
-    { label: 'P/S (TTM)', value: formatRatio(f.priceToSalesTtm) },
-    { label: 'P/B', value: formatRatio(f.priceToBook) },
+    { label: 'EV', value: formatShort(f.enterpriseValue), tooltip: valuationTooltips['EV'] },
+    { label: 'EV/EBITDA', value: formatRatio(f.enterpriseToEbitda), tooltip: valuationTooltips['EV/EBITDA'] },
+    { label: 'EV/Sales', value: formatRatio(f.enterpriseToRevenue), tooltip: valuationTooltips['EV/Sales'] },
+    { label: 'P/S (TTM)', value: formatRatio(f.priceToSalesTtm), tooltip: valuationTooltips['P/S (TTM)'] },
+    { label: 'P/B', value: formatRatio(f.priceToBook), tooltip: valuationTooltips['P/B'] },
     { label: 'Net Debt', value: (f.totalDebt !== undefined && f.totalCash !== undefined)
-      ? formatShort((f.totalDebt || 0) - (f.totalCash || 0)) : '-' },
+      ? formatShort((f.totalDebt || 0) - (f.totalCash || 0)) : '-', tooltip: valuationTooltips['Net Debt'] },
     { label: 'Net Debt/EBITDA', value: (f.ebitda && f.ebitda !== 0 &&
       (f.totalDebt !== undefined && f.totalCash !== undefined))
-      ? formatRatio(((f.totalDebt || 0) - (f.totalCash || 0)) / f.ebitda) : '-' },
+      ? formatRatio(((f.totalDebt || 0) - (f.totalCash || 0)) / f.ebitda) : '-', tooltip: valuationTooltips['Net Debt/EBITDA'] },
     { label: 'Price/FCF', value: (f.marketCap && f.freeCashflow)
-      ? formatRatio(f.marketCap / f.freeCashflow) : '-' },
+      ? formatRatio(f.marketCap / f.freeCashflow) : '-', tooltip: valuationTooltips['Price/FCF'] },
   ];
 
   return (
     <div className="stock-container">
+      <nav className="stock-breadcrumb">
+        <Link to="/holdings">Holdings</Link>
+        <span className="breadcrumb-sep">›</span>
+        <span>{i.symbol}</span>
+      </nav>
       <div className="stock-header">
         <h2>{i.symbol} — {i.name}</h2>
+        {data.my_position && (
+          <div className="my-position-card">
+            <h4>Your Position</h4>
+            <div className="my-position-grid">
+              <div className="my-position-item" title="% of your portfolio">
+                <span className="my-position-label">%</span>
+                <span className="my-position-value">{data.my_position.portfolio_pct.toFixed(2)}</span>
+              </div>
+              <div className="my-position-item" title="Current value in GBP">
+                <span className="my-position-label">Value (£)</span>
+                <span className="my-position-value">
+                  £{data.my_position.market_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </span>
+              </div>
+              <div className="my-position-item" title="Profit/loss in GBP">
+                <span className="my-position-label">Profit (£)</span>
+                <span className={`my-position-value ${data.my_position.profit >= 0 ? 'positive' : 'negative'}`}>
+                  £{data.my_position.profit >= 0 ? '+' : ''}{data.my_position.profit.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </span>
+              </div>
+              <div className="my-position-item" title="Return on cost">
+                <span className="my-position-label">Return</span>
+                <span className={`my-position-value ${data.my_position.return_pct >= 0 ? 'positive' : 'negative'}`}>
+                  {data.my_position.return_pct >= 0 ? '+' : ''}{Math.round(data.my_position.return_pct)}%
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="stock-kpis">
           {kpis.map(k => (
-            <div key={k.label} className="kpi"><div className="kpi-label">{k.label}</div><div className="kpi-value">{k.value}</div></div>
+            <div key={k.label} className="kpi" title={k.tooltip}>
+              <div className="kpi-label">{k.label}</div>
+              <div className="kpi-value">{k.value}</div>
+            </div>
           ))}
         </div>
         <div className="stock-meta"><span>{i.sector || '-'}</span><span>· {i.country || '-'}</span><span>· {i.currency}</span></div>
@@ -572,10 +643,56 @@ const Stock = () => {
 
       <div className="stock-panels">
         <div className="panel">
+          <h3>
+            Institutional Holders (13F)
+            {data.form13f_as_of && (
+              <span className="form13f-as-of"> — as of {formatDateShort(data.form13f_as_of)}</span>
+            )}
+          </h3>
+          {data.form13f_holdings && data.form13f_holdings.length > 0 ? (
+            <div className="form13f-list">
+              {data.form13f_holdings.map((h, idx) => {
+                const changeIsPositive = h.change === 'New' || (typeof h.change === 'string' && h.change.startsWith('+'));
+                const changeIsNegative = h.change === 'Closed' || (typeof h.change === 'string' && h.change.startsWith('-'));
+                const tooltipParts = [
+                  `Report date: ${h.report_date}`,
+                  `Shares: ${h.shares?.toLocaleString() ?? '-'}`,
+                ];
+                if (h.report_date_prev) tooltipParts.push(`Prev report: ${h.report_date_prev}`);
+                if (h.shares_prev != null) tooltipParts.push(`Prev shares: ${h.shares_prev.toLocaleString()}`);
+                if (h.change === '—') tooltipParts.push('No prior quarter data');
+                const valueDisplay = h.pct_of_portfolio != null
+                  ? `$${formatShort(h.value)} (${h.pct_of_portfolio}%)`
+                  : `$${formatShort(h.value)}`;
+                const nameContent = h.sec_filing_url ? (
+                  <a href={h.sec_filing_url} target="_blank" rel="noopener noreferrer" className="form13f-link">
+                    {h.manager_name}
+                  </a>
+                ) : (
+                  h.manager_name
+                );
+                return (
+                  <div key={idx} className="form13f-row" title={tooltipParts.join('\n')}>
+                    <span className="form13f-name">{nameContent}</span>
+                    <span className="form13f-value">{valueDisplay}</span>
+                    <span
+                      className={`form13f-change ${changeIsPositive ? 'positive' : ''} ${changeIsNegative ? 'negative' : ''}`}
+                    >
+                      {h.change}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="form13f-empty">No institutional holders found for this stock.</p>
+          )}
+        </div>
+        <div className="panel">
           <h3>Valuation Multiples</h3>
           <div className="valuation-grid">
             {valuation.map(v => (
-              <div key={v.label} className="kpi">
+              <div key={v.label} className="kpi" title={v.tooltip}>
                 <div className="kpi-label">{v.label}</div>
                 <div className="kpi-value">{v.value}</div>
               </div>
@@ -961,10 +1078,30 @@ const Stock = () => {
                 const epsGuidance = guidance.eps_guidance || {};
                 const revenueGuidance = guidance.revenue_guidance || {};
                 const consensus = metrics.consensus_comparison || {};
+                const assessment = metrics.investment_assessment || {};
                 
                 return (
                   <div key={report.id} className="earnings-report-item">
                     <div className="earnings-report-header">
+                      {(assessment.recommendation || assessment.conviction) && (
+                        <div className="earnings-assessment-badges">
+                          {assessment.recommendation && (
+                            <span className={`earnings-recommendation-badge recommendation-${assessment.recommendation}`}>
+                              {assessment.recommendation.charAt(0).toUpperCase() + assessment.recommendation.slice(1)}
+                            </span>
+                          )}
+                          {assessment.conviction && (
+                            <span className="earnings-conviction-badge">
+                              {assessment.conviction} conviction
+                            </span>
+                          )}
+                          {assessment.quality_signals && (
+                            <span className="earnings-quality-badge">
+                              Quality: {assessment.quality_signals}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <h4 
                         className="earnings-report-date-link"
                         onClick={() => openReportModal(symbol, report.date)}
@@ -1031,6 +1168,37 @@ const Stock = () => {
                         <span className={`beat-value ${consensus.eps_beat_pct >= 0 ? 'positive' : 'negative'}`}>
                           {consensus.eps_beat_pct >= 0 ? '+' : ''}{consensus.eps_beat_pct.toFixed(2)}%
                         </span>
+                      </div>
+                    )}
+                    
+                    {assessment.rationale && (
+                      <div className="earnings-assessment-rationale">
+                        <p>{assessment.rationale}</p>
+                      </div>
+                    )}
+                    
+                    {(assessment.key_catalysts?.length > 0 || assessment.key_concerns?.length > 0) && (
+                      <div className="earnings-catalysts-concerns">
+                        {assessment.key_catalysts?.length > 0 && (
+                          <div className="earnings-catalysts">
+                            <h5>Catalysts</h5>
+                            <ul>
+                              {assessment.key_catalysts.map((c, i) => (
+                                <li key={i}>{c}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {assessment.key_concerns?.length > 0 && (
+                          <div className="earnings-concerns">
+                            <h5>Concerns</h5>
+                            <ul>
+                              {assessment.key_concerns.map((c, i) => (
+                                <li key={i}>{c}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </div>
                     )}
                     

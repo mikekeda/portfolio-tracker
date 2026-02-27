@@ -17,6 +17,94 @@ import './Holdings.css';
 
 const POSITION_ONLY_COLUMN_IDS = ['portfolio_pct', 'market_value', 'profit', 'return_pct'];
 
+const columnHelper = createColumnHelper();
+
+// --- 13F helper functions (module-level, no closure dependencies) ---
+
+const HOLDER_NAME_SUFFIXES = [
+  ' Fund Management', ' Family Office', ' Management', ' Holdings', ' Capital', ' Group',
+];
+
+function trimHolderName(name) {
+  let trimmed = name;
+  for (const s of HOLDER_NAME_SUFFIXES) {
+    if (trimmed.endsWith(s)) {
+      trimmed = trimmed.slice(0, -s.length);
+      break;
+    }
+  }
+  if (trimmed.length > 14) {
+    const first = trimmed.split(/[\s,]/)[0];
+    return first.length > 14 ? first.slice(0, 12) + '…' : first;
+  }
+  return trimmed;
+}
+
+function formatHolderValue(val) {
+  if (val == null) return null;
+  const n = Number(val);
+  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+  return `$${Math.round(n)}`;
+}
+
+function formatHolderShares(val) {
+  if (val == null) return null;
+  const n = Number(val);
+  if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return n.toLocaleString();
+}
+
+function buildHolderTooltip(h) {
+  const lines = [h.name, `Change: ${h.change}`];
+  if (h.report_date) lines.push(`Report date: ${h.report_date}`);
+  if (h.shares != null && h.shares_prev != null) {
+    lines.push(`Shares: ${formatHolderShares(h.shares_prev)} → ${formatHolderShares(h.shares)}`);
+  } else if (h.shares != null) {
+    lines.push(`Shares: ${formatHolderShares(h.shares)}`);
+  }
+  if (h.value != null) {
+    const valueStr = formatHolderValue(h.value);
+    const reason = h.scored === false && h.score_reason ? ` — not scored (${h.score_reason})` : '';
+    lines.push(`Value: ${valueStr}${reason}`);
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Maps a change string to a sort score matching the backend signal bands.
+ * New=+2, Increase=+1, Stable=0, Trim=-1, Closed=-2.
+ */
+function scoreFromChange(change) {
+  if (change === 'New') return 2;
+  if (change === 'Closed') return -2;
+  if (change === '—') return 0;
+  const match = change.match(/^([+-]?\d+(?:\.\d+)?)%$/);
+  if (!match) return 0;
+  const pct = parseFloat(match[1]);
+  if (pct >= 1000) return 2;   // effective new
+  if (pct >= 10) return 1;     // increase
+  if (pct >= -30) return 0;    // stable
+  if (pct >= -90) return -1;   // trim
+  return -2;                    // effective liquidation
+}
+
+function getHolderCategory(change) {
+  if (change === 'New') return 'form13f-new';
+  if (change === 'Closed') return 'form13f-closed';
+  if (change === '—') return 'form13f-stable';
+  const match = change.match(/^([+-]?\d+(?:\.\d+)?)%$/);
+  if (match) {
+    const pct = parseFloat(match[1]);
+    if (pct >= 10) return 'form13f-increase';
+    if (pct <= -30) return 'form13f-trimmed';
+    return 'form13f-stable';
+  }
+  return 'form13f-stable';
+}
+
 // This component will only re-render if its own props change
 const HoldingRow = React.memo(({ row, isSelected }) => {
   return (
@@ -51,8 +139,6 @@ const Holdings = () => {
   const [quickRatioThresholds, setQuickRatioThresholds] = useState({});
   const [selectedStocks, setSelectedStocks] = useState(new Set());
   const [showOnlySelected, setShowOnlySelected] = useState(false);
-
-  const columnHelper = createColumnHelper();
 
   // Calculate min/max values for bar columns
   const barRanges = useMemo(() => {
@@ -740,6 +826,81 @@ const Holdings = () => {
           return screenersA.length - screenersB.length;
         },
       }),
+      columnHelper.accessor('form13f_score', {
+        header: '13F Score',
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="form13f-score"></span>;
+
+          let className = '';
+          if (value >= 1.5) className = 'excellent';
+          else if (value >= 0.5) className = 'good';
+          else if (value >= -0.5) className = 'average';
+          else if (value >= -1.5) className = 'poor';
+          else className = 'very-poor';
+
+          return (
+            <span className={`form13f-score ${className}`}>
+              {value}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 60,
+      }),
+      columnHelper.accessor('form13f_holders', {
+        header: '13F Holders',
+        cell: (info) => {
+          const holders = info.getValue();
+          if (!holders || holders.length === 0) {
+            return <span className="no-form13f-holders"></span>;
+          }
+
+          const sortedHolders = [...holders].sort((a, b) => scoreFromChange(b.change) - scoreFromChange(a.change));
+
+          return (
+            <div className="form13f-holder-badges">
+              {sortedHolders.map((h, idx) => {
+                const content = <>{h.change} {trimHolderName(h.name)}</>;
+                const scored = h.scored !== false; // default true for legacy data
+                const cls = [
+                  'form13f-holder-badge',
+                  getHolderCategory(h.change),
+                  !scored ? 'form13f-holder-badge--noise' : '',
+                ].filter(Boolean).join(' ');
+                const tip = buildHolderTooltip(h);
+                return h.manager_id ? (
+                  <Link
+                    key={`${h.name}-${idx}`}
+                    to={`/13f/${h.manager_id}`}
+                    className={`${cls} form13f-holder-badge--link`}
+                    title={tip}
+                  >
+                    {content}
+                  </Link>
+                ) : (
+                  <span
+                    key={`${h.name}-${idx}`}
+                    className={cls}
+                    title={tip}
+                  >
+                    {content}
+                  </span>
+                );
+              })}
+            </div>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 180,
+        sortingFn: (rowA, rowB) => {
+          const holdersA = rowA.original.form13f_holders || [];
+          const holdersB = rowB.original.form13f_holders || [];
+          return holdersA.length - holdersB.length;
+        },
+      }),
       columnHelper.accessor('country', {
         header: 'Country',
         cell: (info) => {
@@ -999,6 +1160,8 @@ const Holdings = () => {
       'rsi': 'RSI',
       'screener_score': 'Score',
       'passedScreeners': 'Screeners',
+      'form13f_score': '13F Score',
+      'form13f_holders': '13F Holders',
       'country': 'Country',
       'sector': 'Sector',
       'quote_type': 'Type',
@@ -1067,8 +1230,11 @@ const Holdings = () => {
         return '';
       }
 
-      // Handle arrays (like passedScreeners)
+      // Handle arrays (like passedScreeners, form13f_holders)
       if (Array.isArray(value)) {
+        if (key === 'form13f_holders') {
+          return value.map(h => `${h.name}: ${h.change}`).join('; ');
+        }
         return value.join('; ');
       }
 
