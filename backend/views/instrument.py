@@ -70,6 +70,7 @@ async def get_instrument(
     fundamentals = {
         "marketCap": yd.get("marketCap"),
         "peRatio": yd.get("trailingPE"),
+        "forwardPE": yd.get("forwardPE"),
         "pegRatio": yd.get("trailingPegRatio"),
         "beta": yd.get("beta"),
         "dividendYield": yd.get("dividendYield"),
@@ -97,6 +98,10 @@ async def get_instrument(
         "fiftyTwoWeekHighChangePercent": yd.get("fiftyTwoWeekHighChangePercent"),
         "fiftyTwoWeekHigh": yd.get("fiftyTwoWeekHigh"),
         "fiftyTwoWeekLow": yd.get("fiftyTwoWeekLow"),
+        "currentPrice": yd.get("currentPrice") or yd.get("regularMarketPrice"),
+        "grossMargins": yd.get("grossMargins"),
+        "operatingMargins": yd.get("operatingMargins"),
+        "nextEarningsDate": yd.get("earningsTimestamp"),
         "_rawCurrency": yd.get("financialCurrency"),
     }
 
@@ -253,4 +258,5 @@ async def get_instrument(
         "form13f_holdings": form13f_holdings,
         "form13f_as_of": form13f_as_of,
         "my_position": my_position,
+        "analyst_price_targets": (yh.analyst_price_targets or {}) if yh else {},
     }

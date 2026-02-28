@@ -11,11 +11,13 @@ import {
   createColumnHelper,
 } from '@tanstack/react-table';
 import { renderCountryWithFlag } from '../utils/countryUtils';
+import { PS_THRESHOLDS, getPsThresholds } from '../utils/valuationUtils';
 import { calculateBarWidth, getBarColorScheme, calculateMinMax, getBarStyle, shouldBeNegativeBar } from '../utils/barUtils';
 import { getAvailableScreeners } from '../services/screeners';
 import './Holdings.css';
 
 const POSITION_ONLY_COLUMN_IDS = ['portfolio_pct', 'market_value', 'profit', 'return_pct'];
+
 
 const columnHelper = createColumnHelper();
 
@@ -465,15 +467,21 @@ const Holdings = () => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="ps"></span>;
 
+          const sector = info.row.original?.sector || '';
+          const thresholds = getPsThresholds(sector);
+
           let className = '';
-          if (value < 1.5) {
-            className = 'positive'; // Green for PS < 1.5
-          } else if (value > 3) {
-            className = 'negative'; // Red for PS > 3
+          if (thresholds !== null) {
+            if (value < thresholds[0]) className = 'positive';
+            else if (value > thresholds[1]) className = 'negative';
           }
 
+          const tooltipSuffix = thresholds
+            ? ` · Green < ${thresholds[0]}, Red > ${thresholds[1]}${sector ? ` (${sector})` : ''}`
+            : ` · Not color-coded for ${sector || 'this'} sector`;
+
           return (
-            <span className={`ps ${className}`} title={`Price-to-Sales Ratio: ${value.toFixed(2)}`}>
+            <span className={`ps ${className}`} title={`Price-to-Sales: ${value.toFixed(2)}${tooltipSuffix}`}>
               {value.toFixed(1)}
             </span>
           );

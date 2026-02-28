@@ -16,6 +16,9 @@ import {
   XAxis,
   YAxis
 } from 'recharts';
+import { renderCountryWithFlag } from '../utils/countryUtils';
+import { useHideAmounts, MASK } from '../context/HideAmountsContext';
+import { getPbThresholds, getPsThresholds } from '../utils/valuationUtils';
 import './Stock.css';
 
 // Constants
@@ -45,38 +48,73 @@ const formatActionName = (action) => {
     .replace('DIVIDEND', 'Dividend');
 };
 
+const SMA_50_COLOR = '#3b82f6';   // blue
+const SMA_200_COLOR = '#ef4444';  // red
+
+const FiftyTwoWeekBar = ({ low, high, current }) => {
+  if (low == null || high == null || current == null || high <= low) return null;
+  const pct = Math.min(100, Math.max(0, ((current - low) / (high - low)) * 100));
+  const fromLowPct = (((current - low) / low) * 100).toFixed(1);
+  const fromHighPct = (((current - high) / high) * 100).toFixed(1);
+  const fmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const signLow = Number(fromLowPct) >= 0 ? '+' : '';
+  return (
+    <div
+      className="ftw-bar-wrap"
+      title={`${signLow}${fromLowPct}% from 52W low · ${fromHighPct}% from 52W high`}
+    >
+      <span className="ftw-bar-bound">{fmt(low)}</span>
+      <div className="ftw-bar-track">
+        <div className="ftw-bar-fill" style={{ width: `${pct}%` }} />
+        <div className="ftw-bar-dot" style={{ left: `${pct}%` }} />
+      </div>
+      <span className="ftw-bar-bound">{fmt(high)}</span>
+    </div>
+  );
+};
+
+FiftyTwoWeekBar.propTypes = {
+  low: PropTypes.number,
+  high: PropTypes.number,
+  current: PropTypes.number,
+};
+
 const PriceTooltip = ({ active, payload, label, priceMetric }) => {
   if (active && payload && payload.length) {
     const data = payload[0]?.payload || {};
     const displayName = priceMetric === 'price_pct_change' ? 'Price %' : 'Price';
-    const formattedValue =
+    const formatVal = (v) =>
       priceMetric === 'price_pct_change'
-        ? `${data.value?.toFixed(2)}%`
-        : typeof data.value === 'number'
-          ? data.value.toLocaleString(undefined, { maximumFractionDigits: 2 })
-          : data.value;
+        ? `${v?.toFixed(2)}%`
+        : typeof v === 'number'
+          ? v.toLocaleString(undefined, { maximumFractionDigits: 2 })
+          : v;
     const isOrder = data.order !== undefined;
 
     return (
       <div className="custom-tooltip">
         <p className="tooltip-label">{label}</p>
-        {!isOrder && (
-          <p className="tooltip-item" style={{ color: '#6f42c1' }}>
-            <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
-            {displayName}: {formattedValue}
+        {isOrder && (
+          <p className="tooltip-item" style={{ color: data.order.color, fontWeight: 'bold' }}>
+            <span className="color-indicator" style={{ backgroundColor: data.order.color }}></span>
+            {formatActionName(data.order.action)}: £{data.order.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
           </p>
         )}
-        {isOrder && (
-          <>
-            <p className="tooltip-item" style={{ color: data.order.color, fontWeight: 'bold' }}>
-              <span className="color-indicator" style={{ backgroundColor: data.order.color }}></span>
-              {formatActionName(data.order.action)}: £{data.order.total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-            </p>
-            <p className="tooltip-item" style={{ color: '#6f42c1' }}>
-              <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
-              {displayName}: {formattedValue}
-            </p>
-          </>
+        <p className="tooltip-item" style={{ color: '#6f42c1' }}>
+          <span className="color-indicator" style={{ backgroundColor: '#6f42c1' }}></span>
+          {displayName}: {formatVal(data.value)}
+        </p>
+        {data.sma50 != null && (
+          <p className="tooltip-item" style={{ color: SMA_50_COLOR }}>
+            <span className="color-indicator" style={{ backgroundColor: SMA_50_COLOR }}></span>
+            SMA 50: {formatVal(data.sma50)}
+          </p>
+        )}
+        {data.sma200 != null && (
+          <p className="tooltip-item" style={{ color: SMA_200_COLOR }}>
+            <span className="color-indicator" style={{ backgroundColor: SMA_200_COLOR }}></span>
+            SMA 200: {formatVal(data.sma200)}
+          </p>
         )}
       </div>
     );
@@ -90,6 +128,8 @@ PriceTooltip.propTypes = {
     PropTypes.shape({
       payload: PropTypes.shape({
         value: PropTypes.number,
+        sma50: PropTypes.number,
+        sma200: PropTypes.number,
         order: PropTypes.shape({
           action: PropTypes.string,
           total: PropTypes.number,
@@ -212,55 +252,44 @@ const formatShort = (n) => {
 
 const formatRatio = (n) => (n === null || n === undefined || isNaN(n) ? '-' : Number(n).toFixed(2));
 
-// Convert markdown to HTML (handles headers, bold, lists, etc.)
+
+// Convert markdown to HTML (handles headers, bold, lists)
 const markdownToHtml = (markdown) => {
   if (!markdown) return '';
-
+  const bold = (s) => s.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
   const lines = markdown.split('\n');
   const output = [];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Headers (### -> h3, ## -> h2, # -> h1)
-    if (line.match(/^### (.+)$/)) {
-      output.push(`<h3>${line.replace(/^### /, '')}</h3>`);
-      continue;
-    }
-    if (line.match(/^## (.+)$/)) {
-      output.push(`<h2>${line.replace(/^## /, '')}</h2>`);
-      continue;
-    }
-    if (line.match(/^# (.+)$/)) {
-      output.push(`<h1>${line.replace(/^# /, '')}</h1>`);
-      continue;
-    }
-    
-    // Bullet points (- or * -> <li>)
-    const bulletMatch = line.match(/^[\s]*[-*] (.+)$/);
-    if (bulletMatch) {
-      // Process bold inside list items
-      const content = bulletMatch[1].replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      output.push(`<li>${content}</li>`);
-      continue;
-    }
-    
-    // Regular paragraph lines
-    if (line.trim()) {
-      // Process bold
-      let processedLine = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      output.push(`<p>${processedLine}</p>`);
+  let inList = false;
+
+  for (const line of lines) {
+    if (line.startsWith('### ')) {
+      if (inList) { output.push('</ul>'); inList = false; }
+      output.push(`<h3>${bold(line.slice(4))}</h3>`);
+    } else if (line.startsWith('## ')) {
+      if (inList) { output.push('</ul>'); inList = false; }
+      output.push(`<h2>${bold(line.slice(3))}</h2>`);
+    } else if (line.startsWith('# ')) {
+      if (inList) { output.push('</ul>'); inList = false; }
+      output.push(`<h1>${bold(line.slice(2))}</h1>`);
+    } else if (/^[\s]*[-*] /.test(line)) {
+      const content = line.replace(/^[\s]*[-*] /, '');
+      if (!inList) { output.push('<ul>'); inList = true; }
+      output.push(`<li>${bold(content)}</li>`);
+    } else if (line.trim()) {
+      if (inList) { output.push('</ul>'); inList = false; }
+      output.push(`<p>${bold(line)}</p>`);
     } else {
-      // Empty line
-      output.push('');
+      if (inList) { output.push('</ul>'); inList = false; }
     }
   }
-  
+  if (inList) output.push('</ul>');
+
   return output.join('\n');
 };
 
 const Stock = () => {
   const { symbol } = useParams();
+  const { hideAmounts } = useHideAmounts();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -269,6 +298,7 @@ const Stock = () => {
   const [selectedReport, setSelectedReport] = useState(null);
   const [reportHtml, setReportHtml] = useState(null);
   const [loadingReport, setLoadingReport] = useState(false);
+  const [activeReportIdx, setActiveReportIdx] = useState(0);
   const [chartDays, setChartDays] = useState(() => {
     const stored = localStorage.getItem('stock_chart_days') || '365';
     return stored === 'ytd' ? 'ytd' : Number(stored);
@@ -336,9 +366,10 @@ const Stock = () => {
           setChartLoading(true);
         }
 
-        // Convert chartDays to number for API call
+        // Fetch 300 extra calendar days (~207 trading days) so SMA 200 is warmed up
+        // from the very first displayed data point.
         const daysParam = chartDays === 'ytd' ? calculateYTDDays() : chartDays;
-        const res = await portfolioAPI.getInstrument(symbol, daysParam);
+        const res = await portfolioAPI.getInstrument(symbol, Number(daysParam) + 300);
         setData(res);
         setError(null);
       } catch (e) {
@@ -414,25 +445,39 @@ const Stock = () => {
   // Process price data from the new API response
   const priceData = useMemo(() => {
     const prices = data?.prices || {};
-    const entries = Object.entries(prices).map(([date, value]) => ({ date, value }));
+    // Sort all entries chronologically
+    const sorted = Object.entries(prices)
+      .map(([date, value]) => ({ date, value }))
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    // Clip by date so the displayed range matches exactly what the user selected.
+    // The extra 300 calendar days fetched above are used only for SMA warm-up.
+    let cutoff;
+    if (chartDays === 'ytd') {
+      cutoff = new Date(new Date().getFullYear(), 0, 1);
+    } else {
+      cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - Number(chartDays));
+    }
+    const display = sorted.filter(p => new Date(p.date) >= cutoff);
 
     if (priceMetric === 'price_pct_change') {
-      const sorted = [...entries].sort((a, b) => new Date(a.date) - new Date(b.date));
-      if (sorted.length === 0) return [];
-      const base = sorted[0].value;
-      return sorted.map(p => ({
+      if (display.length === 0) return [];
+      const base = display[0].value;
+      return display.map(p => ({
         originalDate: p.date,
         date: formatDate(p.date),
         value: base > 0 ? ((p.value - base) / base) * 100 : 0
       }));
     } else {
-      return entries.map(p => ({
+      return display.map(p => ({
         originalDate: p.date,
         date: formatDate(p.date),
         value: p.value
       }));
     }
-  }, [data?.prices, priceMetric]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.prices, priceMetric, chartDays]);
 
   // Combine price data with order data for the chart
   const chartData = useMemo(() => {
@@ -482,8 +527,31 @@ const Stock = () => {
       return pricePoint;
     });
 
+    // Attach SMA values to each data point
+    const rawPrices = data?.prices || {};
+    const sortedRaw = Object.entries(rawPrices).sort(([a], [b]) => new Date(a) - new Date(b));
+    const basePrice = sortedRaw.length > 0 ? sortedRaw[0][1] : 1;
+    const rawArr = sortedRaw.map(([, p]) => p);
+    const dateArr = sortedRaw.map(([d]) => d);
+
+    combinedData = combinedData.map(d => {
+      const idx = dateArr.indexOf(d.originalDate);
+      if (idx === -1) return d;
+      const w50 = rawArr.slice(Math.max(0, idx - 49), idx + 1);
+      const w200 = rawArr.slice(Math.max(0, idx - 199), idx + 1);
+      const sma50raw = w50.length === 50 ? w50.reduce((a, b) => a + b, 0) / 50 : null;
+      const sma200raw = w200.length === 200 ? w200.reduce((a, b) => a + b, 0) / 200 : null;
+      const toDisplay = (raw) => {
+        if (raw == null) return null;
+        return priceMetric === 'price_pct_change' && basePrice > 0
+          ? ((raw - basePrice) / basePrice) * 100
+          : raw;
+      };
+      return { ...d, sma50: toDisplay(sma50raw), sma200: toDisplay(sma200raw) };
+    });
+
     return combinedData;
-  }, [priceData, data?.orders]);
+  }, [priceData, data?.orders, data?.prices, priceMetric]);
 
   // Process PE history data from the new API response
   const peData = useMemo(() => {
@@ -492,7 +560,7 @@ const Stock = () => {
       .map(([date, pe]) => ({
         originalDate: date,
         date: formatDate(date),
-        pe: pe
+        pe,
       }))
       .sort((a, b) => new Date(a.originalDate) - new Date(b.originalDate));
   }, [data?.pe_history]);
@@ -523,6 +591,11 @@ const Stock = () => {
     return [niceMin, niceMax];
   }, [peData]);
 
+  const avgPeFromHistory = useMemo(() => {
+    const values = peData.map(d => d.pe).filter(v => v != null && v > 0 && v < 500);
+    return values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null;
+  }, [peData]);
+
   if (loading) return <div className="stock-container">Loading...</div>;
   if (error) return <div className="stock-container error">{error}</div>;
   if (!data) return null;
@@ -530,56 +603,205 @@ const Stock = () => {
   const i = data.instrument;
   const f = data.fundamentals || {};
 
+  const fcfYield = (f.freeCashflow && f.marketCap && f.marketCap > 0)
+    ? (f.freeCashflow / f.marketCap) * 100 : null;
+
+  const netDebt = (f.totalDebt !== undefined && f.totalCash !== undefined)
+    ? (f.totalDebt || 0) - (f.totalCash || 0) : null;
+
+  const sector = i.sector || '';
+  const pbThresholds = getPbThresholds(sector);
+  const psThresholds = getPsThresholds(sector);
+
   const kpiTooltips = {
     'Market Cap': 'Total market value of all outstanding shares',
-    'PE': 'Price-to-Earnings ratio (trailing 12 months)',
-    'PEG': 'PE divided by expected earnings growth rate',
+    'PE': avgPeFromHistory
+      ? `Price-to-Earnings (trailing 12 months) · Hist avg: ${Math.round(avgPeFromHistory)}`
+      : 'Price-to-Earnings ratio (trailing 12 months)',
+    'Fwd PE': f.peRatio != null && f.forwardPE != null
+      ? `Forward PE (next 12-month estimates) · Trailing: ${Math.round(f.peRatio)}`
+      : 'Forward PE based on next 12-month earnings estimates',
+    'PEG': 'PE divided by expected earnings growth rate · Green < 1.5, Red > 3',
     'Dividend': 'Annual dividend yield',
-    'Beta': 'Stock volatility vs market (1 = market)',
+    'Beta': 'Stock volatility vs market (1 = market) · Green < 1, Red > 2',
     'Debt': 'Total debt',
     'Cash': 'Cash and equivalents',
-    'FCF Yield': 'Free cash flow as % of market cap',
-    '52W': '52-week high and low price range',
+    'FCF Yield': 'Free cash flow as % of market cap · Green > 6%, Red < 2%',
   };
 
   const kpis = [
     { label: 'Market Cap', value: formatShort(f.marketCap), tooltip: kpiTooltips['Market Cap'] },
-    { label: 'PE', value: f.peRatio ?? '-', tooltip: kpiTooltips['PE'] },
-    { label: 'PEG', value: f.pegRatio ?? '-', tooltip: kpiTooltips['PEG'] },
+    {
+      label: 'PE',
+      value: f.peRatio != null ? Math.round(f.peRatio) : '-',
+      className: f.peRatio != null
+        ? (avgPeFromHistory != null
+          ? (f.peRatio < avgPeFromHistory ? 'positive' : f.peRatio > avgPeFromHistory ? 'negative' : '')
+          : (f.peRatio < 20 ? 'positive' : f.peRatio > 35 ? 'negative' : ''))
+        : '',
+      tooltip: kpiTooltips['PE'],
+    },
+    ...(f.forwardPE != null ? [{
+      label: 'Fwd PE',
+      value: Math.round(f.forwardPE),
+      className: f.peRatio != null
+        ? (f.forwardPE < f.peRatio ? 'positive' : f.forwardPE > f.peRatio ? 'negative' : '')
+        : (f.forwardPE < 20 ? 'positive' : f.forwardPE > 35 ? 'negative' : ''),
+      tooltip: kpiTooltips['Fwd PE'],
+    }] : []),
+    {
+      label: 'PEG',
+      value: f.pegRatio != null ? Math.round(f.pegRatio * 100) / 100 : '-',
+      className: f.pegRatio != null
+        ? (f.pegRatio < 1.5 ? 'positive' : f.pegRatio > 3 ? 'negative' : '')
+        : '',
+      tooltip: kpiTooltips['PEG'],
+    },
     { label: 'Dividend', value: f.dividendYield ? `${f.dividendYield.toFixed(2)}%` : '-', tooltip: kpiTooltips['Dividend'] },
-    { label: 'Beta', value: f.beta ?? '-', tooltip: kpiTooltips['Beta'] },
+    {
+      label: 'Beta',
+      value: f.beta ?? '-',
+      className: f.beta != null
+        ? (f.beta < 1 ? 'positive' : f.beta > 2 ? 'negative' : '')
+        : '',
+      tooltip: kpiTooltips['Beta'],
+    },
     { label: 'Debt', value: formatShort(f.totalDebt), tooltip: kpiTooltips['Debt'] },
     { label: 'Cash', value: formatShort(f.totalCash), tooltip: kpiTooltips['Cash'] },
-    { label: 'FCF Yield', value: (f.freeCashflow && f.marketCap && f.marketCap > 0)
-      ? `${((f.freeCashflow / f.marketCap) * 100).toFixed(2)}%` : '-', tooltip: kpiTooltips['FCF Yield'] },
-    { label: '52W', value: (f.fiftyTwoWeekLow != null && f.fiftyTwoWeekHigh != null)
-      ? `${Number(f.fiftyTwoWeekLow).toFixed(2)} - ${Number(f.fiftyTwoWeekHigh).toFixed(2)}` : '-', tooltip: kpiTooltips['52W'] },
+    {
+      label: 'FCF Yield',
+      value: fcfYield != null ? `${fcfYield.toFixed(2)}%` : '-',
+      className: fcfYield != null
+        ? (fcfYield > 6 ? 'positive' : fcfYield < 2 ? 'negative' : '')
+        : '',
+      tooltip: kpiTooltips['FCF Yield'],
+    },
+    ...(() => {
+      const apt = data.analyst_price_targets || {};
+      const mean = apt.mean;
+      const lo = apt.low;
+      const hi = apt.high;
+      const cur = f.currentPrice;
+      if (mean == null) return [];
+      const upside = cur ? (((mean - cur) / cur) * 100).toFixed(1) : null;
+      const tooltip = [
+        upside != null ? `Upside: ${Number(upside) > 0 ? '+' : ''}${upside}%` : null,
+        lo != null ? `Low: ${Number(lo).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : null,
+        hi != null ? `High: ${Number(hi).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : null,
+        'Analyst consensus price target',
+      ].filter(Boolean).join(' · ');
+      const displayValue = upside != null
+        ? `${Number(upside) >= 0 ? '+' : ''}${upside}%`
+        : Number(mean).toLocaleString(undefined, { maximumFractionDigits: 2 });
+      return [{
+        label: 'Target',
+        value: displayValue,
+        className: cur ? (mean > cur ? 'positive' : mean < cur ? 'negative' : '') : '',
+        tooltip,
+      }];
+    })(),
+    ...(() => {
+      const ts = f.nextEarningsDate;
+      if (!ts) return [];
+      const d = new Date(ts * 1000);
+      const now = new Date();
+      const diffDays = Math.round((d - now) / 86400000);
+      if (diffDays < -30 || diffDays > 365) return [];
+      const label = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+      const tooltip = `Next earnings: ${d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · ${diffDays >= 0 ? `in ${diffDays} days` : `${-diffDays} days ago`}`;
+      return [{
+        label: 'Earnings',
+        value: label,
+        className: diffDays >= 0 && diffDays <= 14 ? 'negative' : '',
+        tooltip,
+      }];
+    })(),
   ];
 
+  const sectorLabel = sector || 'general';
   const valuationTooltips = {
     'EV': 'Enterprise value (market cap + debt - cash)',
-    'EV/EBITDA': 'Enterprise value to earnings before interest, taxes, depreciation',
-    'EV/Sales': 'Enterprise value to revenue',
-    'P/S (TTM)': 'Price-to-sales (trailing 12 months)',
-    'P/B': 'Price-to-book value',
-    'Net Debt': 'Total debt minus cash',
-    'Net Debt/EBITDA': 'Net debt to EBITDA (leverage)',
-    'Price/FCF': 'Price to free cash flow',
+    'EV/EBITDA': 'Enterprise value to EBITDA · Green < 15, Red > 25',
+    'EV/Sales': psThresholds
+      ? `Enterprise value to revenue · Green < ${psThresholds[0]}, Red > ${psThresholds[1]} (${sectorLabel})`
+      : `Enterprise value to revenue · Not color-coded for ${sectorLabel} sector`,
+    'P/S (TTM)': psThresholds
+      ? `Price-to-sales (TTM) · Green < ${psThresholds[0]}, Red > ${psThresholds[1]} (${sectorLabel})`
+      : `Price-to-sales (TTM) · Not color-coded for ${sectorLabel} sector`,
+    'P/B': pbThresholds
+      ? `Price-to-book · Green < ${pbThresholds[0]}, Red > ${pbThresholds[1]} (${sectorLabel})`
+      : `Price-to-book · Not color-coded for ${sectorLabel} (intangibles-heavy sector)`,
+    'Net Debt': 'Total debt minus cash · Green = net cash position',
+    'Net Debt/EBITDA': 'Net debt to EBITDA (leverage) · Green ≤ 1, Red > 3',
+    'Price/FCF': 'Price to free cash flow · Green < 20, Red > 40',
   };
 
   const valuation = [
     { label: 'EV', value: formatShort(f.enterpriseValue), tooltip: valuationTooltips['EV'] },
-    { label: 'EV/EBITDA', value: formatRatio(f.enterpriseToEbitda), tooltip: valuationTooltips['EV/EBITDA'] },
-    { label: 'EV/Sales', value: formatRatio(f.enterpriseToRevenue), tooltip: valuationTooltips['EV/Sales'] },
-    { label: 'P/S (TTM)', value: formatRatio(f.priceToSalesTtm), tooltip: valuationTooltips['P/S (TTM)'] },
-    { label: 'P/B', value: formatRatio(f.priceToBook), tooltip: valuationTooltips['P/B'] },
-    { label: 'Net Debt', value: (f.totalDebt !== undefined && f.totalCash !== undefined)
-      ? formatShort((f.totalDebt || 0) - (f.totalCash || 0)) : '-', tooltip: valuationTooltips['Net Debt'] },
-    { label: 'Net Debt/EBITDA', value: (f.ebitda && f.ebitda !== 0 &&
-      (f.totalDebt !== undefined && f.totalCash !== undefined))
-      ? formatRatio(((f.totalDebt || 0) - (f.totalCash || 0)) / f.ebitda) : '-', tooltip: valuationTooltips['Net Debt/EBITDA'] },
-    { label: 'Price/FCF', value: (f.marketCap && f.freeCashflow)
-      ? formatRatio(f.marketCap / f.freeCashflow) : '-', tooltip: valuationTooltips['Price/FCF'] },
+    {
+      label: 'EV/EBITDA',
+      value: formatRatio(f.enterpriseToEbitda),
+      className: f.enterpriseToEbitda != null
+        ? (f.enterpriseToEbitda < 15 ? 'positive' : f.enterpriseToEbitda > 25 ? 'negative' : '')
+        : '',
+      tooltip: valuationTooltips['EV/EBITDA'],
+    },
+    {
+      label: 'EV/Sales',
+      value: formatRatio(f.enterpriseToRevenue),
+      className: (() => {
+        if (f.enterpriseToRevenue == null || psThresholds === null) return '';
+        return f.enterpriseToRevenue < psThresholds[0] ? 'positive'
+          : f.enterpriseToRevenue > psThresholds[1] ? 'negative' : '';
+      })(),
+      tooltip: valuationTooltips['EV/Sales'],
+    },
+    {
+      label: 'P/S (TTM)',
+      value: formatRatio(f.priceToSalesTtm),
+      className: (() => {
+        if (f.priceToSalesTtm == null || psThresholds === null) return '';
+        return f.priceToSalesTtm < psThresholds[0] ? 'positive'
+          : f.priceToSalesTtm > psThresholds[1] ? 'negative' : '';
+      })(),
+      tooltip: valuationTooltips['P/S (TTM)'],
+    },
+    {
+      label: 'P/B',
+      value: formatRatio(f.priceToBook),
+      className: (() => {
+        if (f.priceToBook == null || pbThresholds === null) return '';
+        return f.priceToBook < pbThresholds[0] ? 'positive'
+          : f.priceToBook > pbThresholds[1] ? 'negative' : '';
+      })(),
+      tooltip: valuationTooltips['P/B'],
+    },
+    {
+      label: 'Net Debt',
+      value: netDebt != null ? formatShort(netDebt) : '-',
+      className: netDebt != null ? (netDebt < 0 ? 'positive' : '') : '',
+      tooltip: valuationTooltips['Net Debt'],
+    },
+    {
+      label: 'Net Debt/EBITDA',
+      value: (f.ebitda && f.ebitda !== 0 && netDebt != null) ? formatRatio(netDebt / f.ebitda) : '-',
+      className: (() => {
+        if (netDebt == null || !f.ebitda || f.ebitda === 0) return '';
+        const r = netDebt / f.ebitda;
+        return r <= 1 ? 'positive' : r > 3 ? 'negative' : '';
+      })(),
+      tooltip: valuationTooltips['Net Debt/EBITDA'],
+    },
+    {
+      label: 'Price/FCF',
+      value: (f.marketCap && f.freeCashflow) ? formatRatio(f.marketCap / f.freeCashflow) : '-',
+      className: (() => {
+        if (!f.marketCap || !f.freeCashflow) return '';
+        const r = f.marketCap / f.freeCashflow;
+        return r < 0 ? 'negative' : r < 20 ? 'positive' : r > 40 ? 'negative' : '';
+      })(),
+      tooltip: valuationTooltips['Price/FCF'],
+    },
   ];
 
   return (
@@ -602,13 +824,13 @@ const Stock = () => {
               <div className="my-position-item" title="Current value in GBP">
                 <span className="my-position-label">Value (£)</span>
                 <span className="my-position-value">
-                  £{data.my_position.market_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  {hideAmounts ? MASK : `£${data.my_position.market_value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
                 </span>
               </div>
               <div className="my-position-item" title="Profit/loss in GBP">
                 <span className="my-position-label">Profit (£)</span>
                 <span className={`my-position-value ${data.my_position.profit >= 0 ? 'positive' : 'negative'}`}>
-                  £{data.my_position.profit >= 0 ? '+' : ''}{data.my_position.profit.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  {hideAmounts ? MASK : `£${data.my_position.profit >= 0 ? '+' : ''}${data.my_position.profit.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
                 </span>
               </div>
               <div className="my-position-item" title="Return on cost">
@@ -624,24 +846,38 @@ const Stock = () => {
           {kpis.map(k => (
             <div key={k.label} className="kpi" title={k.tooltip}>
               <div className="kpi-label">{k.label}</div>
-              <div className="kpi-value">{k.value}</div>
+              <div className={`kpi-value${k.className ? ` ${k.className}` : ''}`}>{k.value}</div>
             </div>
           ))}
         </div>
-        <div className="stock-meta"><span>{i.sector || '-'}</span><span>· {i.country || '-'}</span><span>· {i.currency}</span></div>
+        <FiftyTwoWeekBar
+          low={f.fiftyTwoWeekLow}
+          high={f.fiftyTwoWeekHigh}
+          current={f.currentPrice ?? (priceData.length > 0 ? priceData[priceData.length - 1].value : null)}
+        />
+        <div className="stock-meta">
+          {i.sector && <span className="stock-meta-tag stock-meta-sector">{i.sector}</span>}
+          {i.country && (
+            <span className="stock-meta-tag stock-meta-country">
+              {renderCountryWithFlag(i.country, { width: '1em', height: '0.75em', marginRight: '4px', fontSize: '0.85em' })}
+            </span>
+          )}
+          {i.currency && <span className="stock-meta-tag stock-meta-currency">{i.currency}</span>}
+        </div>
       </div>
 
-      {i.business_summary && (
-        <div className="stock-summary">
-          <h3>Business Summary</h3>
-          <p className={!showFullSummary ? 'clamped' : ''}>{i.business_summary}</p>
-          <button className="summary-toggle" onClick={toggleSummary}>
-            {showFullSummary ? 'Show less' : 'Show more'}
-          </button>
-        </div>
-      )}
-
       <div className="stock-panels">
+        <div className="panel">
+          <h3>Valuation Multiples</h3>
+          <div className="valuation-grid">
+            {valuation.map(v => (
+              <div key={v.label} className="kpi" title={v.tooltip}>
+                <div className="kpi-label">{v.label}</div>
+                <div className={`kpi-value${v.className ? ` ${v.className}` : ''}`}>{v.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
         <div className="panel">
           <h3>
             Institutional Holders (13F)
@@ -688,17 +924,17 @@ const Stock = () => {
             <p className="form13f-empty">No institutional holders found for this stock.</p>
           )}
         </div>
-        <div className="panel">
-          <h3>Valuation Multiples</h3>
-          <div className="valuation-grid">
-            {valuation.map(v => (
-              <div key={v.label} className="kpi" title={v.tooltip}>
-                <div className="kpi-label">{v.label}</div>
-                <div className="kpi-value">{v.value}</div>
-              </div>
-            ))}
+
+        {i.business_summary && (
+          <div className="panel">
+            <h3>Business Summary</h3>
+            <p className={!showFullSummary ? 'clamped' : ''}>{i.business_summary}</p>
+            <button className="summary-toggle" onClick={toggleSummary}>
+              {showFullSummary ? 'Show less' : 'Show more'}
+            </button>
           </div>
-        </div>
+        )}
+
         <div className="panel">
           <h3>Price {priceMetric === 'price_pct_change' ? '(%)' : ''}</h3>
           <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
@@ -761,6 +997,14 @@ const Stock = () => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis
+                  domain={
+                    priceMetric === 'price_pct_change'
+                      ? ['auto', 'auto']
+                      : [
+                          (dataMin) => Math.floor(dataMin * 0.95),
+                          (dataMax) => Math.ceil(dataMax * 1.02),
+                        ]
+                  }
                   tickFormatter={(v) =>
                     priceMetric === 'price_pct_change'
                       ? `${v.toFixed?.(1)}%`
@@ -842,6 +1086,32 @@ const Stock = () => {
                     connectNulls={false}
                   />
                 ))}
+                {Number(chartDays) >= 30 && (
+                  <Line
+                    type="monotone"
+                    dataKey="sma50"
+                    name="SMA 50"
+                    stroke={SMA_50_COLOR}
+                    strokeWidth={1.5}
+                    strokeDasharray="4 2"
+                    dot={false}
+                    activeDot={false}
+                    connectNulls={false}
+                  />
+                )}
+                {Number(chartDays) >= 30 && (
+                  <Line
+                    type="monotone"
+                    dataKey="sma200"
+                    name="SMA 200"
+                    stroke={SMA_200_COLOR}
+                    strokeWidth={1.5}
+                    strokeDasharray="4 2"
+                    dot={false}
+                    activeDot={false}
+                    connectNulls={false}
+                  />
+                )}
               </LineChart>
               </ResponsiveContainer>
             </div>
@@ -925,6 +1195,19 @@ const Stock = () => {
                   dot={false}
                   activeDot={false}
                 />
+                {avgPeFromHistory != null && (
+                  <ReferenceLine
+                    y={avgPeFromHistory}
+                    stroke="#94a3b8"
+                    strokeDasharray="4 3"
+                    strokeWidth={1.5}
+                    label={{
+                      value: `Avg ${Math.round(avgPeFromHistory)}`,
+                      position: 'insideTopRight',
+                      style: { fontSize: 11, fill: '#94a3b8' }
+                    }}
+                  />
+                )}
                 {/* Add split markers as ReferenceLines */}
                 {splitsData.map((split, index) => (
                   <ReferenceLine
@@ -1068,156 +1351,154 @@ const Stock = () => {
         </div>
 
         {/* Earnings Reports Section */}
-        {data?.earnings_reports && data.earnings_reports.length > 0 && (
-          <div className="panel">
-            <h3>Earnings Reports</h3>
-            <div className="earnings-reports-list">
-              {data.earnings_reports.map((report) => {
-                const metrics = report.metrics || {};
-                const guidance = metrics.guidance || {};
-                const epsGuidance = guidance.eps_guidance || {};
-                const revenueGuidance = guidance.revenue_guidance || {};
-                const consensus = metrics.consensus_comparison || {};
-                const assessment = metrics.investment_assessment || {};
-                
-                return (
-                  <div key={report.id} className="earnings-report-item">
-                    <div className="earnings-report-header">
-                      {(assessment.recommendation || assessment.conviction) && (
-                        <div className="earnings-assessment-badges">
-                          {assessment.recommendation && (
-                            <span className={`earnings-recommendation-badge recommendation-${assessment.recommendation}`}>
-                              {assessment.recommendation.charAt(0).toUpperCase() + assessment.recommendation.slice(1)}
-                            </span>
-                          )}
-                          {assessment.conviction && (
-                            <span className="earnings-conviction-badge">
-                              {assessment.conviction} conviction
-                            </span>
-                          )}
-                          {assessment.quality_signals && (
-                            <span className="earnings-quality-badge">
-                              Quality: {assessment.quality_signals}
-                            </span>
-                          )}
-                        </div>
-                      )}
-                      <h4 
-                        className="earnings-report-date-link"
-                        onClick={() => openReportModal(symbol, report.date)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault();
-                            openReportModal(symbol, report.date);
-                          }
-                        }}
-                      >
-                        {new Date(report.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
-                      </h4>
+        {data?.earnings_reports && data.earnings_reports.length > 0 && (() => {
+          const report = data.earnings_reports[Math.min(activeReportIdx, data.earnings_reports.length - 1)];
+          const metrics = report.metrics || {};
+          const guidance = metrics.guidance || {};
+          const epsGuidance = guidance.eps_guidance || {};
+          const revenueGuidance = guidance.revenue_guidance || {};
+          const consensus = metrics.consensus_comparison || {};
+          const assessment = metrics.investment_assessment || {};
+
+          const metricCards = [
+            consensus.eps_beat_pct != null && {
+              label: 'EPS',
+              badge: consensus.eps_beat_pct >= 0
+                ? `Beat +${consensus.eps_beat_pct.toFixed(0)}%`
+                : `Miss ${consensus.eps_beat_pct.toFixed(0)}%`,
+              type: consensus.eps_beat_pct >= 0 ? 'beat' : 'miss',
+            },
+            consensus.revenue_beat_pct != null && {
+              label: 'Revenue',
+              badge: consensus.revenue_beat_pct >= 0
+                ? `Beat +${consensus.revenue_beat_pct.toFixed(0)}%`
+                : `Miss ${consensus.revenue_beat_pct.toFixed(0)}%`,
+              type: consensus.revenue_beat_pct >= 0 ? 'beat' : 'miss',
+            },
+            consensus.guidance_vs_consensus && {
+              label: 'Guidance',
+              badge: consensus.guidance_vs_consensus === 'above' ? '↑ Above' : consensus.guidance_vs_consensus === 'below' ? '↓ Below' : '→ In-Line',
+              type: consensus.guidance_vs_consensus === 'above' ? 'beat' : consensus.guidance_vs_consensus === 'below' ? 'miss' : 'inline',
+            },
+            assessment.recommendation && {
+              label: 'Signal',
+              badge: assessment.recommendation.charAt(0).toUpperCase() + assessment.recommendation.slice(1),
+              type: `rec-${assessment.recommendation}`,
+              sub: assessment.conviction ? `${assessment.conviction} conviction` : null,
+            },
+          ].filter(Boolean);
+
+          return (
+            <div className="panel">
+              <div className="earnings-panel-header">
+                <h3>Earnings Reports</h3>
+                <button
+                  className="earnings-report-link-btn"
+                  onClick={() => openReportModal(symbol, report.date)}
+                  title="Open full report"
+                >
+                  Full report ↗
+                </button>
+              </div>
+
+              {data.earnings_reports.length > 1 && (
+                <div className="earnings-tabs">
+                  {data.earnings_reports.map((r, idx) => (
+                    <button
+                      key={r.id}
+                      className={`earnings-tab${idx === activeReportIdx ? ' active' : ''}`}
+                      onClick={() => setActiveReportIdx(idx)}
+                    >
+                      {new Date(r.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {metricCards.length > 0 && (
+                <div className="earnings-metric-cards">
+                  {metricCards.map((card, idx) => (
+                    <div key={idx} className={`earnings-metric-card emc-${card.type}`}>
+                      <div className="emc-label">{card.label}</div>
+                      <div className="emc-badge">{card.badge}</div>
+                      {card.sub && <div className="emc-sub">{card.sub}</div>}
                     </div>
-                    
-                    {(epsGuidance.next_quarter || epsGuidance.next_year || revenueGuidance.next_quarter || revenueGuidance.next_year) && (
-                      <div className="earnings-guidance">
-                        <h5>Guidance</h5>
-                        <div className="guidance-metrics">
-                          {epsGuidance.next_year && (
-                            <div className="guidance-metric">
-                              <span className="guidance-label">EPS (Full Year):</span>
-                              <span className="guidance-value">${epsGuidance.next_year.toFixed(2)}</span>
-                              {epsGuidance.growth_pct && (
-                                <span className={`guidance-growth ${epsGuidance.growth_pct >= 0 ? 'positive' : 'negative'}`}>
-                                  {epsGuidance.growth_pct >= 0 ? '+' : ''}{epsGuidance.growth_pct.toFixed(1)}%
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {epsGuidance.next_quarter && (
-                            <div className="guidance-metric">
-                              <span className="guidance-label">EPS (Next Q):</span>
-                              <span className="guidance-value">${epsGuidance.next_quarter.toFixed(2)}</span>
-                            </div>
-                          )}
-                          {revenueGuidance.next_year && (
-                            <div className="guidance-metric">
-                              <span className="guidance-label">Revenue (Full Year):</span>
-                              <span className="guidance-value">${(revenueGuidance.next_year / 1000).toFixed(2)}B</span>
-                              {revenueGuidance.growth_pct && (
-                                <span className={`guidance-growth ${revenueGuidance.growth_pct >= 0 ? 'positive' : 'negative'}`}>
-                                  {revenueGuidance.growth_pct >= 0 ? '+' : ''}{revenueGuidance.growth_pct.toFixed(1)}%
-                                </span>
-                              )}
-                            </div>
-                          )}
-                          {consensus.guidance_vs_consensus && (
-                            <div className="guidance-metric">
-                              <span className="guidance-label">vs Consensus:</span>
-                              <span className={`guidance-value ${consensus.guidance_vs_consensus === 'above' ? 'positive' : consensus.guidance_vs_consensus === 'below' ? 'negative' : ''}`}>
-                                {consensus.guidance_vs_consensus === 'above' ? '↑ Above' : consensus.guidance_vs_consensus === 'below' ? '↓ Below' : '→ In-Line'}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {consensus.eps_beat_pct !== null && consensus.eps_beat_pct !== undefined && (
-                      <div className="consensus-beat">
-                        <span className="beat-label">EPS Beat:</span>
-                        <span className={`beat-value ${consensus.eps_beat_pct >= 0 ? 'positive' : 'negative'}`}>
-                          {consensus.eps_beat_pct >= 0 ? '+' : ''}{consensus.eps_beat_pct.toFixed(2)}%
-                        </span>
-                      </div>
-                    )}
-                    
-                    {assessment.rationale && (
-                      <div className="earnings-assessment-rationale">
-                        <p>{assessment.rationale}</p>
-                      </div>
-                    )}
-                    
-                    {(assessment.key_catalysts?.length > 0 || assessment.key_concerns?.length > 0) && (
-                      <div className="earnings-catalysts-concerns">
-                        {assessment.key_catalysts?.length > 0 && (
-                          <div className="earnings-catalysts">
-                            <h5>Catalysts</h5>
-                            <ul>
-                              {assessment.key_catalysts.map((c, i) => (
-                                <li key={i}>{c}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                        {assessment.key_concerns?.length > 0 && (
-                          <div className="earnings-concerns">
-                            <h5>Concerns</h5>
-                            <ul>
-                              {assessment.key_concerns.map((c, i) => (
-                                <li key={i}>{c}</li>
-                              ))}
-                            </ul>
-                          </div>
+                  ))}
+                </div>
+              )}
+
+              {assessment.rationale && (
+                <p className="earnings-rationale">{assessment.rationale}</p>
+              )}
+
+              {(assessment.key_catalysts?.length > 0 || assessment.key_concerns?.length > 0) && (
+                <div className="earnings-catalysts-concerns">
+                  {assessment.key_catalysts?.length > 0 && (
+                    <div className="earnings-catalysts">
+                      <h5>Catalysts</h5>
+                      <ul>
+                        {assessment.key_catalysts.map((c, i) => <li key={i}>{c}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {assessment.key_concerns?.length > 0 && (
+                    <div className="earnings-concerns">
+                      <h5>Concerns</h5>
+                      <ul>
+                        {assessment.key_concerns.map((c, i) => <li key={i}>{c}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(epsGuidance.next_quarter || epsGuidance.next_year || revenueGuidance.next_quarter || revenueGuidance.next_year) && (
+                <div className="earnings-guidance">
+                  <h5>Guidance</h5>
+                  <div className="guidance-metrics">
+                    {epsGuidance.next_year && (
+                      <div className="guidance-metric">
+                        <span className="guidance-label">EPS (Full Year):</span>
+                        <span className="guidance-value">${epsGuidance.next_year.toFixed(2)}</span>
+                        {epsGuidance.growth_pct != null && (
+                          <span className={`guidance-growth ${epsGuidance.growth_pct >= 0 ? 'positive' : 'negative'}`}>
+                            {epsGuidance.growth_pct >= 0 ? '+' : ''}{epsGuidance.growth_pct.toFixed(1)}%
+                          </span>
                         )}
                       </div>
                     )}
-                    
-                    {report.summary && (
-                      <div className="earnings-summary">
-                        <div 
-                          className="earnings-summary-content"
-                          dangerouslySetInnerHTML={{ 
-                            __html: markdownToHtml(report.summary)
-                          }} 
-                        />
+                    {epsGuidance.next_quarter && (
+                      <div className="guidance-metric">
+                        <span className="guidance-label">EPS (Next Q):</span>
+                        <span className="guidance-value">${epsGuidance.next_quarter.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {revenueGuidance.next_year && (
+                      <div className="guidance-metric">
+                        <span className="guidance-label">Revenue (FY):</span>
+                        <span className="guidance-value">${(revenueGuidance.next_year / 1000).toFixed(2)}B</span>
+                        {revenueGuidance.growth_pct != null && (
+                          <span className={`guidance-growth ${revenueGuidance.growth_pct >= 0 ? 'positive' : 'negative'}`}>
+                            {revenueGuidance.growth_pct >= 0 ? '+' : ''}{revenueGuidance.growth_pct.toFixed(1)}%
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
-                );
-              })}
+                </div>
+              )}
+
+              {report.summary && (
+                <div className="earnings-summary">
+                  <div
+                    className="earnings-summary-content"
+                    dangerouslySetInnerHTML={{ __html: markdownToHtml(report.summary) }}
+                  />
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* News Section */}
         <div className="panel">
