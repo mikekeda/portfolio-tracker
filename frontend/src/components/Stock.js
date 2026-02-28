@@ -299,6 +299,7 @@ const Stock = () => {
   const [reportHtml, setReportHtml] = useState(null);
   const [loadingReport, setLoadingReport] = useState(false);
   const [activeReportIdx, setActiveReportIdx] = useState(0);
+  useEffect(() => { setActiveReportIdx(0); }, [symbol]);
   const [chartDays, setChartDays] = useState(() => {
     const stored = localStorage.getItem('stock_chart_days') || '365';
     return stored === 'ytd' ? 'ytd' : Number(stored);

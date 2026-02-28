@@ -11,7 +11,7 @@ import {
   createColumnHelper,
 } from '@tanstack/react-table';
 import { renderCountryWithFlag } from '../utils/countryUtils';
-import { PS_THRESHOLDS, getPsThresholds } from '../utils/valuationUtils';
+import { getPsThresholds } from '../utils/valuationUtils';
 import { calculateBarWidth, getBarColorScheme, calculateMinMax, getBarStyle, shouldBeNegativeBar } from '../utils/barUtils';
 import { getAvailableScreeners } from '../services/screeners';
 import './Holdings.css';

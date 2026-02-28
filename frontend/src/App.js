@@ -10,13 +10,15 @@ import Stock from './components/Stock';
 import Allocations from './components/Allocations';
 import Login from './components/Login';
 import Form13F from './components/Form13F';
+import EarningsCalendar from './components/EarningsCalendar';
 import './App.css';
+
+const RELOAD_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes — reload stale tabs on visibility
 
 function AppContent() {
   const location = useLocation();
   const isLoginPage = location.pathname === '/login';
   const pageLoadTime = useRef(Date.now());
-  const RELOAD_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -50,6 +52,7 @@ function AppContent() {
           <Route path="/stock/:symbol" element={<Stock />} />
           <Route path="/13f" element={<Form13F />} />
           <Route path="/13f/:managerId" element={<Form13F />} />
+          <Route path="/calendar" element={<EarningsCalendar />} />
         </Routes>
       </main>
     </div>
