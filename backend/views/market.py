@@ -1,0 +1,130 @@
+from collections import defaultdict
+from datetime import datetime, timedelta
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from backend.app import get_db_session
+from backend.views._shared import get_rates
+from config import TIMEZONE
+from models import HoldingDaily, Instrument, Pie, PieInstrument
+
+router = APIRouter()
+
+
+@router.get("/api/market/movers")
+async def get_movers(
+    period: str = "1d",
+    session: AsyncSession = Depends(get_db_session),
+) -> list[dict[str, Any]]:
+    """Get all portfolio movers (holdings with price changes) for a given period."""
+    valid_periods = {"1d": 1, "1w": 7, "1m": 30, "90d": 90}
+    if period not in valid_periods:
+        raise HTTPException(status_code=400, detail="Invalid period. Use: 1d, 1w, 1m, 90d")
+
+    days = valid_periods[period]
+    today = datetime.now(TIMEZONE).date()
+    start_date = today - timedelta(days=days)
+
+    currency_rates = await get_rates(session)
+
+    result = await session.execute(
+        select(
+            Instrument.yahoo_symbol,
+            Instrument.name,
+            Instrument.t212_code,
+            Instrument.currency,
+            HoldingDaily.date,
+            HoldingDaily.current_price,
+            HoldingDaily.ppl,
+            HoldingDaily.quantity,
+        )
+        .join(HoldingDaily)
+        .filter(HoldingDaily.date >= start_date)
+        .order_by(Instrument.yahoo_symbol, HoldingDaily.date)
+    )
+    instruments = result.all()
+
+    prices_data = defaultdict(list)
+
+    for price in instruments:
+        prices_data[price.yahoo_symbol].append(price)
+
+    # Calculate percentage changes
+    movers = []
+    for symbol, symbol_data in prices_data.items():
+        if len(symbol_data) >= 2:
+            # Get first and last prices
+            first_price = symbol_data[0].current_price
+            last_price = symbol_data[-1].current_price
+
+            if first_price > 0:
+                change_pct = ((last_price - first_price) / first_price) * 100
+
+                market_value_gbp = (
+                    symbol_data[-1].quantity * symbol_data[-1].current_price * currency_rates[symbol_data[-1].currency]
+                )
+                gain_pct = symbol_data[-1].ppl / (market_value_gbp - symbol_data[-1].ppl) * 100.0
+
+                movers.append(
+                    {
+                        "symbol": symbol,
+                        "name": symbol_data[0].name,
+                        "change_pct": change_pct,
+                        "current_price": last_price,
+                        "t212_code": symbol_data[0].t212_code,
+                        "gain_pct": gain_pct,
+                        "value": market_value_gbp,
+                    }
+                )
+
+    # Sort by percentage change (descending: highest gainers first)
+    movers.sort(key=lambda x: x["change_pct"], reverse=True)
+
+    return movers
+
+
+@router.get("/api/pies")
+async def get_pies(session: AsyncSession = Depends(get_db_session)):
+    """Get all pies with their instruments."""
+    # Fetch all pies with their instruments and related instrument data
+    result = await session.execute(
+        select(Pie).options(selectinload(Pie.instruments).selectinload(PieInstrument.instrument)).order_by(Pie.name)
+    )
+    pies = result.scalars().all()
+
+    # Format the response
+    pies_data = [
+        {
+            "id": pie.id,
+            "name": pie.name,
+            "cash": pie.cash,
+            "progress": pie.progress,
+            "status": pie.status,
+            "creation_date": pie.creation_date.isoformat() if pie.creation_date else None,
+            "end_date": pie.end_date.isoformat() if pie.end_date else None,
+            "dividend_cash_action": pie.dividend_cash_action,
+            "goal": pie.goal,
+            "dividend_details": pie.dividend_details,
+            "result": pie.result,
+            "instruments": [
+                {
+                    "t212_code": instrument.t212_code,
+                    "instrument_name": instrument.instrument.name if instrument.instrument else None,
+                    "yahoo_symbol": instrument.instrument.yahoo_symbol if instrument.instrument else None,
+                    "expected_share": instrument.expected_share,
+                    "current_share": instrument.current_share,
+                    "owned_quantity": instrument.owned_quantity,
+                    "result": instrument.result,
+                    "issues": instrument.issues,
+                }
+                for instrument in sorted(pie.instruments, key=lambda i: i.current_share, reverse=True)
+            ],
+        }
+        for pie in pies
+    ]
+
+    return pies_data
