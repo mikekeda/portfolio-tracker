@@ -78,7 +78,7 @@ class Guidance(BaseModel):
     )
     outlook_commentary: str | None = Field(
         None,
-        max_length=300,
+        max_length=500,
         description="1-2 sentence summary of management's qualitative forward outlook (only if no specific numbers are provided above)",
     )
 
@@ -415,7 +415,10 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
         logger.info("  [download] %s %s period %s — fetching from SEC", ticker, form, report_date)
 
     # 4. Get HTML (returns cached file if present, downloads otherwise)
-    html_content = get_filing_html(cik, ticker, metadata)
+    try:
+        html_content = get_filing_html(cik, ticker, metadata)
+    except requests.RequestException as e:
+        logger.warning("%s download failed: %s", ticker, e)
 
     # 5. Extract text
     text = extract_text_from_html(html_content)
