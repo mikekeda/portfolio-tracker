@@ -2,8 +2,9 @@
 Fetches the latest 10-Q or 10-K filing for a given ticker from the SEC EDGAR API
 """
 
+import argparse
 import json
-import os
+import logging
 from datetime import date
 from pathlib import Path
 from time import sleep
@@ -17,8 +18,13 @@ from sqlalchemy import func, select
 from sqlalchemy.sql import text as sql_text, text
 
 from config import GEMINI_API_KEY, logger
-from models import EarningsReport, Instrument, InstrumentYahoo
+from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
 from scripts.update_data import get_session
+
+# Silence verbose third-party SDK loggers (AFC status, HTTP request lines).
+# Note: google-genai uses "google_genai" (underscore) as its logger namespace, not "google.genai".
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("google_genai").setLevel(logging.WARNING)
 
 # SEC requires a User-Agent in the format: "Company Name email@example.com"
 # TODO: Replace with your actual contact info
@@ -27,13 +33,22 @@ USER_AGENT = "PortfolioTracker/1.0 (admin@example.com)"
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate", "Host": "www.sec.gov"}
 
 # SEC Endpoints
-SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{primary_document}"
 
 # Local Storage Configuration
 DATA_DIR = Path("data/filings")
 MODEL = "gemini-3-flash-preview"
+
+# Gemini client — created once at import time
+_genai_client: genai.Client | None = None
+
+
+def _get_genai_client() -> genai.Client:
+    global _genai_client
+    if _genai_client is None:
+        _genai_client = genai.Client(api_key=GEMINI_API_KEY)
+    return _genai_client
 
 
 # Pydantic models for structured output - focused on most important metrics for retail investors
@@ -58,6 +73,14 @@ class Guidance(BaseModel):
 
     eps_guidance: EPSGuidance | None = Field(None, description="EPS guidance is most important for stock price")
     revenue_guidance: RevenueGuidance | None = None
+    operating_margin_guidance: float | None = Field(
+        None, description="Guided operating margin % for next period, if explicitly stated (e.g. 'we expect operating margin of ~20%')"
+    )
+    outlook_commentary: str | None = Field(
+        None,
+        max_length=300,
+        description="1-2 sentence summary of management's qualitative forward outlook (only if no specific numbers are provided above)",
+    )
 
 
 class ConsensusComparison(BaseModel):
@@ -115,8 +138,15 @@ class EarningsReportMetrics(BaseModel):
     )
 
 
-def get_latest_filing_metadata(cik: str, form_types: tuple[str] = ("10-Q", "10-K")):
-    """Fetches filing metadata for the given CIK and form types."""
+def get_latest_filing_metadata(cik: str, form_types: tuple[str, ...] = ("10-Q", "10-K")):
+    """
+    Fetches the most recent filing metadata for the given CIK and form types.
+
+    For US domestic companies the default ("10-Q", "10-K") works.
+    Foreign private issuers (e.g. ASML, NVO, NU) file 20-F (annual) instead of 10-K,
+    and Canadian companies file 40-F.  Pass form_types=("20-F",) or ("40-F",) explicitly,
+    or use the helper get_latest_filing_metadata_any() which tries both automatically.
+    """
 
     url = SEC_SUBMISSIONS_URL.format(cik=cik)
     response = requests.get(url, headers={"User-Agent": USER_AGENT})
@@ -125,11 +155,8 @@ def get_latest_filing_metadata(cik: str, form_types: tuple[str] = ("10-Q", "10-K
 
     filings = data["filings"]["recent"]
 
-    # Collect all matching filings
     for i, form in enumerate(filings["form"]):
         if form in form_types:
-            # Return the most recent one
-
             return {
                 "accessionNumber": filings["accessionNumber"][i],
                 "primaryDocument": filings["primaryDocument"][i],
@@ -138,6 +165,17 @@ def get_latest_filing_metadata(cik: str, form_types: tuple[str] = ("10-Q", "10-K
             }
 
     return None
+
+
+def get_latest_filing_metadata_any(cik: str):
+    """
+    Tries domestic (10-Q/10-K) first, then foreign (20-F/40-F) as fallback.
+    Covers US companies, foreign private issuers, and Canadian filers.
+    """
+    result = get_latest_filing_metadata(cik, form_types=("10-Q", "10-K"))
+    if result is None:
+        result = get_latest_filing_metadata(cik, form_types=("20-F", "40-F"))
+    return result
 
 
 def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
@@ -223,7 +261,7 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
         return None
 
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = _get_genai_client()
 
         # Truncate text if it's too long
         max_chars = 500000
@@ -239,12 +277,13 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
         **Extract the following structured data:**
 
         1. **Guidance (MOST IMPORTANT - REQUIRED):**
-           - Look for EPS guidance in sections like "Outlook", "Guidance", "Forecast", "Expectations", "Q4 2025", "FY 2025", etc.
-           - EPS guidance may be stated as: "expects EPS of $X.XX", "forecasts EPS between $X and $Y", "guidance of $X.XX"
-           - Extract next quarter EPS guidance if provided; extract full year EPS guidance if provided
-           - Calculate growth_pct by comparing guidance to prior year actual EPS (if available)
-           - Revenue guidance: extract in millions for next quarter and full year; calculate growth_pct if prior period available
-           - **IMPORTANT**: If management does NOT provide specific guidance numbers, set all guidance fields to null. Do NOT infer or estimate.
+           - Scan ALL of: "Outlook", "Guidance", "Forecast", "Expectations", "Financial Outlook", "Business Outlook", "Looking Ahead", MD&A forward-looking sections.
+           - **EPS guidance**: "expects EPS of $X.XX", "forecasts EPS between $X and $Y", "diluted EPS guidance of $X.XX–$Y.YY".
+             Calculate growth_pct vs prior year actual EPS if available.
+           - **Revenue guidance**: extract in millions for next quarter and full year; calculate growth_pct if prior period available.
+           - **Operating margin guidance**: capture if stated explicitly (e.g. "operating margin of approximately 20%", "adjusted EBIT margin ~15%").
+           - **Outlook commentary**: if no specific numbers exist, write 1–2 sentences summarising management's qualitative forward outlook (e.g. "expects double-digit revenue growth driven by cloud segment").
+           - **IMPORTANT**: For numeric fields, only populate from explicitly stated numbers. Do NOT infer or estimate numbers not in the text.
 
         2. **Consensus Comparison (if available):**
            - Look for "consensus", "analyst estimates", "Street estimates", "beats", "misses"
@@ -310,94 +349,12 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
         # Convert back to dict for storage (Pydantic model to dict)
         result = validated_result.model_dump()
 
-        eps_guidance = (result.get("guidance") or {}).get("eps_guidance") or {}
-        assessment = result.get("investment_assessment") or {}
-        logger.info(
-            f"Extracted structured data for {ticker} - EPS guidance: next_q={eps_guidance.get('next_quarter')}, "
-            f"next_y={eps_guidance.get('next_year')}, growth={eps_guidance.get('growth_pct')}% | "
-            f"Assessment: {assessment.get('recommendation', 'N/A')} ({assessment.get('conviction', 'N/A')})"
-        )
+        logger.info("LLM extraction complete for %s (%d chars processed)", ticker, len(text))
         return result
 
     except Exception as e:
         logger.error(f"Error calling Gemini API: {e}", exc_info=True)
         return None
-
-
-def get_earnings_report(ticker: str, cik: str, last_earnings_date: str, session, instrument_id: int):
-    """Fetches, processes, and saves earnings report for a given ticker."""
-
-    # 1. Get Filing (Latest or Closest to Date)
-    metadata = get_latest_filing_metadata(cik)
-
-    if not metadata:
-        logger.warning("No ('10-Q', '10-K') filings found for %s CIK %s", ticker, cik)
-        return None
-
-    report_date = metadata["reportDate"]
-
-    # Don't download older reports (ISO dates can be compared as strings)
-    (DATA_DIR / ticker).mkdir(parents=True, exist_ok=True)  # ensure dir exists
-    existing_filings = os.listdir(DATA_DIR / ticker)
-    if metadata["reportDate"] < last_earnings_date and len(existing_filings) > 0:
-        logger.info(
-            "No new filings found for %s (needed %s, we have: %s)", ticker, last_earnings_date, existing_filings
-        )
-        return None
-
-    # Check if we already have this report in the database
-    existing_report = session.execute(
-        select(EarningsReport).filter(
-            EarningsReport.instrument_id == instrument_id, EarningsReport.date == date.fromisoformat(report_date)
-        )
-    ).scalar_one_or_none()
-
-    if existing_report:
-        logger.info("Earnings report for %s on %s already exists in database, skipping", ticker, report_date)
-        return existing_report
-
-    # 2. Get HTML (Download or Cache)
-    html_content = get_filing_html(cik, ticker, metadata)
-
-    # 3. Extract Text
-    text = extract_text_from_html(html_content)
-
-    # 4. Extract structured metrics and generate summary with LLM
-    result = summarize_with_llm(text, ticker, metadata["form"])
-
-    if result is None:
-        logger.warning("Failed to generate summary for %s %s, skipping database save", ticker, report_date)
-        return None
-
-    # Extract summary and metrics from structured output
-    summary = result.get("summary", "")
-    metrics = {k: v for k, v in result.items() if k != "summary"}  # All fields except summary
-
-    # 5. Save to database
-    earnings_report = EarningsReport(
-        instrument_id=instrument_id,
-        date=date.fromisoformat(report_date),
-        summary=summary,
-        metrics=metrics,  # Store structured metrics
-    )
-    session.add(earnings_report)
-    session.commit()
-
-    # Log key metrics
-    eps_guidance = metrics.get("guidance", {}).get("eps_guidance", {})
-    if eps_guidance:
-        logger.info(
-            "Saved earnings report for %s on %s - EPS guidance: next_q=%s, next_y=%s, growth=%s%%",
-            ticker,
-            report_date,
-            eps_guidance.get("next_quarter"),
-            eps_guidance.get("next_year"),
-            eps_guidance.get("growth_pct"),
-        )
-    else:
-        logger.info("Saved earnings report for %s on %s to database", ticker, report_date)
-
-    return earnings_report
 
 
 def _check_file_exists_for_date(ticker: str, report_date: str) -> bool:
@@ -406,31 +363,122 @@ def _check_file_exists_for_date(ticker: str, report_date: str) -> bool:
     if not ticker_dir.exists():
         return False
 
-    # Check for files starting with the date (handles 10-Q, 10-Q/A, 10-K, etc.)
     for file_path in ticker_dir.iterdir():
         if file_path.is_file() and file_path.name.startswith(f"{report_date}_") and file_path.suffix == ".html":
             return True
     return False
 
 
-def get_earnings_reports(limit: int = 100):
+def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
+    """
+    Fetches, processes, and saves the latest SEC earnings filing for a given ticker.
+
+    Decision flow:
+    1. Fetch filing metadata from SEC (lightweight JSON, tries 10-Q/10-K then 20-F/40-F).
+    2. DB record exists for that report_date → skip (already analysed).
+    3. HTML cached on disk for that report_date → regenerate summary from cache
+       (post-table-truncation scenario: re-run LLM without re-downloading).
+    4. Neither DB nor cache → download from SEC and analyse.
+
+    Note: we intentionally do NOT compare the SEC report_date to the Yahoo announcement
+    date.  Those are different things (period end vs. announcement day) and comparing them
+    caused legitimate new filings to be skipped.
+    """
+
+    # 1. Filing metadata
+    metadata = get_latest_filing_metadata_any(cik)
+
+    if not metadata:
+        logger.warning("No supported filings (10-Q/10-K/20-F/40-F) found for %s CIK %s", ticker, cik)
+        return None
+
+    report_date = metadata["reportDate"]
+    form = metadata["form"]
+
+    # 2. DB check — primary skip condition
+    existing_report = session.execute(
+        select(EarningsReport).filter(
+            EarningsReport.instrument_id == instrument_id, EarningsReport.date == date.fromisoformat(report_date)
+        )
+    ).scalar_one_or_none()
+
+    if existing_report:
+        logger.info("  [skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
+        return existing_report
+
+    # 3. Check HTML cache
+    html_cached = _check_file_exists_for_date(ticker, report_date)
+
+    if html_cached:
+        logger.info("  [cache] %s %s period %s — regenerating summary (no download)", ticker, form, report_date)
+    else:
+        logger.info("  [download] %s %s period %s — fetching from SEC", ticker, form, report_date)
+
+    # 4. Get HTML (returns cached file if present, downloads otherwise)
+    html_content = get_filing_html(cik, ticker, metadata)
+
+    # 5. Extract text
+    text = extract_text_from_html(html_content)
+
+    # 6. LLM analysis
+    result = summarize_with_llm(text, ticker, form)
+
+    if result is None:
+        logger.warning("  [error] LLM failed for %s %s — skipping DB save", ticker, report_date)
+        return None
+
+    summary = result.get("summary", "")
+    metrics = {k: v for k, v in result.items() if k != "summary"}
+
+    # 7. Save
+    earnings_report = EarningsReport(
+        instrument_id=instrument_id,
+        date=date.fromisoformat(report_date),
+        summary=summary,
+        metrics=metrics,
+    )
+    session.add(earnings_report)
+    session.commit()
+
+    eps_guidance = (metrics.get("guidance") or {}).get("eps_guidance") or {}
+    assessment = (metrics.get("investment_assessment") or {})
+    logger.info(
+        "  [saved] %s %s period %s | rec=%s conv=%s | EPS next_q=%s next_y=%s growth=%s%%",
+        ticker, form, report_date,
+        assessment.get("recommendation", "—"), assessment.get("conviction", "—"),
+        eps_guidance.get("next_quarter"), eps_guidance.get("next_year"), eps_guidance.get("growth_pct"),
+    )
+    return earnings_report
+
+
+def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
     """
     Fetch and process earnings reports for instruments with earnings data.
+
+    Args:
+        limit: Maximum number of instruments to process.
+        only_holdings: When True, restrict to instruments currently held in the portfolio
+                       (latest HoldingDaily snapshot with quantity > 0).
 
     Prioritizes tickers that:
     1. Don't have existing reports in database yet (has_reports = 0 first)
     2. Have more recent earnings dates (more likely to have new filings)
+
+    Truncation note:
+        If the earnings_reports table is truncated (e.g. to force re-summarisation with a
+        new prompt), this function will detect that the HTML filing is already cached on disk
+        and skip the SEC download — it will only re-run the LLM summarisation step and
+        re-insert the record into the database.
     """
 
     with get_session() as session:
         # Get max earnings date from JSONB keys (most recent earnings date that's before today)
-        # This ensures we only consider valid dates for processing
         today_iso = date.today().isoformat()
 
         max_earnings_date_expr = (
             select(func.max(sql_text("date")))
             .select_from(func.jsonb_object_keys(InstrumentYahoo.earnings).alias("date"))
-            .where(text("date < :today_iso").bindparams(today_iso=today_iso))  # Only consider dates before today
+            .where(text("date < :today_iso").bindparams(today_iso=today_iso))
             .correlate(InstrumentYahoo)
             .scalar_subquery()
         )
@@ -443,7 +491,7 @@ def get_earnings_reports(limit: int = 100):
             .scalar_subquery()
         )
 
-        result = session.execute(
+        query = (
             select(
                 Instrument.id,
                 Instrument.yahoo_symbol,
@@ -454,37 +502,47 @@ def get_earnings_reports(limit: int = 100):
             .filter(
                 Instrument.cik.is_not(None),
                 InstrumentYahoo.earnings != "{}",
-                max_earnings_date_expr.is_not(None),  # Must have at least one valid earnings date (before today)
+                max_earnings_date_expr.is_not(None),
             )
             .order_by(
-                has_reports.asc(),  # Prioritize instruments without any reports yet
-                max_earnings_date_expr.desc().nulls_last(),  # Then by most recent earnings date
+                has_reports.asc(),
+                max_earnings_date_expr.desc().nulls_last(),
             )
             .limit(limit)
-        ).all()
+        )
 
-        logger.info("Getting the %d recent earnings reports: %s", limit, [r.yahoo_symbol for r in result])
+        if only_holdings:
+            latest_date = session.execute(select(func.max(HoldingDaily.date))).scalar()
+            if latest_date:
+                held_ids = session.execute(
+                    select(HoldingDaily.instrument_id)
+                    .where(HoldingDaily.date == latest_date)
+                    .where(HoldingDaily.quantity > 0)
+                ).scalars().all()
+                query = query.filter(Instrument.id.in_(held_ids))
+                logger.info("only_holdings=True: restricting to %d held instruments", len(held_ids))
+            else:
+                logger.warning("only_holdings=True but no holdings found — processing nothing")
+                return
+
+        result = session.execute(query).all()
+
+        logger.info("Processing %d instruments: %s", len(result), [r.yahoo_symbol for r in result])
 
         for row in result:
-            # Find the most recent earnings date that's before today
+            # Most recent Yahoo earnings date before today (used only for logging context)
             last_earnings_date = next(
                 (d for d in sorted(row.earnings.keys(), reverse=True) if d < date.today().isoformat()), None
             )
-            # This should never be None due to the query filter, but keep as safety check
             if not last_earnings_date:
                 logger.warning("No valid earnings date found for %s despite query filter, skipping", row.yahoo_symbol)
                 continue
 
-            # Check if file already exists (handles form variations)
-            if _check_file_exists_for_date(row.yahoo_symbol, last_earnings_date):
-                continue
-
-            logger.info("Fetching filings for %s (last earnings: %s)", row.yahoo_symbol, last_earnings_date)
+            logger.info("── %s  (Yahoo last earnings: %s)", row.yahoo_symbol, last_earnings_date)
 
             get_earnings_report(
                 ticker=row.yahoo_symbol,
                 cik=row.cik,
-                last_earnings_date=last_earnings_date,
                 session=session,
                 instrument_id=row.id,
             )
@@ -493,4 +551,13 @@ def get_earnings_reports(limit: int = 100):
 
 
 if __name__ == "__main__":
-    get_earnings_reports(10)
+    parser = argparse.ArgumentParser(description="Fetch and summarise SEC earnings reports")
+    parser.add_argument("--limit", type=int, default=10, help="Maximum number of instruments to process (default: 10)")
+    parser.add_argument(
+        "--only-holdings",
+        action="store_true",
+        default=False,
+        help="Restrict to instruments currently held in the portfolio",
+    )
+    args = parser.parse_args()
+    get_earnings_reports(limit=args.limit, only_holdings=args.only_holdings)
