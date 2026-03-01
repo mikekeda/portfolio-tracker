@@ -419,6 +419,7 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
         html_content = get_filing_html(cik, ticker, metadata)
     except requests.RequestException as e:
         logger.warning("%s download failed: %s", ticker, e)
+        return None
 
     # 5. Extract text
     text = extract_text_from_html(html_content)
