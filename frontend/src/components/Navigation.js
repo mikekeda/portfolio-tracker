@@ -58,26 +58,23 @@ const Navigation = () => {
 
         {/* Navigation links */}
         <div className={`nav-links ${isMobileMenuOpen ? 'mobile-open' : ''}`}>
-          <Link to="/" className={linkClass('/')} onClick={handleLinkClick}>
-            Summary
+          <Link to="/holdings" className={linkClass('/holdings')} onClick={handleLinkClick}>
+            Holdings
           </Link>
           <Link to="/allocations" className={linkClass('/allocations')} onClick={handleLinkClick}>
             Allocations
           </Link>
-          <Link to="/holdings" className={linkClass('/holdings')} onClick={handleLinkClick}>
-            Holdings
-          </Link>
-          <Link to="/pies" className={linkClass('/pies')} onClick={handleLinkClick}>
-            Pies
+          <Link to="/calendar" className={linkClass('/calendar')} onClick={handleLinkClick}>
+            Calendar
           </Link>
           <Link to="/chart" className={linkClass('/chart')} onClick={handleLinkClick}>
             Chart
           </Link>
+          <Link to="/pies" className={linkClass('/pies')} onClick={handleLinkClick}>
+            Pies
+          </Link>
           <Link to="/13f" className={linkClass('/13f')} onClick={handleLinkClick}>
             13F
-          </Link>
-          <Link to="/calendar" className={linkClass('/calendar')} onClick={handleLinkClick}>
-            Calendar
           </Link>
           <label className="nav-hide-amounts">
             <span className="nav-hide-amounts-label">Hide amounts</span>

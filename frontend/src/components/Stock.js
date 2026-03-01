@@ -1,6 +1,6 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import PropTypes from 'prop-types';
-import {Link, useParams} from 'react-router-dom';
+import {Link, useNavigate, useParams} from 'react-router-dom';
 import {portfolioAPI} from '../services/api';
 import SharedTooltip from './SharedTooltip';
 import {
@@ -286,6 +286,112 @@ const markdownToHtml = (markdown) => {
 
   return output.join('\n');
 };
+
+// ── Symbol switcher ───────────────────────────────────────────────────────────
+
+const SymbolSwitcher = ({ currentSymbol }) => {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [instruments, setInstruments] = useState([]);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const inputRef = useRef(null);
+  const containerRef = useRef(null);
+
+  // Lazy-load on first open (instruments are stable; no need to re-fetch)
+  useEffect(() => {
+    if (open && instruments.length === 0) {
+      portfolioAPI.getInstruments()
+        .then((data) => setInstruments(data.instruments || []))
+        .catch((err) => console.error('SymbolSwitcher: failed to load instruments', err));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  // Focus input when opened
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return;
+    const handle = (e) => {
+      if (!containerRef.current?.contains(e.target)) {
+        setOpen(false);
+        setQuery('');
+      }
+    };
+    document.addEventListener('mousedown', handle);
+    return () => document.removeEventListener('mousedown', handle);
+  }, [open]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return instruments.slice(0, 8);
+    return instruments
+      .filter((i) => i.symbol.toLowerCase().includes(q) || i.name.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [query, instruments]);
+
+  // Reset keyboard selection to top whenever the search query changes
+  useEffect(() => { setActiveIdx(0); }, [query]);
+
+  const handleSelect = (sym) => {
+    setOpen(false);
+    setQuery('');
+    if (sym !== currentSymbol) navigate(`/stock/${encodeURIComponent(sym)}`);
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape') { setOpen(false); setQuery(''); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, filtered.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); }
+    else if (e.key === 'Enter' && filtered[activeIdx]) { handleSelect(filtered[activeIdx].symbol); }
+  };
+
+  if (!open) {
+    return (
+      <button className="stock-symbol-btn" onClick={() => setOpen(true)} title="Switch stock">
+        {currentSymbol} <span className="stock-symbol-caret">▾</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="stock-switcher" ref={containerRef}>
+      <input
+        ref={inputRef}
+        className="stock-switcher-input"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Search symbol or name…"
+      />
+      {filtered.length > 0 && (
+        <div className="stock-switcher-dropdown">
+          {filtered.map((inst, idx) => (
+            <button
+              key={inst.symbol}
+              className={`stock-switcher-option${inst.symbol === currentSymbol ? ' current' : ''}${idx === activeIdx ? ' active' : ''}`}
+              onClick={() => handleSelect(inst.symbol)}
+              onMouseEnter={() => setActiveIdx(idx)}
+            >
+              <span className="stock-switcher-sym">{inst.symbol}</span>
+              <span className="stock-switcher-name">{inst.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+SymbolSwitcher.propTypes = {
+  currentSymbol: PropTypes.string.isRequired,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 const Stock = () => {
   const { symbol } = useParams();
@@ -810,7 +916,7 @@ const Stock = () => {
       <nav className="stock-breadcrumb">
         <Link to="/holdings">Holdings</Link>
         <span className="breadcrumb-sep">›</span>
-        <span>{i.symbol}</span>
+        <SymbolSwitcher currentSymbol={symbol} />
       </nav>
       <div className="stock-header">
         <h2>{i.symbol} — {i.name}</h2>

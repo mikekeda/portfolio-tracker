@@ -28,6 +28,98 @@
   color: #adb5bd;
 }
 
+/* ── Symbol switcher ────────────────────────────────────────────────────────── */
+
+.stock-symbol-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: #495057;
+  padding: 2px 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  transition: background 0.15s, color 0.15s;
+}
+
+.stock-symbol-btn:hover {
+  background: #e9ecef;
+  color: #0d6efd;
+}
+
+.stock-symbol-caret {
+  font-size: 10px;
+  color: #adb5bd;
+  line-height: 1;
+}
+
+.stock-switcher {
+  position: relative;
+  display: inline-block;
+}
+
+.stock-switcher-input {
+  font-size: 0.9rem;
+  border: 1px solid #0d6efd;
+  border-radius: 4px;
+  padding: 2px 8px;
+  outline: none;
+  width: 180px;
+  color: #212529;
+}
+
+.stock-switcher-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  z-index: 200;
+  min-width: 260px;
+  overflow: hidden;
+}
+
+.stock-switcher-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+
+.stock-switcher-option:hover,
+.stock-switcher-option.active {
+  background: #f0f4ff;
+}
+
+.stock-switcher-option.current {
+  background: #f8f9fa;
+}
+
+.stock-switcher-sym {
+  font-weight: 700;
+  color: #2c3e50;
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+.stock-switcher-name {
+  color: #6c757d;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .my-position-card {
   background: #e7f3ff;
   border: 1px solid #b6d4fe;
