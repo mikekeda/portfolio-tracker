@@ -28,6 +28,7 @@ from backend.views._shared import PRICE_COLUMN, calculate_historical_trends, get
 from config import BENCHES, PRICE_FIELD, TIMEZONE, VIX
 from data import QUICK_RATIO_THRESHOLDS
 from models import (
+    EarningsReport,
     HoldingDaily,
     Instrument,
     PortfolioDaily,
@@ -35,6 +36,118 @@ from models import (
 )
 
 router = APIRouter()
+
+
+async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int, dict]:
+    """
+    Returns { instrument_id: { earnings_signal, earnings_conviction,
+                               since_earnings_pct, earnings_announcement_date } }
+    using the most recent EarningsReport for each instrument.
+    """
+    inst_ids = [h.instrument.id for h in items]
+    if not inst_ids:
+        return {}
+
+    # Most recent EarningsReport per instrument (one row per instrument)
+    latest_sq = (
+        select(
+            EarningsReport.instrument_id,
+            func.max(EarningsReport.date).label("max_date"),
+        )
+        .where(EarningsReport.instrument_id.in_(inst_ids))
+        .group_by(EarningsReport.instrument_id)
+        .subquery()
+    )
+    reports_q = await session.execute(
+        select(EarningsReport.instrument_id, EarningsReport.date, EarningsReport.metrics)
+        .join(
+            latest_sq,
+            and_(
+                EarningsReport.instrument_id == latest_sq.c.instrument_id,
+                EarningsReport.date == latest_sq.c.max_date,
+            ),
+        )
+    )
+    latest_reports: dict[int, tuple] = {
+        inst_id: (rdate, metrics) for inst_id, rdate, metrics in reports_q.all()
+    }
+    if not latest_reports:
+        return {}
+
+    # Per-instrument context: symbol, current_price, yahoo earnings dates (already in memory)
+    inst_ctx: dict[int, dict] = {}
+    for h in items:
+        inst = h.instrument
+        yh = inst.yahoo
+        info = (yh.info or {}) if yh else {}
+        inst_ctx[inst.id] = {
+            "symbol": inst.yahoo_symbol,
+            "current_price": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "yahoo_earnings": (yh.earnings or {}) if yh else {},
+        }
+
+    # Match each report to its Yahoo announcement date (period-end + 0–90 days)
+    announcement_map: dict[int, tuple] = {}  # inst_id -> (symbol, ann_date | None)
+    for inst_id, (rdate, _) in latest_reports.items():
+        ctx = inst_ctx.get(inst_id, {})
+        symbol = ctx.get("symbol")
+        best: date | None = None
+        best_delta = float("inf")
+        for date_str in ctx.get("yahoo_earnings", {}):
+            try:
+                yd = date.fromisoformat(date_str[:10])
+                delta = (yd - rdate).days
+                if 0 <= delta <= 90 and delta < best_delta:
+                    best_delta = delta
+                    best = yd
+            except (ValueError, TypeError):
+                pass
+        announcement_map[inst_id] = (symbol, best)
+
+    # Bulk price query for all announcement dates
+    price_map: dict[tuple, float] = {}
+    needed_pairs = {(sym, ann) for _, (sym, ann) in announcement_map.items() if sym and ann}
+    if needed_pairs:
+        syms = {sym for sym, _ in needed_pairs}
+        all_dates = {d for _, d in needed_pairs}
+        min_date = min(all_dates) - timedelta(days=4)
+        max_date = max(all_dates) + timedelta(days=4)
+        rows = await session.execute(
+            select(PricesDaily.symbol, PricesDaily.date, PricesDaily.close_price)
+            .where(PricesDaily.symbol.in_(syms))
+            .where(PricesDaily.date >= min_date)
+            .where(PricesDaily.date <= max_date)
+        )
+        for sym, pdate, close in rows.all():
+            price_map[(sym, pdate)] = close
+
+    result: dict[int, dict] = {}
+    for inst_id, (_, metrics) in latest_reports.items():
+        ctx = inst_ctx.get(inst_id, {})
+        sym, ann_date = announcement_map.get(inst_id, (None, None))
+        current_price = ctx.get("current_price")
+        assessment = (metrics or {}).get("investment_assessment") or {}
+
+        price_at_ann = None
+        if ann_date and sym:
+            for offset in range(5):
+                p = price_map.get((sym, ann_date + timedelta(days=offset)))
+                if p is not None:
+                    price_at_ann = round(p, 2)
+                    break
+
+        since_pct = None
+        if price_at_ann is not None and current_price is not None:
+            since_pct = round(((current_price - price_at_ann) / price_at_ann) * 100, 1)
+
+        result[inst_id] = {
+            "earnings_signal": assessment.get("recommendation"),
+            "earnings_conviction": assessment.get("conviction"),
+            "since_earnings_pct": since_pct,
+            "earnings_announcement_date": ann_date.isoformat() if ann_date else None,
+        }
+
+    return result
 
 
 @router.get("/api/portfolio/current")
@@ -122,6 +235,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session),
 
     instrument_ids = [h.instrument.id for h in items]
     form13f = await _get_form13f_for_instruments(session, instrument_ids)
+    earnings_signals = await _get_earnings_signals(session, items)
 
     portfolio_data = []
     for holding in items:
@@ -230,6 +344,12 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session),
                 "screener_score": 0,  # will be populated below
                 "form13f_score": form13f.get(holding.instrument.id, {}).get("score"),
                 "form13f_holders": form13f.get(holding.instrument.id, {}).get("holders", []),
+                **(earnings_signals.get(holding.instrument.id) or {
+                    "earnings_signal": None,
+                    "earnings_conviction": None,
+                    "since_earnings_pct": None,
+                    "earnings_announcement_date": None,
+                }),
             }
         )
 

@@ -659,6 +659,32 @@
   border: 1px solid #ffcdd2;
 }
 
+/* ── Earnings signal badge ─────────────────────────────────────────────────── */
+
+.earnings-signal-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+.earnings-signal-badge.es-buy     { background: #d1fae5; color: #065f46; }
+.earnings-signal-badge.es-consider { background: #fef3c7; color: #92400e; }
+.earnings-signal-badge.es-hold    { background: #e9ecef; color: #495057; }
+.earnings-signal-badge.es-avoid   { background: #fee2e2; color: #991b1b; }
+
+/* ── Since earnings % ─────────────────────────────────────────────────────── */
+
+.since-earnings {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.since-earnings.positive { color: #059669; }
+.since-earnings.negative { color: #dc2626; }
+
 /* 13F Holder badges - similar to screener badges */
 .form13f-holder-badges {
   display: flex;

@@ -93,6 +93,29 @@ function scoreFromChange(change) {
   return -2;                    // effective liquidation
 }
 
+/**
+ * Composite sort score for earnings signal + conviction.
+ * Ascending = most actionable positive signals first.
+ * For positive signals (buy/consider) high conviction ranks higher (lower score).
+ * For negative signals (avoid) high conviction ranks lower (higher score) — more certain to avoid.
+ */
+const SIGNAL_CONVICTION_SCORE = {
+  'buy:high': 0,  'buy:medium': 1,  'buy:low': 2,  'buy:': 3,
+  'consider:high': 4,  'consider:medium': 5,  'consider:low': 6,  'consider:': 7,
+  'hold:high': 8,  'hold:medium': 9,  'hold:low': 10,  'hold:': 11,
+  'avoid:low': 12,  'avoid:medium': 13,  'avoid:high': 14,  'avoid:': 13,
+};
+
+function signalScore(row) {
+  const key = `${row.earnings_signal || ''}:${row.earnings_conviction || ''}`;
+  return SIGNAL_CONVICTION_SCORE[key] ?? 99;
+}
+
+// Net institutional momentum: sum of change scores across all 13F holders.
+function netHolderScore(holders) {
+  return (holders || []).reduce((sum, h) => sum + scoreFromChange(h.change), 0);
+}
+
 function getHolderCategory(change) {
   if (change === 'New') return 'form13f-new';
   if (change === 'Closed') return 'form13f-closed';
@@ -903,11 +926,55 @@ const Holdings = () => {
         enableSorting: true,
         enableGlobalFilter: false,
         size: 180,
-        sortingFn: (rowA, rowB) => {
-          const holdersA = rowA.original.form13f_holders || [];
-          const holdersB = rowB.original.form13f_holders || [];
-          return holdersA.length - holdersB.length;
+        sortingFn: (rowA, rowB) =>
+          netHolderScore(rowA.original.form13f_holders) - netHolderScore(rowB.original.form13f_holders),
+      }),
+      columnHelper.accessor('earnings_signal', {
+        header: 'Signal',
+        cell: (info) => {
+          const signal = info.getValue();
+          const conviction = info.row.original.earnings_conviction;
+          const annDate = info.row.original.earnings_announcement_date;
+          if (!signal) return <span className="earnings-signal-cell" />;
+          const label = signal.charAt(0).toUpperCase() + signal.slice(1);
+          const tip = [
+            label,
+            conviction ? `${conviction} conviction` : null,
+            annDate ? `Announced ${annDate}` : null,
+          ].filter(Boolean).join(' · ');
+          return (
+            <span className={`earnings-signal-badge es-${signal}`} title={tip}>
+              {label}
+            </span>
+          );
         },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 80,
+        sortingFn: (rowA, rowB) => {
+          return signalScore(rowA.original) - signalScore(rowB.original);
+        },
+      }),
+      columnHelper.accessor('since_earnings_pct', {
+        header: 'Since Earn.',
+        cell: (info) => {
+          const pct = info.getValue();
+          const annDate = info.row.original.earnings_announcement_date;
+          if (pct == null) return <span className="since-earnings-cell" />;
+          const positive = pct >= 0;
+          const tip = annDate ? `Price change since earnings announced ${annDate}` : 'Price change since earnings announcement';
+          return (
+            <span
+              className={`since-earnings ${positive ? 'positive' : 'negative'}`}
+              title={tip}
+            >
+              {positive ? '+' : ''}{pct.toFixed(1)}%
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 80,
       }),
       columnHelper.accessor('country', {
         header: 'Country',
@@ -1170,6 +1237,8 @@ const Holdings = () => {
       'passedScreeners': 'Screeners',
       'form13f_score': '13F Score',
       'form13f_holders': '13F Holders',
+      'earnings_signal': 'Signal',
+      'since_earnings_pct': 'Since Earn.',
       'country': 'Country',
       'sector': 'Sector',
       'quote_type': 'Type',
