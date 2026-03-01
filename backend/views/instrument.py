@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
@@ -21,6 +21,78 @@ from models import (
 )
 
 router = APIRouter()
+
+
+async def _build_earnings_reports(instrument, yh, session: AsyncSession) -> list[dict]:
+    """
+    Build the earnings_reports list for the instrument response.
+    For each report, finds the Yahoo announcement date (the date in InstrumentYahoo.earnings
+    that falls 0–90 days after the SEC period-end date) and the closing price on that date.
+    """
+    reports = sorted(instrument.earnings_reports, key=lambda x: x.date, reverse=True)
+    if not reports:
+        return []
+
+    yh_earnings: dict = (yh.earnings or {}) if yh else {}
+    symbol = instrument.yahoo_symbol
+
+    # Parse Yahoo earnings dates once
+    yahoo_dates: list[date] = []
+    for date_str in yh_earnings:
+        try:
+            yahoo_dates.append(date.fromisoformat(date_str[:10]))
+        except (ValueError, TypeError):
+            pass
+    yahoo_dates.sort()
+
+    # Collect all announcement dates we'll need prices for
+    announcement_dates: list[date] = []
+    for report in reports:
+        best: date | None = None
+        best_delta = float('inf')
+        for yd in yahoo_dates:
+            delta = (yd - report.date).days
+            if 0 <= delta <= 90 and delta < best_delta:
+                best_delta = delta
+                best = yd
+        announcement_dates.append(best)
+
+    # Bulk price lookup for all needed dates (+ buffer for non-trading days)
+    dates_to_fetch = {d for d in announcement_dates if d is not None}
+    price_map: dict[date, float] = {}
+    if dates_to_fetch and symbol:
+        min_d = min(dates_to_fetch) - timedelta(days=4)
+        max_d = max(dates_to_fetch) + timedelta(days=4)
+        rows = await session.execute(
+            select(PricesDaily.date, PricesDaily.close_price)
+            .where(PricesDaily.symbol == symbol)
+            .where(PricesDaily.date >= min_d)
+            .where(PricesDaily.date <= max_d)
+        )
+        for pdate, close in rows.all():
+            price_map[pdate] = close
+
+    result = []
+    for report, ann_date in zip(reports, announcement_dates):
+        price_at_announcement = None
+        if ann_date:
+            for offset in range(5):
+                p = price_map.get(ann_date + timedelta(days=offset))
+                if p is not None:
+                    price_at_announcement = round(p, 2)
+                    break
+
+        result.append({
+            "id": report.id,
+            "date": report.date.isoformat(),
+            "announcement_date": ann_date.isoformat() if ann_date else None,
+            "price_at_announcement": price_at_announcement,
+            "summary": report.summary,
+            "metrics": report.metrics,
+            "created_at": report.created_at.isoformat() if report.created_at else None,
+        })
+
+    return result
 
 
 @router.get("/api/instrument/{symbol}")
@@ -173,7 +245,7 @@ async def get_instrument(
     form13f_as_of = max((h["report_date"] for h in form13f_holdings), default=None)
 
     # User's position (if held): portfolio_pct, market_value, profit, return_pct
-    my_position: Optional[dict[str, Any]] = None
+    my_position: dict[str, Any] | None = None
     latest_date_result = await session.execute(select(func.max(HoldingDaily.date)))
     latest_date = latest_date_result.scalar()
     if latest_date:
@@ -245,16 +317,7 @@ async def get_instrument(
         "splits": {k: v for k, v in (yh.splits or {}).items() if date.fromisoformat(k) >= start_date} if yh else {},
         "recommendations": (yh.recommendations or {}) if yh else {},
         "news": yh.news if yh else [],
-        "earnings_reports": [
-            {
-                "id": report.id,
-                "date": report.date.isoformat(),
-                "summary": report.summary,
-                "metrics": report.metrics,
-                "created_at": report.created_at.isoformat() if report.created_at else None,
-            }
-            for report in sorted(instrument.earnings_reports, key=lambda x: x.date, reverse=True)
-        ],
+        "earnings_reports": await _build_earnings_reports(instrument, yh, session),
         "form13f_holdings": form13f_holdings,
         "form13f_as_of": form13f_as_of,
         "my_position": my_position,

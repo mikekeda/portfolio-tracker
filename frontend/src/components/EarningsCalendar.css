@@ -452,14 +452,6 @@
   flex-shrink: 0;
 }
 
-.ec-list-event-report-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #6f42c1;
-  flex-shrink: 0;
-}
-
 /* ─── Sidebar ─────────────────────────────────────────────────────────────── */
 
 .ec-sidebar {
@@ -566,11 +558,6 @@
   color: #1d4ed8;
 }
 
-.ec-detail-badge-report {
-  background: #ede9fe;
-  color: #6f42c1;
-}
-
 .ec-detail-eps {
   display: flex;
   flex-direction: column;
@@ -596,6 +583,109 @@
   font-weight: 600;
   color: #2c3e50;
 }
+
+/* ─── Signal pill ─────────────────────────────────────────────────────────── */
+
+.ec-signal-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 99px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ec-signal-conv {
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.ec-signal-pill.sig-buy    { background: #d1fae5; color: #065f46; }
+.ec-signal-pill.sig-consider { background: #fef3c7; color: #92400e; }
+.ec-signal-pill.sig-hold   { background: #e9ecef; color: #495057; }
+.ec-signal-pill.sig-avoid  { background: #fee2e2; color: #991b1b; }
+
+/* Chip signal tinting — subtle left border to indicate signal alongside beat/miss */
+.ec-chip.ec-chip-sig-buy     { border-left: 2px solid #10b981; }
+.ec-chip.ec-chip-sig-avoid   { border-left: 2px solid #ef4444; }
+.ec-chip.ec-chip-sig-consider { border-left: 2px solid #f59e0b; }
+.ec-chip.ec-chip-sig-hold    { border-left: 2px solid #9ca3af; }
+
+/* ─── Price delta ─────────────────────────────────────────────────────────── */
+
+.ec-price-delta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.ec-price-delta-label {
+  color: #6c757d;
+  font-size: 11px;
+  margin-right: 2px;
+}
+
+.ec-price-delta-at {
+  color: #495057;
+  font-weight: 500;
+}
+
+.ec-price-delta-sep {
+  color: #adb5bd;
+}
+
+.ec-price-delta-now {
+  color: #2c3e50;
+  font-weight: 600;
+}
+
+.ec-price-delta-pct {
+  font-weight: 700;
+  font-size: 13px;
+  margin-left: auto;
+}
+
+.ec-price-delta-pct.positive { color: #059669; }
+.ec-price-delta-pct.negative { color: #dc2626; }
+
+/* ─── Report period label ─────────────────────────────────────────────────── */
+
+.ec-report-period {
+  font-size: 11px;
+  color: #6f42c1;
+  font-weight: 600;
+  margin: 2px 0 4px;
+  letter-spacing: 0.01em;
+}
+
+/* ─── Rationale snippet ───────────────────────────────────────────────────── */
+
+.ec-rationale-snippet {
+  font-size: 12px;
+  color: #6c757d;
+  font-style: italic;
+  margin: 4px 0 0;
+  line-height: 1.5;
+}
+
+/* ─── List view price change ──────────────────────────────────────────────── */
+
+.ec-list-price-chg {
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.ec-list-price-chg.positive { color: #059669; }
+.ec-list-price-chg.negative { color: #dc2626; }
 
 /* Surprise badge */
 

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import PropTypes from 'prop-types';
 import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
 import './EarningsCalendar.css';
@@ -38,7 +39,7 @@ const toLocalIso = (d) => {
 
 const todayIso = toLocalIso(new Date());
 
-// ── Beat / miss badge helpers ─────────────────────────────────────────────────
+// ── Shared helpers ────────────────────────────────────────────────────────────
 
 const SurpriseBadge = ({ pct }) => {
   if (pct == null) return null;
@@ -50,6 +51,48 @@ const SurpriseBadge = ({ pct }) => {
   );
 };
 
+SurpriseBadge.propTypes = { pct: PropTypes.number };
+
+const SIGNAL_CLASSES = { buy: 'sig-buy', consider: 'sig-consider', hold: 'sig-hold', avoid: 'sig-avoid' };
+
+const SignalPill = ({ signal, conviction }) => {
+  if (!signal) return null;
+  const label = signal.charAt(0).toUpperCase() + signal.slice(1);
+  return (
+    <span className={`ec-signal-pill ${SIGNAL_CLASSES[signal] || ''}`} title={conviction ? `${label} · ${conviction} conviction` : label}>
+      {label}
+      {conviction && <span className="ec-signal-conv"> · {conviction}</span>}
+    </span>
+  );
+};
+
+SignalPill.propTypes = {
+  signal: PropTypes.string,
+  conviction: PropTypes.string,
+};
+
+const PriceDelta = ({ priceAtDate, currentPrice, priceChangePct }) => {
+  if (priceAtDate == null || currentPrice == null || priceChangePct == null) return null;
+  const positive = priceChangePct >= 0;
+  return (
+    <div className="ec-price-delta">
+      <span className="ec-price-delta-label">At earnings</span>
+      <span className="ec-price-delta-at">${priceAtDate.toFixed(2)}</span>
+      <span className="ec-price-delta-sep">→</span>
+      <span className="ec-price-delta-now">${currentPrice.toFixed(2)}</span>
+      <span className={`ec-price-delta-pct ${positive ? 'positive' : 'negative'}`}>
+        {positive ? '+' : ''}{priceChangePct.toFixed(1)}%
+      </span>
+    </div>
+  );
+};
+
+PriceDelta.propTypes = {
+  priceAtDate: PropTypes.number,
+  currentPrice: PropTypes.number,
+  priceChangePct: PropTypes.number,
+};
+
 // ── Event chip (tiny, shown in calendar cells) ───────────────────────────────
 
 const eventChipClass = (event) => {
@@ -58,23 +101,51 @@ const eventChipClass = (event) => {
   return 'ec-chip-past';
 };
 
-const EventChip = ({ event, onDayClick }) => (
-  <button
-    className={`ec-chip ${eventChipClass(event)}`}
-    onClick={(e) => { e.stopPropagation(); onDayClick(event.date); }}
-    title={`${event.name}${event.surprise_pct != null ? ` · ${event.surprise_pct >= 0 ? '+' : ''}${event.surprise_pct.toFixed(1)}% surprise` : ''}`}
-  >
-    <span className="ec-chip-symbol">{event.symbol}</span>
-    {event.surprise_pct != null && (
-      <span className={`ec-chip-dot ${event.surprise_pct >= 0 ? 'beat' : 'miss'}`} />
-    )}
-  </button>
-);
+const EventChip = ({ event, onDayClick }) => {
+  const surpriseTip = event.surprise_pct != null
+    ? ` · ${event.surprise_pct >= 0 ? '+' : ''}${event.surprise_pct.toFixed(1)}% surprise`
+    : '';
+  const signalTip = event.signal ? ` · ${event.signal}` : '';
+  return (
+    <button
+      className={`ec-chip ${eventChipClass(event)}${event.signal ? ` ec-chip-sig-${event.signal}` : ''}`}
+      onClick={(e) => { e.stopPropagation(); onDayClick(event.date); }}
+      title={`${event.name}${surpriseTip}${signalTip}`}
+    >
+      <span className="ec-chip-symbol">{event.symbol}</span>
+      {event.surprise_pct != null && (
+        <span className={`ec-chip-dot ${event.surprise_pct >= 0 ? 'beat' : 'miss'}`} />
+      )}
+    </button>
+  );
+};
+
+EventChip.propTypes = {
+  event: PropTypes.shape({
+    date: PropTypes.string.isRequired,
+    symbol: PropTypes.string.isRequired,
+    name: PropTypes.string.isRequired,
+    type: PropTypes.string.isRequired,
+    surprise_pct: PropTypes.number,
+    signal: PropTypes.string,
+  }).isRequired,
+  onDayClick: PropTypes.func.isRequired,
+};
 
 // ── Detail panel for all events on a selected day ────────────────────────────
 
 const fmtEps = (v) =>
   v != null ? (v >= 0 ? `$${v.toFixed(2)}` : `-$${Math.abs(v).toFixed(2)}`) : '—';
+
+// Format a period-end date as a quarter label, e.g. "Q4 2025 · Dec 31"
+const fmtPeriod = (isoDate) => {
+  if (!isoDate) return null;
+  const d = new Date(isoDate + 'T00:00:00');
+  const m = d.getMonth();
+  const q = m <= 2 ? 'Q1' : m <= 5 ? 'Q2' : m <= 8 ? 'Q3' : 'Q4';
+  const day = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return `${q} ${d.getFullYear()} · ends ${day}`;
+};
 
 const DayDetail = ({ date, events }) => {
   if (!date) {
@@ -91,6 +162,7 @@ const DayDetail = ({ date, events }) => {
       <div className="ec-day-detail-list">
         {events.map((ev) => {
           const hasEps = ev.eps_estimate != null || ev.eps_actual != null;
+          const periodLabel = fmtPeriod(ev.report_period_date);
           return (
             <div key={ev.symbol} className={`ec-day-event ec-day-event-${ev.type}`}>
               <div className="ec-day-event-header">
@@ -98,11 +170,15 @@ const DayDetail = ({ date, events }) => {
                 <span className={`ec-detail-badge ec-detail-badge-${ev.type}`}>
                   {ev.type === 'upcoming' ? 'Upcoming' : 'Past'}
                 </span>
-                {ev.has_report && (
-                  <span className="ec-detail-badge ec-detail-badge-report">Report</span>
-                )}
+                {ev.signal && <SignalPill signal={ev.signal} conviction={ev.conviction} />}
               </div>
+              {periodLabel && (
+                <p className="ec-report-period" title="SEC filing period this report covers">
+                  Report · {periodLabel}
+                </p>
+              )}
               <p className="ec-day-event-name">{ev.name}</p>
+
               {hasEps && (
                 <div className="ec-detail-eps">
                   <div className="ec-detail-eps-row">
@@ -121,12 +197,27 @@ const DayDetail = ({ date, events }) => {
                   )}
                 </div>
               )}
+
+              <PriceDelta
+                priceAtDate={ev.price_at_date}
+                currentPrice={ev.current_price}
+                priceChangePct={ev.price_change_pct}
+              />
+
+              {ev.rationale_snippet && (
+                <p className="ec-rationale-snippet">"{ev.rationale_snippet}{ev.rationale_snippet.length >= 180 ? '…' : ''}"</p>
+              )}
             </div>
           );
         })}
       </div>
     </div>
   );
+};
+
+DayDetail.propTypes = {
+  date: PropTypes.string,
+  events: PropTypes.arrayOf(PropTypes.object).isRequired,
 };
 
 // ── Month view (5-day Mon–Fri grid) ──────────────────────────────────────────
@@ -169,6 +260,14 @@ const MonthView = ({ year, month, eventsByDate, onDayClick, selectedDate }) => {
       })}
     </div>
   );
+};
+
+MonthView.propTypes = {
+  year: PropTypes.number.isRequired,
+  month: PropTypes.number.isRequired,
+  eventsByDate: PropTypes.object.isRequired,
+  onDayClick: PropTypes.func.isRequired,
+  selectedDate: PropTypes.string,
 };
 
 // ── List view ─────────────────────────────────────────────────────────────────
@@ -223,11 +322,14 @@ const ListView = ({ year, month, eventsByDate, onDayClick, selectedDate }) => {
                       <span className="ec-list-event-symbol">{ev.symbol}</span>
                       <span className="ec-list-event-name">{ev.name}</span>
                       {ev.surprise_pct != null && <SurpriseBadge pct={ev.surprise_pct} />}
+                      {ev.signal && <SignalPill signal={ev.signal} conviction={null} />}
+                      {ev.price_change_pct != null && (
+                        <span className={`ec-list-price-chg ${ev.price_change_pct >= 0 ? 'positive' : 'negative'}`}>
+                          {ev.price_change_pct >= 0 ? '+' : ''}{ev.price_change_pct.toFixed(1)}%
+                        </span>
+                      )}
                       {ev.type === 'upcoming' && (
                         <span className="ec-list-event-est">est.</span>
-                      )}
-                      {ev.has_report && (
-                        <span className="ec-list-event-report-dot" title="Full report available" />
                       )}
                     </div>
                   ))}
@@ -239,6 +341,14 @@ const ListView = ({ year, month, eventsByDate, onDayClick, selectedDate }) => {
       ))}
     </div>
   );
+};
+
+ListView.propTypes = {
+  year: PropTypes.number.isRequired,
+  month: PropTypes.number.isRequired,
+  eventsByDate: PropTypes.object.isRequired,
+  onDayClick: PropTypes.func.isRequired,
+  selectedDate: PropTypes.string,
 };
 
 // ── Month stats (shown in sidebar when no day is selected) ───────────────────
@@ -289,6 +399,10 @@ const MonthStats = ({ monthEvents }) => {
   );
 };
 
+MonthStats.propTypes = {
+  monthEvents: PropTypes.arrayOf(PropTypes.object).isRequired,
+};
+
 // ── Next upcoming banner (shown when no upcoming events in current month) ─────
 
 const NextUpcoming = ({ allEvents, onJump }) => {
@@ -321,6 +435,11 @@ const NextUpcoming = ({ allEvents, onJump }) => {
       </button>
     </div>
   );
+};
+
+NextUpcoming.propTypes = {
+  allEvents: PropTypes.arrayOf(PropTypes.object).isRequired,
+  onJump: PropTypes.func.isRequired,
 };
 
 // ── Main component ────────────────────────────────────────────────────────────

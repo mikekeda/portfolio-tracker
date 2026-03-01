@@ -1467,6 +1467,11 @@ const Stock = () => {
           const consensus = metrics.consensus_comparison || {};
           const assessment = metrics.investment_assessment || {};
 
+          const sinceEarningsPct = (() => {
+            if (!report.price_at_announcement || !f.currentPrice) return null;
+            return ((f.currentPrice - report.price_at_announcement) / report.price_at_announcement) * 100;
+          })();
+
           const metricCards = [
             consensus.eps_beat_pct != null && {
               label: 'EPS',
@@ -1493,12 +1498,31 @@ const Stock = () => {
               type: `rec-${assessment.recommendation}`,
               sub: assessment.conviction ? `${assessment.conviction} conviction` : null,
             },
+            sinceEarningsPct != null && {
+              label: 'Since Earnings',
+              badge: `${sinceEarningsPct >= 0 ? '+' : ''}${sinceEarningsPct.toFixed(1)}%`,
+              type: sinceEarningsPct >= 0 ? 'beat' : 'miss',
+              sub: report.announcement_date
+                ? `from $${report.price_at_announcement.toFixed(2)} on ${new Date(report.announcement_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
+                : `from $${report.price_at_announcement.toFixed(2)}`,
+            },
           ].filter(Boolean);
+
+          const periodFmt = new Date(report.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+          const announcedFmt = report.announcement_date
+            ? new Date(report.announcement_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+            : null;
 
           return (
             <div className="panel">
               <div className="earnings-panel-header">
-                <h3>Earnings Reports</h3>
+                <div>
+                  <h3>Earnings Reports</h3>
+                  <p className="earnings-panel-dates">
+                    Period ends {periodFmt}
+                    {announcedFmt && <> · Announced {announcedFmt}</>}
+                  </p>
+                </div>
                 <button
                   className="earnings-report-link-btn"
                   onClick={() => openReportModal(symbol, report.date)}
@@ -1510,15 +1534,21 @@ const Stock = () => {
 
               {data.earnings_reports.length > 1 && (
                 <div className="earnings-tabs">
-                  {data.earnings_reports.map((r, idx) => (
-                    <button
-                      key={r.id}
-                      className={`earnings-tab${idx === activeReportIdx ? ' active' : ''}`}
-                      onClick={() => setActiveReportIdx(idx)}
-                    >
-                      {new Date(r.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
-                    </button>
-                  ))}
+                  {data.earnings_reports.map((r, idx) => {
+                    const d = new Date(r.date + 'T00:00:00');
+                    const month = d.getMonth(); // 0-based
+                    const qLabel = month <= 2 ? 'Q1' : month <= 5 ? 'Q2' : month <= 8 ? 'Q3' : 'Q4';
+                    return (
+                      <button
+                        key={r.id}
+                        className={`earnings-tab${idx === activeReportIdx ? ' active' : ''}`}
+                        onClick={() => setActiveReportIdx(idx)}
+                        title={`Period ending ${r.date}${r.announcement_date ? ` · Announced ${r.announcement_date}` : ''}`}
+                      >
+                        {qLabel} {d.getFullYear()}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 
@@ -1559,7 +1589,7 @@ const Stock = () => {
                 </div>
               )}
 
-              {(epsGuidance.next_quarter || epsGuidance.next_year || revenueGuidance.next_quarter || revenueGuidance.next_year) && (
+              {(epsGuidance.next_quarter || epsGuidance.next_year || revenueGuidance.next_quarter || revenueGuidance.next_year || guidance.operating_margin_guidance != null || guidance.outlook_commentary) && (
                 <div className="earnings-guidance">
                   <h5>Guidance</h5>
                   <div className="guidance-metrics">
@@ -1580,6 +1610,12 @@ const Stock = () => {
                         <span className="guidance-value">${epsGuidance.next_quarter.toFixed(2)}</span>
                       </div>
                     )}
+                    {revenueGuidance.next_quarter && (
+                      <div className="guidance-metric">
+                        <span className="guidance-label">Revenue (Next Q):</span>
+                        <span className="guidance-value">${(revenueGuidance.next_quarter / 1000).toFixed(2)}B</span>
+                      </div>
+                    )}
                     {revenueGuidance.next_year && (
                       <div className="guidance-metric">
                         <span className="guidance-label">Revenue (FY):</span>
@@ -1591,7 +1627,16 @@ const Stock = () => {
                         )}
                       </div>
                     )}
+                    {guidance.operating_margin_guidance != null && (
+                      <div className="guidance-metric">
+                        <span className="guidance-label">Op. Margin:</span>
+                        <span className="guidance-value">{guidance.operating_margin_guidance.toFixed(1)}%</span>
+                      </div>
+                    )}
                   </div>
+                  {guidance.outlook_commentary && (
+                    <p className="guidance-outlook">{guidance.outlook_commentary}</p>
+                  )}
                 </div>
               )}
 

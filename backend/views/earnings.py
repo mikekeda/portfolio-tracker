@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
 from config import TIMEZONE
-from models import EarningsReport, HoldingDaily, Instrument
+from models import EarningsReport, HoldingDaily, Instrument, PricesDaily
 
 router = APIRouter()
 
@@ -52,13 +52,45 @@ async def get_earnings_calendar(
             held_ids = {row[0] for row in holdings_result.all()}
             instruments = [i for i in instruments if i.id in held_ids]
 
-    # Build a lookup: instrument_id -> set of dates that have a full EarningsReport
-    report_dates_result = await session.execute(
-        select(EarningsReport.instrument_id, EarningsReport.date)
+    # Load EarningsReport rows only for the instruments we're showing
+    inst_ids = {inst.id for inst in instruments}
+    reports_result = await session.execute(
+        select(EarningsReport.instrument_id, EarningsReport.date, EarningsReport.metrics)
+        .where(EarningsReport.instrument_id.in_(inst_ids))
     )
-    report_dates: dict[int, set] = {}
-    for inst_id, rdate in report_dates_result.all():
-        report_dates.setdefault(inst_id, set()).add(rdate)
+    reports_by_inst: dict[int, list] = {}
+    for inst_id, rdate, metrics in reports_result.all():
+        reports_by_inst.setdefault(inst_id, []).append((rdate, metrics))
+    for lst in reports_by_inst.values():
+        lst.sort(key=lambda x: x[0], reverse=True)  # most recent first
+
+    # Collect symbols + event dates for a single bulk price query
+    symbols_needed = {inst.yahoo_symbol for inst in instruments if inst.yahoo_symbol}
+    all_event_dates: set[date] = set()
+    for inst in instruments:
+        yh = inst.yahoo
+        if not yh:
+            continue
+        for date_str in (yh.earnings or {}):
+            try:
+                d = date.fromisoformat(date_str[:10])
+                if window_start <= d <= today:
+                    all_event_dates.add(d)
+            except (ValueError, TypeError):
+                pass
+
+    price_map: dict[tuple, float] = {}
+    if symbols_needed and all_event_dates:
+        min_d = min(all_event_dates) - timedelta(days=4)
+        max_d = max(all_event_dates) + timedelta(days=4)
+        prices_q = await session.execute(
+            select(PricesDaily.symbol, PricesDaily.date, PricesDaily.close_price)
+            .where(PricesDaily.symbol.in_(symbols_needed))
+            .where(PricesDaily.date >= min_d)
+            .where(PricesDaily.date <= max_d)
+        )
+        for sym, pdate, close in prices_q.all():
+            price_map[(sym, pdate)] = close
 
     events: list[dict] = []
 
@@ -69,6 +101,8 @@ async def get_earnings_calendar(
 
         symbol = inst.yahoo_symbol
         name = inst.name
+        current_price = (yh.info or {}).get("currentPrice") or (yh.info or {}).get("regularMarketPrice")
+        inst_reports = reports_by_inst.get(inst.id, [])
 
         # ── Past events from Yahoo earnings JSONB ─────────────────────────
         yahoo_earnings: dict = yh.earnings or {}
@@ -80,7 +114,37 @@ async def get_earnings_calendar(
             if not (window_start <= event_date <= today):
                 continue
 
-            has_report = event_date in report_dates.get(inst.id, set())
+            # Match EarningsReport: most recent period date ≤ event_date, within 90 days.
+            # The SEC period-end date always precedes the Yahoo announcement by 30–90 days,
+            # so this reliably identifies the correct quarter's report.
+            signal = conviction = rationale_snippet = report_period_date = None
+            for rdate, metrics in inst_reports:
+                delta = (event_date - rdate).days
+                if 0 <= delta <= 90:
+                    report_period_date = rdate.isoformat()
+                    assessment = (metrics or {}).get("investment_assessment") or {}
+                    signal = assessment.get("recommendation")
+                    conviction = assessment.get("conviction")
+                    rationale = assessment.get("rationale") or ""
+                    rationale_snippet = rationale[:180].rstrip() or None
+                    break
+
+            # has_report is true whenever we have the report for this period,
+            # regardless of whether the LLM produced a signal recommendation.
+            has_report = report_period_date is not None
+
+            # Price on announcement date (try exact date, then up to 4 next trading days)
+            price_at_date = None
+            for offset in range(5):
+                p = price_map.get((symbol, event_date + timedelta(days=offset)))
+                if p is not None:
+                    price_at_date = round(p, 2)
+                    break
+
+            price_change_pct = None
+            if price_at_date is not None and current_price is not None:
+                price_change_pct = round(((current_price - price_at_date) / price_at_date) * 100, 1)
+
             eps_est = eps_data.get("EPS Estimate") if isinstance(eps_data, dict) else None
             eps_act = eps_data.get("Reported EPS") if isinstance(eps_data, dict) else None
             surprise = eps_data.get("Surprise(%)") if isinstance(eps_data, dict) else None
@@ -94,6 +158,13 @@ async def get_earnings_calendar(
                 "eps_estimate": float(eps_est) if eps_est is not None else None,
                 "eps_actual": float(eps_act) if eps_act is not None else None,
                 "surprise_pct": float(surprise) if surprise is not None else None,
+                "signal": signal,
+                "conviction": conviction,
+                "rationale_snippet": rationale_snippet,
+                "report_period_date": report_period_date,
+                "price_at_date": price_at_date,
+                "current_price": round(current_price, 2) if current_price else None,
+                "price_change_pct": price_change_pct,
             })
 
         # ── Upcoming event from Yahoo info.earningsTimestamp ──────────────
@@ -113,6 +184,13 @@ async def get_earnings_calendar(
                     "eps_estimate": None,
                     "eps_actual": None,
                     "surprise_pct": None,
+                    "signal": None,
+                    "conviction": None,
+                    "rationale_snippet": None,
+                    "report_period_date": None,
+                    "price_at_date": None,
+                    "current_price": round(current_price, 2) if current_price else None,
+                    "price_change_pct": None,
                 })
 
     # Deduplicate: if a past Yahoo event and an upcoming event share same symbol+date, keep past
