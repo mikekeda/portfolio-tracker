@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
+from backend.utils.dcf import get_dcf_prices
 from backend.utils.form13f import Form13FFilingRow, _build_sec_13f_url, _compute_form13f_change
 from backend.views._shared import get_rates
 from config import PRICE_FIELD, TIMEZONE
@@ -293,6 +294,13 @@ async def get_instrument(
                 "return_pct": round(return_pct, 2),
             }
 
+    dcf_results = await get_dcf_prices([instrument])
+    dcf_price: float | None = dcf_results[0] if dcf_results else None
+    current_price = fundamentals.get("currentPrice")
+    dcf_diff: float | None = (
+        (dcf_price / current_price - 1) if (dcf_price and current_price) else None
+    )
+
     yh = instrument.yahoo
     return {
         "instrument": {
@@ -322,4 +330,6 @@ async def get_instrument(
         "form13f_as_of": form13f_as_of,
         "my_position": my_position,
         "analyst_price_targets": (yh.analyst_price_targets or {}) if yh else {},
+        "dcf_price": dcf_price,
+        "dcf_diff": dcf_diff,
     }

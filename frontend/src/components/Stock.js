@@ -720,6 +720,9 @@ const Stock = () => {
   const pbThresholds = getPbThresholds(sector);
   const psThresholds = getPsThresholds(sector);
 
+  const dcfDiff = data.dcf_diff;
+  const dcfPrice = data.dcf_price;
+
   const kpiTooltips = {
     'Market Cap': 'Total market value of all outstanding shares',
     'PE': avgPeFromHistory
@@ -821,6 +824,20 @@ const Stock = () => {
         value: label,
         className: diffDays >= 0 && diffDays <= 14 ? 'negative' : '',
         tooltip,
+      }];
+    })(),
+    ...(() => {
+      if (dcfDiff == null) return [];
+      const pct = (dcfDiff * 100).toFixed(1);
+      const direction = dcfDiff > 0 ? 'undervalued' : 'overvalued';
+      const priceStr = dcfPrice != null
+        ? ` · Fair value: ${Number(dcfPrice).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+        : '';
+      return [{
+        label: 'DCF',
+        value: `${Number(pct) >= 0 ? '+' : ''}${pct}%`,
+        className: dcfDiff > 0.10 ? 'positive' : dcfDiff < -0.10 ? 'negative' : '',
+        tooltip: `2-stage DCF model${priceStr} · ${direction} by ${Math.abs(Number(pct))}% vs current price · Green > +10%, Red < -10%`,
       }];
     })(),
   ];
