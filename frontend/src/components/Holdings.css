@@ -789,6 +789,11 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+.holdings-table th abbr {
+  text-decoration: underline dotted;
+  cursor: help;
+}
+
 .holdings-table th.sortable {
   cursor: pointer;
   user-select: none;
@@ -818,6 +823,30 @@
   font-weight: 700;
 }
 
+/* Column group separator — inset shadow avoids adding width to the table */
+.holdings-table th.col-group-start,
+.holdings-table td.col-group-start {
+  box-shadow: inset 1px 0 0 #dee2e6;
+}
+
+/* Symbol cell wrapper (symbol link + optional ETF badge) */
+.holdings-table .symbol-cell {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.holdings-table .etf-badge {
+  font-size: 8px;
+  font-weight: 700;
+  background: #6f42c1;
+  color: #fff;
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
 .holdings-table tbody tr:hover {
   background-color: #f8f9fa;
 }
@@ -829,7 +858,7 @@
 }
 
 .holdings-table .name {
-  max-width: 200px;
+  max-width: 115px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -894,8 +923,9 @@
 .holdings-table .beta.positive,
 .holdings-table .margins.positive,
 .holdings-table .growth.positive,
-.holdings-table .roa.positive,
+.holdings-table .roic.positive,
 .holdings-table .fcf-yield.positive,
+.holdings-table .week-high-change.positive,
 .holdings-table .recommendation.positive,
 .holdings-table .recommendation-trend.positive,
 .holdings-table .short.positive,
@@ -910,8 +940,9 @@
 .holdings-table .beta.negative,
 .holdings-table .margins.negative,
 .holdings-table .growth.negative,
-.holdings-table .roa.negative,
+.holdings-table .roic.negative,
 .holdings-table .fcf-yield.negative,
+.holdings-table .week-high-change.negative,
 .holdings-table .recommendation.negative,
 .holdings-table .recommendation-trend.negative,
 .holdings-table .short.negative,
@@ -944,36 +975,22 @@
 .holdings-table .beta,
 .holdings-table .margins,
 .holdings-table .growth,
-.holdings-table .roa,
+.holdings-table .roic,
 .holdings-table .fcf-yield,
 .holdings-table .recommendation,
 .holdings-table .recommendation-trend,
 .holdings-table .short,
-.holdings-table .rsi,
-.holdings-table .quote-type {
+.holdings-table .rsi {
   text-align: center;
   font-weight: 700;
   font-family: 'Courier New', monospace;
-  color: #34495e;  /* Slightly lighter for body text */
+  color: #34495e;
 }
 
-.holdings-table .week-change {
-  text-align: center;
-  font-weight: 700;
-  font-family: 'Courier New', monospace;
-}
-
-.holdings-table .week-change.positive {
-  color: #28a745;
-}
-
-.holdings-table .week-change.negative {
-  color: #dc3545;
-}
 
 .holdings-table .sector,
 .holdings-table .country {
-  max-width: 120px;
+  max-width: 90px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1245,3 +1262,23 @@
 .holdings-table tbody tr:has(input[type="checkbox"]:checked):hover {
   background-color: #bbdefb !important;
 }
+
+/* ─── Composite Score column ──────────────────────────────────────────────── */
+/* Colors intentionally mirror the row-signal colour vocabulary:
+     ≥ 7  excellent  →  buy green   (#198754)
+     ≥ 5  good       →  consider teal (#138496 — slightly darker than #17a2b8 for text contrast)
+     ≥ 3  average    →  hold amber  (#cc9a06 — darker than #ffc107 for text contrast)
+     ≥ 0  poor       →  avoid red   (#dc3545)
+     < 0  negative   →  dark red (red-flag territory)
+   A stock's score colour and its row-border colour CAN differ — that is
+   intentional and informative (e.g. strong screeners but neutral earnings). */
+.holdings-table .composite-score {
+  font-weight: 700;
+  color: #6c757d;
+}
+.holdings-table .composite-score.excellent { color: #198754; }
+.holdings-table .composite-score.good      { color: #138496; }
+.holdings-table .composite-score.average   { color: #cc9a06; }
+.holdings-table .composite-score.poor      { color: #dc3545; }
+.holdings-table .composite-score.negative  { color: #842029; font-style: italic; }
+

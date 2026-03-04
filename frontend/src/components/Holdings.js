@@ -18,6 +18,24 @@ import './Holdings.css';
 
 const POSITION_ONLY_COLUMN_IDS = ['portfolio_pct', 'market_value', 'profit', 'return_pct'];
 
+// Screener score normalisation baseline (see computeComposite).
+// 50 ≈ sum of the 5 highest screener weights (9+9+9+8+8 = 43) plus a typical
+// cross-category combination bonus (~6 pts).  A round number, easy to reason
+// about, and stable regardless of which stocks are loaded.
+const SCREENER_NORMALIZER = 50;
+
+// First column ID of each visual group — receives a left border separator
+const GROUP_START_COL_IDS = new Set([
+  'composite_score',                 // Summary metric — framed with a separator
+  'portfolio_pct',                   // Position
+  'dividend_yield',                  // Fundamentals
+  'recommendation_mean',             // Valuation  (Rec, Rec Trend, DCF Diff, Price)
+  'fifty_two_week_high_distance',    // Technical  (52WH, Short, RSI)
+  'screener_score',                  // Signals
+  'form13f_score',                   // Institutional
+  'country',                         // Info
+]);
+
 
 const columnHelper = createColumnHelper();
 
@@ -130,12 +148,105 @@ function getHolderCategory(change) {
   return 'form13f-stable';
 }
 
+/**
+ * Composite score (–10 … 10):
+ *   Screener quality score    50%  — screener_score / SCREENER_NORMALIZER (50).
+ *                                    Stable across all views; negative values
+ *                                    preserved so red-flag stocks stay negative.
+ *   Earnings signal strength  25%  — conviction-adjusted
+ *   Analyst recommendation    10%  — recommendation_mean (1=strong buy … 5=strong sell)
+ *   Institutional 13F score   15%
+ *
+ * ETFs always return null (they can't pass equity screeners, have no signal).
+ * Missing components are re-weighted proportionally so the formula stays fair
+ * (e.g. non-US stocks without 13F data, stocks without an analysed report).
+ * Output is capped at 10; there is no lower cap — losers can go negative.
+ */
+function computeComposite(h) {
+  // ETFs have no equity screener data or earnings signal — show blank
+  if (h.quote_type === 'ETF') return null;
+
+  const max = SCREENER_NORMALIZER;
+  const screenerRaw = h.screener_score != null ? h.screener_score / max : null;
+
+  const SIGNAL_VALUES = { buy: 1.0, consider: 0.75, hold: 0.5, avoid: 0.1 };
+  const CONV_MULT    = { high: 1.1, medium: 1.0, low: 0.9 };
+  let signalRaw = h.earnings_signal ? (SIGNAL_VALUES[h.earnings_signal] ?? null) : null;
+  if (signalRaw != null && h.earnings_conviction) {
+    signalRaw = Math.min(1, signalRaw * (CONV_MULT[h.earnings_conviction] ?? 1));
+  }
+
+  // recommendation_mean: 1=strong buy … 5=strong sell → normalise to [0, 1]
+  // Validate range before using: some tickers return values outside [1, 5]
+  const recRaw = (h.recommendation_mean != null &&
+                  h.recommendation_mean >= 1 &&
+                  h.recommendation_mean <= 5)
+    ? (5 - h.recommendation_mean) / 4
+    : null;
+
+  // form13f_score is roughly –2 … +2; normalise to [0, 1]
+  const f13fRaw = h.form13f_score != null
+    ? Math.max(0, Math.min(1, (h.form13f_score + 2) / 4))
+    : null;
+
+  const components = [
+    { val: screenerRaw, weight: 0.50 },
+    { val: signalRaw,   weight: 0.25 },
+    { val: recRaw,      weight: 0.10 },
+    { val: f13fRaw,     weight: 0.15 },
+  ].filter(c => c.val != null);
+
+  if (components.length === 0) return null;
+
+  const totalWeight = components.reduce((s, c) => s + c.weight, 0);
+  const weightedSum = components.reduce((s, c) => s + c.val * c.weight, 0);
+  const raw = (weightedSum / totalWeight) * 10;
+  // Cap at 10; NO lower cap — negative scores identify the portfolio's weakest links
+  return Math.round(Math.min(10, raw) * 10) / 10;
+}
+
+// Keys whose numeric values should be serialised with 2 decimal places in CSV
+const CSV_PERCENT_KEYS = new Set([
+  'portfolio_pct', 'return_pct', 'dividend_yield', 'prediction',
+  'institutional_ownership', 'profit_margins', 'revenue_growth',
+  'roic', 'free_cashflow_yield', 'fifty_two_week_high_distance',
+  'short_percent_of_float', 'dcf_diff',
+]);
+
+function formatCSVValue(value, key) {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    if (key === 'form13f_holders') return value.map(h => `${h.name}: ${h.change}`).join('; ');
+    return value.join('; ');
+  }
+  if (typeof value === 'object') return '';
+  if (typeof value === 'number') {
+    return CSV_PERCENT_KEYS.has(key) ? value.toFixed(2) : value.toString();
+  }
+  // Escape strings that contain CSV-sensitive characters
+  const s = String(value);
+  return (s.includes(',') || s.includes('"') || s.includes('\n'))
+    ? `"${s.replace(/"/g, '""')}"`
+    : s;
+}
+
+// Still used for the Signal column badge tooltip (earnings-specific)
+const SIGNAL_TOOLTIP = {
+  buy:      'Buy — strong bullish earnings signal. The AI analysis of the latest report rates this stock as a clear buy.',
+  consider: 'Consider — mild bullish signal. Earnings quality improved but warrants further review before adding.',
+  hold:     'Hold — neutral signal. No clear direction from the earnings report; maintain current position.',
+  avoid:    'Avoid — bearish signal. Earnings report raised concerns; consider reducing or trimming the position.',
+};
+
 // This component will only re-render if its own props change
 const HoldingRow = React.memo(({ row, isSelected }) => {
   return (
-    <tr className={isSelected ? 'selected-row' : ''}>
+    <tr className={isSelected ? 'selected-row' : undefined}>
       {row.getVisibleCells().map((cell) => (
-        <td key={cell.id}>
+        <td
+          key={cell.id}
+          className={GROUP_START_COL_IDS.has(cell.column.id) ? 'col-group-start' : undefined}
+        >
           {flexRender(cell.column.columnDef.cell, cell.getContext())}
         </td>
       ))}
@@ -178,11 +289,6 @@ const Holdings = () => {
     };
   }, [holdings]);
 
-  // Use screener results from backend (no client-side calculation needed)
-  const holdingsWithScreeners = useMemo(() => {
-    return holdings; // Backend already includes passedScreeners field
-  }, [holdings]);
-
   // Selection handlers (wrapped in useCallback for performance)
   const toggleStockSelection = useCallback((symbol) => {
     setSelectedStocks(prev => {
@@ -205,9 +311,17 @@ const Holdings = () => {
     setShowOnlySelected(prev => !prev);
   }, []);
 
+  const handleScreenerChange = useCallback((screenerId) => {
+    setSelectedScreeners(prev => {
+      if (screenerId === '') return [];
+      if (prev.includes(screenerId)) return prev.filter(id => id !== screenerId);
+      return [...prev, screenerId];
+    });
+  }, []);
+
   // Get filtered holdings based on screener selection and stock selection
   const filteredHoldings = useMemo(() => {
-    let result = holdingsWithScreeners;
+    let result = holdings;
 
     // Apply screener filter
     if (selectedScreeners.length > 0) {
@@ -225,7 +339,7 @@ const Holdings = () => {
     }
 
     return result;
-  }, [holdingsWithScreeners, selectedScreeners, showOnlySelected, selectedStocks]);
+  }, [holdings, selectedScreeners, showOnlySelected, selectedStocks]);
 
   // Toggle select all based on currently filtered/visible rows
   const toggleSelectAll = useCallback(() => {
@@ -288,8 +402,12 @@ const Holdings = () => {
         header: 'Symbol',
         cell: (info) => {
           const symbol = info.getValue() || info.row.original.t212_code;
+          const isEtf = info.row.original.quote_type === 'ETF';
           return (
-            <Link className="symbol" to={`/stock/${encodeURIComponent(symbol)}`}>{symbol}</Link>
+            <span className="symbol-cell">
+              <Link className="symbol" to={`/stock/${encodeURIComponent(symbol)}`}>{symbol}</Link>
+              {isEtf && <span className="etf-badge">ETF</span>}
+            </span>
           );
         },
         enableSorting: true,
@@ -299,7 +417,7 @@ const Holdings = () => {
       columnHelper.accessor('name', {
         header: 'Name',
         cell: (info) => {
-          const row = info.row.original || {};
+          const row = info.row.original;
           const businessSummary = row.business_summary;
           const tooltip = businessSummary ? businessSummary : info.getValue();
           return (
@@ -311,6 +429,76 @@ const Holdings = () => {
         enableSorting: true,
         enableGlobalFilter: true,
         size: 200,
+      }),
+      columnHelper.accessor(row => computeComposite(row), {
+        id: 'composite_score',
+        header: () => (
+          <abbr title={
+            'Composite Score  (0 – 10)\n\n' +
+            'Base weights when all data is present:\n' +
+            '  Screener quality    50%  — quality/growth screeners passed\n' +
+            '  Earnings signal     25%  — AI-rated earnings quality (conviction-adjusted)\n' +
+            '  Analyst rec         10%  — consensus recommendation (1=strong buy … 5=sell)\n' +
+            '  13F institutional   15%  — net institutional buying/selling\n\n' +
+            'Screener component is normalised against a fixed benchmark (top-5 screener\n' +
+            'weights + combination bonus) so the score is CONSISTENT whether you are\n' +
+            'viewing holdings only or all monitored stocks.\n\n' +
+            'Missing components are re-weighted proportionally so the score stays fair\n' +
+            'for non-US stocks (no 13F) or stocks without an analysed earnings report.\n\n' +
+            'Hover a score cell to see the actual weights used for that stock.'
+          }>Score</abbr>
+        ),
+        cell: (info) => {
+          const score = info.getValue();
+          if (score == null) return <span className="composite-score" />;
+          const cls =
+            score >= 7  ? 'excellent' :
+            score >= 5  ? 'good'      :
+            score >= 3  ? 'average'   :
+            score >= 0  ? 'poor'      : 'negative';
+
+          // Compute effective weights for the tooltip so the user can see
+          // exactly which components contributed and by how much
+          const h = info.row.original;
+          const hasScreener = h.screener_score != null;
+          const hasSignal   = !!h.earnings_signal;
+          const hasRec      = h.recommendation_mean != null &&
+                              h.recommendation_mean >= 1 &&
+                              h.recommendation_mean <= 5;
+          const hasF13f     = h.form13f_score != null;
+          const presentTotal =
+            (hasScreener ? 50 : 0) +
+            (hasSignal   ? 25 : 0) +
+            (hasRec      ? 10 : 0) +
+            (hasF13f     ? 15 : 0);
+          const eff = (base) =>
+            presentTotal > 0 ? Math.round(base / presentTotal * 100) : 0;
+
+          const screenerLine = hasScreener
+            ? `Screener: ${h.screener_score} pts  (eff. ${eff(50)}%)`
+            : 'Screener: no data';
+          const signalLine = hasSignal
+            ? `Signal: ${h.earnings_signal}${h.earnings_conviction ? ` (${h.earnings_conviction})` : ''}  (eff. ${eff(25)}%)`
+            : 'Signal: no earnings report analysed yet';
+          const recLine = hasRec
+            ? `Analyst rec: ${h.recommendation_mean?.toFixed(1)}/5  (eff. ${eff(10)}%)`
+            : 'Analyst rec: no data';
+          const f13fLine = hasF13f
+            ? `13F: score ${h.form13f_score?.toFixed(1)}  (eff. ${eff(15)}%)`
+            : '13F: no data (non-US or not filed)';
+
+          const tip =
+            `Score: ${score.toFixed(1)} / 10\n` +
+            `${screenerLine}\n${signalLine}\n${recLine}\n${f13fLine}`;
+
+          return (
+            <span className={`composite-score ${cls}`} title={tip}>
+              {score.toFixed(1)}
+            </span>
+          );
+        },
+        enableSorting: true,
+        size: 55,
       }),
       columnHelper.accessor('portfolio_pct', {
         header: '%',
@@ -386,9 +574,8 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 80,
       }),
-      // Dividend yield column (from backend field dividend_yield)
       columnHelper.accessor('dividend_yield', {
-        header: 'Dividend',
+        header: 'Div',
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="dividend"></span>;
@@ -401,7 +588,7 @@ const Holdings = () => {
         size: 70,
       }),
       columnHelper.accessor('prediction', {
-        header: 'Prediction',
+        header: 'Pred',
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="prediction"></span>;
@@ -441,7 +628,7 @@ const Holdings = () => {
         size: 40,
       }),
       columnHelper.accessor('market_cap', {
-        header: 'Market Cap',
+        header: 'Mkt Cap',
         cell: (info) => {
           const value = info.getValue();
           if (!value) return <span className="market-cap"></span>;
@@ -579,7 +766,7 @@ const Holdings = () => {
         size: 60,
       }),
       columnHelper.accessor('free_cashflow_yield', {
-        header: 'FCF Yield',
+        header: 'FCF',
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="fcf-yield"></span>;
@@ -650,7 +837,7 @@ const Holdings = () => {
           if (value === null || value === undefined) return <span className="recommendation"></span>;
 
           // Read extra fields from the row for tooltip
-          const row = info.row.original || {};
+          const row = info.row.original;
           const key = row.recommendation_key; // e.g., buy/hold/sell
           const opinions = row.number_of_analyst_opinions; // count
 
@@ -679,7 +866,6 @@ const Holdings = () => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="recommendation-trend"></span>;
 
-          // Determine color and direction based on trend
           let className = '';
           let interpretation = '';
 
@@ -706,8 +892,70 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 80,
       }),
+      columnHelper.accessor('dcf_diff', {
+        header: 'DCF Diff',
+        cell: (info) => {
+          const row = info.row.original;
+          const dcfDiff = row.dcf_diff;
+          const dcfPrice = row.dcf_price;
+
+          if (dcfDiff === null || dcfDiff === undefined) {
+            return <span className="dcf-diff"></span>;
+          }
+
+          // Convert from decimal (1 = 100%) to percentage
+          const potentialProfitPct = dcfDiff * 100;
+          const isProfit = potentialProfitPct > 0;
+          const isLoss = potentialProfitPct < 0;
+          const className = isProfit ? 'positive' : isLoss ? 'negative' : '';
+
+          return (
+            <span className={`dcf-diff ${className}`} title={dcfPrice ? `DCF: ${dcfPrice.toFixed(2)}` : undefined}>
+              {potentialProfitPct >= 0 ? '+' : ''}{Math.round(potentialProfitPct)}%
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 80,
+      }),
+      columnHelper.accessor('current_price', {
+        header: 'Price',
+        cell: (info) => {
+          const row = info.row.original;
+          const targets = row.analyst_price_targets || {};
+          const currentPrice = info.getValue();
+
+          const tooltip = [
+            targets.high !== undefined && targets.high !== null ? `High: ${Number(targets.high).toFixed(2)}` : null,
+            targets.median !== undefined && targets.median !== null ? `Median: ${Number(targets.median).toFixed(2)}` : null,
+            targets.mean !== undefined && targets.mean !== null ? `Mean: ${Number(targets.mean).toFixed(2)}` : null,
+            targets.low !== undefined && targets.low !== null ? `Low: ${Number(targets.low).toFixed(2)}` : null,
+            row.number_of_analyst_opinions !== undefined && row.number_of_analyst_opinions !== null ? `Analysts: ${Number(row.number_of_analyst_opinions)}` : null,
+          ].filter(Boolean).join('\n');
+
+          let textColor = '';
+          if (Object.keys(targets).length > 0) {
+            const { low, high } = targets;
+            if (low !== undefined && low !== null && currentPrice < low) {
+              textColor = '#28a745';
+            } else if (high !== undefined && high !== null && currentPrice > high) {
+              textColor = '#dc3545';
+            }
+          }
+
+          return (
+            <span style={{ color: textColor }} title={tooltip || undefined}>
+              {currentPrice.toFixed(2)}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 80,
+      }),
       columnHelper.accessor('fifty_two_week_high_distance', {
-        header: '52WH Change',
+        header: '52WH',
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="week-high-change"></span>;
@@ -780,7 +1028,7 @@ const Holdings = () => {
         size: 50,
       }),
       columnHelper.accessor('screener_score', {
-        header: 'Score',
+        header: 'Screener',
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="screener-score"></span>;
@@ -850,12 +1098,59 @@ const Holdings = () => {
         },
         enableSorting: true,
         enableGlobalFilter: false,
-        size: 120,
+        size: 100,
         sortingFn: (rowA, rowB) => {
           const screenersA = rowA.original.passedScreeners || [];
           const screenersB = rowB.original.passedScreeners || [];
           return screenersA.length - screenersB.length;
         },
+      }),
+      columnHelper.accessor('earnings_signal', {
+        header: 'Signal',
+        cell: (info) => {
+          const signal = info.getValue();
+          const conviction = info.row.original.earnings_conviction;
+          const annDate = info.row.original.earnings_announcement_date;
+          if (!signal) return <span className="earnings-signal-cell" />;
+          const label = signal.charAt(0).toUpperCase() + signal.slice(1);
+          const tip = [
+            label,
+            conviction ? `${conviction} conviction` : null,
+            annDate ? `Announced ${annDate}` : null,
+          ].filter(Boolean).join(' · ');
+          return (
+            <span className={`earnings-signal-badge es-${signal}`} title={tip}>
+              {label}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 80,
+        sortingFn: (rowA, rowB) => {
+          return signalScore(rowA.original) - signalScore(rowB.original);
+        },
+      }),
+      columnHelper.accessor('since_earnings_pct', {
+        header: 'Since Earn.',
+        cell: (info) => {
+          const pct = info.getValue();
+          const annDate = info.row.original.earnings_announcement_date;
+          if (pct == null) return <span className="since-earnings-cell" />;
+          const positive = pct >= 0;
+          const tip = annDate ? `Price change since earnings announced ${annDate}` : 'Price change since earnings announcement';
+          return (
+            <span
+              className={`since-earnings ${positive ? 'positive' : 'negative'}`}
+              title={tip}
+            >
+              {positive ? '+' : ''}{pct.toFixed(1)}%
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 80,
       }),
       columnHelper.accessor('form13f_score', {
         header: '13F Score',
@@ -925,56 +1220,9 @@ const Holdings = () => {
         },
         enableSorting: true,
         enableGlobalFilter: false,
-        size: 180,
+        size: 150,
         sortingFn: (rowA, rowB) =>
           netHolderScore(rowA.original.form13f_holders) - netHolderScore(rowB.original.form13f_holders),
-      }),
-      columnHelper.accessor('earnings_signal', {
-        header: 'Signal',
-        cell: (info) => {
-          const signal = info.getValue();
-          const conviction = info.row.original.earnings_conviction;
-          const annDate = info.row.original.earnings_announcement_date;
-          if (!signal) return <span className="earnings-signal-cell" />;
-          const label = signal.charAt(0).toUpperCase() + signal.slice(1);
-          const tip = [
-            label,
-            conviction ? `${conviction} conviction` : null,
-            annDate ? `Announced ${annDate}` : null,
-          ].filter(Boolean).join(' · ');
-          return (
-            <span className={`earnings-signal-badge es-${signal}`} title={tip}>
-              {label}
-            </span>
-          );
-        },
-        enableSorting: true,
-        enableGlobalFilter: false,
-        size: 80,
-        sortingFn: (rowA, rowB) => {
-          return signalScore(rowA.original) - signalScore(rowB.original);
-        },
-      }),
-      columnHelper.accessor('since_earnings_pct', {
-        header: 'Since Earn.',
-        cell: (info) => {
-          const pct = info.getValue();
-          const annDate = info.row.original.earnings_announcement_date;
-          if (pct == null) return <span className="since-earnings-cell" />;
-          const positive = pct >= 0;
-          const tip = annDate ? `Price change since earnings announced ${annDate}` : 'Price change since earnings announcement';
-          return (
-            <span
-              className={`since-earnings ${positive ? 'positive' : 'negative'}`}
-              title={tip}
-            >
-              {positive ? '+' : ''}{pct.toFixed(1)}%
-            </span>
-          );
-        },
-        enableSorting: true,
-        enableGlobalFilter: false,
-        size: 80,
       }),
       columnHelper.accessor('country', {
         header: 'Country',
@@ -989,7 +1237,7 @@ const Holdings = () => {
         },
         enableSorting: true,
         enableGlobalFilter: true,
-        size: 120,
+        size: 90,
       }),
       columnHelper.accessor('sector', {
         header: 'Sector',
@@ -1000,16 +1248,7 @@ const Holdings = () => {
         ),
         enableSorting: true,
         enableGlobalFilter: true,
-        size: 140,
-      }),
-      columnHelper.accessor('quote_type', {
-        header: 'Type',
-        cell: (info) => (
-          <span className="quote-type">{info.getValue() || ''}</span>
-        ),
-        enableSorting: true,
-        enableGlobalFilter: true,
-        size: 80,
+        size: 90,
       }),
       columnHelper.accessor('currency', {
         header: 'Currency',
@@ -1020,76 +1259,10 @@ const Holdings = () => {
         enableGlobalFilter: true,
         size: 70,
       }),
-      columnHelper.accessor('dcf_diff', {
-        header: 'DCF Diff',
-        cell: (info) => {
-          const row = info.row.original || {};
-          const dcfDiff = row.dcf_diff;
-          const dcfPrice = row.dcf_price;
-
-          if (dcfDiff === null || dcfDiff === undefined) {
-            return <span className="dcf-diff"></span>;
-          }
-
-          // Convert from decimal (1 = 100%) to percentage
-          const potentialProfitPct = dcfDiff * 100;
-          const isProfit = potentialProfitPct > 0; // Positive = profit potential
-          const isLoss = potentialProfitPct < 0; // Negative = loss potential
-
-          const className = isProfit ? 'positive' : isLoss ? 'negative' : '';
-
-          return (
-            <span className={`dcf-diff ${className}`} title={dcfPrice ? `DCF: ${dcfPrice.toFixed(2)}` : undefined}>
-              {potentialProfitPct >= 0 ? '+' : ''}{Math.round(potentialProfitPct)}%
-            </span>
-          );
-        },
-        enableSorting: true,
-        enableGlobalFilter: false,
-        size: 80,
-      }),
-      columnHelper.accessor('current_price', {
-        header: 'Price',
-        cell: (info) => {
-          const row = info.row.original || {};
-          const targets = row.analyst_price_targets || {};
-          const currentPrice = info.getValue();
-
-          const tooltip = [
-            // Price targets (if available)
-            targets.high !== undefined && targets.high !== null ? `High: ${Number(targets.high).toFixed(2)}` : null,
-            targets.median !== undefined && targets.median !== null ? `Median: ${Number(targets.median).toFixed(2)}` : null,
-            targets.mean !== undefined && targets.mean !== null ? `Mean: ${Number(targets.mean).toFixed(2)}` : null,
-            targets.low !== undefined && targets.low !== null ? `Low: ${Number(targets.low).toFixed(2)}` : null,
-            row.number_of_analyst_opinions !== undefined && row.number_of_analyst_opinions !== null ? `Analysts: ${Number(row.number_of_analyst_opinions)}` : null,
-          ].filter(Boolean).join('\n');
-
-          // Simple text coloring based on price targets
-          let textColor = '';
-          if (Object.keys(targets).length > 0) {
-            const { low, high } = targets;
-            if (low !== undefined && low !== null && currentPrice < low) {
-              textColor = '#28a745'; // Green: below low
-            } else if (high !== undefined && high !== null && currentPrice > high) {
-              textColor = '#dc3545'; // Red: above high
-            }
-            // Default color for everything else
-          }
-
-          return (
-            <span style={{ color: textColor }} title={tooltip || undefined}>
-              {currentPrice.toFixed(2)}
-            </span>
-          );
-        },
-        enableSorting: true,
-        enableGlobalFilter: false,
-        size: 80,
-      }),
     ];
-      return showAll ? cols.filter(col => !POSITION_ONLY_COLUMN_IDS.includes(col.id)) : cols;
-    },
-    [columnHelper, barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners, showAll]
+    return showAll ? cols.filter(col => !POSITION_ONLY_COLUMN_IDS.includes(col.id)) : cols;
+  },
+  [columnHelper, barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners, showAll, handleScreenerChange]
   );
 
   useEffect(() => {
@@ -1133,24 +1306,9 @@ const Holdings = () => {
     fetchScreeners();
   }, []);
 
-
-  // Handle screener filter change (multi-select functionality)
-  const handleScreenerChange = (screenerId) => {
-    setSelectedScreeners(prev => {
-      if (screenerId === '') {
-        return []; // Clear all screeners
-      }
-      if (prev.includes(screenerId)) {
-        return prev.filter(id => id !== screenerId); // Remove screener
-      } else {
-        return [...prev, screenerId]; // Add screener
-      }
-    });
-  };
-
   // Calculate screener counts considering active screeners
   const screenerCounts = useMemo(() => {
-    if (!holdingsWithScreeners.length || !availableScreeners.length) {
+    if (!holdings.length || !availableScreeners.length) {
       return {};
     }
 
@@ -1159,12 +1317,12 @@ const Holdings = () => {
     availableScreeners.forEach(screener => {
       if (selectedScreeners.length === 0) {
         // No active screeners: count all holdings that pass this screener
-        counts[screener.id] = holdingsWithScreeners.filter(holding =>
+        counts[screener.id] = holdings.filter(holding =>
           holding.passedScreeners && holding.passedScreeners.includes(screener.id)
         ).length;
       } else {
         // Active screeners: count holdings that pass this screener AND all active screeners
-        counts[screener.id] = holdingsWithScreeners.filter(holding =>
+        counts[screener.id] = holdings.filter(holding =>
           holding.passedScreeners &&
           holding.passedScreeners.includes(screener.id) &&
           selectedScreeners.every(activeScreenerId =>
@@ -1174,7 +1332,7 @@ const Holdings = () => {
       }
     });
     return counts;
-  }, [holdingsWithScreeners, availableScreeners, selectedScreeners]);
+  }, [holdings, availableScreeners, selectedScreeners]);
 
   const table = useReactTable({
     data: filteredHoldings,
@@ -1192,7 +1350,6 @@ const Holdings = () => {
     initialState: {
       sorting: showAll ? [{ id: 'name', desc: false }] : [{ id: 'market_value', desc: true }],
     },
-    columnResizeMode: 'onChange',
   });
 
   // CSV Export Function - Must be defined before any conditional returns
@@ -1206,7 +1363,7 @@ const Holdings = () => {
       return;
     }
 
-    // Define CSV headers - map all available fields to readable names
+    // Readable names for column ids (covers both accessorKey and function-accessor ids)
     const headerMap = {
       'yahoo_symbol': 'Symbol',
       'name': 'Name',
@@ -1214,10 +1371,10 @@ const Holdings = () => {
       'market_value': 'Value (£)',
       'profit': 'Profit (£)',
       'return_pct': 'Return',
-      'dividend_yield': 'Dividend',
-      'prediction': 'Prediction',
+      'dividend_yield': 'Div',
+      'prediction': 'Pred',
       'institutional_ownership': 'Instit',
-      'market_cap': 'Market Cap',
+      'market_cap': 'Mkt Cap',
       'peg_ratio': 'PEG',
       'pe_ratio': 'PE',
       'ps_ratio': 'PS',
@@ -1225,15 +1382,15 @@ const Holdings = () => {
       'profit_margins': 'Margins',
       'revenue_growth': 'Growth',
       'roic': 'ROIC',
-      'free_cashflow_yield': 'FCF Yield',
+      'free_cashflow_yield': 'FCF',
       'quickRatio': 'Quick',
       'debtToEquity': 'D/E',
       'recommendation_mean': 'Rec',
       'recommendation_trend': 'Rec Trend',
-      'fifty_two_week_high_distance': '52WH Change',
+      'fifty_two_week_high_distance': '52WH',
       'short_percent_of_float': 'Short',
       'rsi': 'RSI',
-      'screener_score': 'Score',
+      'screener_score': 'Screener',
       'passedScreeners': 'Screeners',
       'form13f_score': '13F Score',
       'form13f_holders': '13F Holders',
@@ -1241,109 +1398,33 @@ const Holdings = () => {
       'since_earnings_pct': 'Since Earn.',
       'country': 'Country',
       'sector': 'Sector',
-      'quote_type': 'Type',
       'currency': 'Currency',
       'dcf_diff': 'DCF Diff',
       'current_price': 'Price',
+      'composite_score': 'Score',
     };
 
-    // Get all available keys from the data (for columns not shown in UI)
-    const allAvailableKeys = new Set();
-    rowsToExport.forEach(row => {
-      Object.keys(row.original).forEach(key => {
-        if (!key.startsWith('_') && key !== 'analyst_price_targets') {
-          allAvailableKeys.add(key);
-        }
-      });
-    });
+    // Export exactly the columns shown in the table (in display order).
+    // Skip the checkbox column only; include function-accessor columns like composite_score.
+    const exportColumns = table.getAllColumns().filter(col => col.id !== 'select');
 
-    // Get visible column order from table (matching the page display order)
-    // Exclude 'select' column (checkbox) and 'date' column
-    const visibleColumns = table.getAllColumns().filter(col => {
+    const headers = exportColumns.map(col => {
       const colDef = col.columnDef;
-      // Skip select column (checkbox)
-      if (colDef.id === 'select') return false;
-      // Skip date column (it's in the filename)
-      if (colDef.accessorKey === 'date') return false;
-      // Only include columns with accessorKey (data columns)
-      return colDef.accessorKey !== undefined;
+      if (typeof colDef.header === 'string') return colDef.header;
+      return headerMap[col.id] || col.id.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
     });
 
-    // Extract visible columns first (in page order)
-    const keysToExport = [];
-    const headers = [];
-    const visibleKeys = new Set();
-
-    visibleColumns.forEach(col => {
-      const colDef = col.columnDef;
-      const accessorKey = colDef.accessorKey;
-
-      if (!accessorKey) return;
-
-      // Get header from column definition (all headers are strings)
-      const headerText = typeof colDef.header === 'string'
-        ? colDef.header
-        : headerMap[accessorKey] || accessorKey.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-
-      keysToExport.push(accessorKey);
-      headers.push(headerText);
-      visibleKeys.add(accessorKey);
-    });
-
-    // Add remaining columns (not shown in UI) after visible columns, alphabetically
-    const remainingKeys = Array.from(allAvailableKeys).filter(key =>
-      !visibleKeys.has(key) &&
-      key !== 'date' // Skip date column
-    ).sort();
-
-    remainingKeys.forEach(key => {
-      keysToExport.push(key);
-      headers.push(headerMap[key] || key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()));
-    });
-
-    // Helper function to format CSV value
-    const formatCSVValue = (value, key) => {
-      if (value === null || value === undefined) {
-        return '';
-      }
-
-      // Handle arrays (like passedScreeners, form13f_holders)
-      if (Array.isArray(value)) {
-        if (key === 'form13f_holders') {
-          return value.map(h => `${h.name}: ${h.change}`).join('; ');
-        }
-        return value.join('; ');
-      }
-
-      // Handle objects - skip complex objects for now
-      if (typeof value === 'object') {
-        return '';
-      }
-
-      // Handle numbers - format appropriately
-      if (typeof value === 'number') {
-        // For percentages and ratios, format with 2 decimals
-        const percentKeys = ['portfolio_pct', 'return_pct', 'dividend_yield', 'prediction',
-                            'institutional_ownership', 'profit_margins', 'revenue_growth',
-                            'roic', 'free_cashflow_yield', 'fifty_two_week_high_distance',
-                            'short_percent_of_float', 'dcf_diff'];
-        if (percentKeys.includes(key)) {
-          return value.toFixed(2);
-        }
-        return value.toString();
-      }
-
-      // Handle strings - escape commas and quotes
-      let stringValue = String(value);
-      if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-        stringValue = `"${stringValue.replace(/"/g, '""')}"`;
-      }
-      return stringValue;
-    };
-
-    // Extract data for each row
+    // Extract data for each row. Use row.getValue() so computed columns
+    // (e.g. composite_score) are included alongside raw accessor columns.
     const csvRows = rowsToExport.map(row => {
-      return keysToExport.map(key => formatCSVValue(row.original[key], key));
+      return exportColumns.map(col => {
+        const colId = col.id;
+        // Function-accessor columns (no accessorKey) must use getValue
+        const value = col.columnDef.accessorKey
+          ? row.original[col.columnDef.accessorKey]
+          : row.getValue(colId);
+        return formatCSVValue(value, colId);
+      });
     });
 
     // Combine headers and rows
@@ -1425,7 +1506,7 @@ const Holdings = () => {
                   title="Clear screener filters"
                 >
                   <span className="screener-name">All</span>
-                  <span className="screener-count">({holdingsWithScreeners.length})</span>
+                  <span className="screener-count">({holdings.length})</span>
                 </button>
                 {availableScreeners
                   .sort((a, b) => (b.weight || 0) - (a.weight || 0)) // Sort by weight (higher first)
@@ -1517,7 +1598,10 @@ const Holdings = () => {
                   <th
                     key={header.id}
                     onClick={header.column.getToggleSortingHandler()}
-                    className={header.column.getCanSort() ? 'sortable' : ''}
+                    className={[
+                      header.column.getCanSort() ? 'sortable' : '',
+                      GROUP_START_COL_IDS.has(header.column.id) ? 'col-group-start' : '',
+                    ].filter(Boolean).join(' ') || undefined}
                   >
                     <div className="header-content">
                       {flexRender(
