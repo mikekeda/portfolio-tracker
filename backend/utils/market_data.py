@@ -160,6 +160,48 @@ async def get_risk_free_rate(session: aiohttp.ClientSession) -> float:
     return obs[0]["value"] / 100.0
 
 
+# FRED series IDs for 10-year government bond yields by instrument currency.
+# EUR uses the German Bund as the euro-area benchmark; all others are direct.
+_CURRENCY_FRED_SERIES: dict[str, str] = {
+    "USD": "DGS10",              # US 10-year T-note (daily)
+    "GBP": "IRLTLT01GBM156N",   # UK 10-year Gilt (monthly, OECD)
+    "EUR": "IRLTLT01DEM156N",   # Germany 10-year Bund (monthly, OECD)
+    "CAD": "IRLTLT01CAM156N",   # Canada 10-year (monthly, OECD)
+}
+
+# Conservative fallbacks if FRED is unavailable (approximate 2025/2026 levels)
+_RFR_FALLBACKS: dict[str, float] = {
+    "USD": 0.043,
+    "GBP": 0.045,
+    "EUR": 0.026,
+    "CAD": 0.032,
+}
+
+
+async def get_risk_free_rates(session: aiohttp.ClientSession) -> dict[str, float]:
+    """
+    Fetches 10-year government bond yields for USD, GBP, EUR, and CAD
+    concurrently from FRED. Returns {currency: rate_as_decimal}.
+
+    Discounting a company's cash flows at the local-currency risk-free rate
+    avoids mixing currency environments (e.g., using US T-note yields to
+    discount EUR cash flows over-penalises European companies).
+    """
+    currencies = list(_CURRENCY_FRED_SERIES.keys())
+    results = await asyncio.gather(
+        *[gen_fred_latest(session, _CURRENCY_FRED_SERIES[c], limit=1) for c in currencies],
+        return_exceptions=True,
+    )
+    rates: dict[str, float] = {}
+    for currency, obs in zip(currencies, results):
+        if isinstance(obs, Exception) or not obs:
+            rates[currency] = _RFR_FALLBACKS[currency]
+            logger.warning("FRED risk-free rate fetch failed for %s, using fallback %.3f", currency, _RFR_FALLBACKS[currency])
+        else:
+            rates[currency] = obs[0]["value"] / 100.0
+    return rates
+
+
 async def gen_buffett_indicator(session: aiohttp.ClientSession) -> Optional[float]:
     """
     Buffett-like ratio:

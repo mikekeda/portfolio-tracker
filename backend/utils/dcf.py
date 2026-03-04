@@ -5,11 +5,36 @@ import aiohttp
 
 from config import EQUITY_RISK_PREMIUM
 from models import Instrument
-from backend.utils.market_data import get_risk_free_rate
+from backend.utils.market_data import get_risk_free_rates
 
 # --- Constants ---
-# More conventional to set a standard terminal growth rate representing long-term economic growth.
-TERMINAL_GROWTH_RATE = 0.025  # 2.5%
+TERMINAL_GROWTH_RATE = 0.025  # 2.5% — long-run nominal GDP growth
+
+# Sectors where FCF-based DCF is meaningless. Banks' "free cash flow" is not
+# comparable to an industrial company's; use P/BV or DDM for these instead.
+SECTORS_WITHOUT_DCF: frozenset[str] = frozenset({"Financial Services"})
+
+# Corporate tax rates by company domicile country.
+# Used to compute after-tax cost of debt in WACC.
+# Defaults to 0.25 (a conservative international average) for unknown countries.
+COUNTRY_TAX_RATES: dict[str, float] = {
+    "United States": 0.21,
+    "United Kingdom": 0.25,
+    "France":         0.25,
+    "Germany":        0.30,
+    "Netherlands":    0.258,
+    "Sweden":         0.206,
+    "Denmark":        0.22,
+    "Canada":         0.265,
+    "Italy":          0.24,
+    "Israel":         0.23,
+    "Brazil":         0.34,
+    "Norway":         0.22,
+    "Japan":          0.305,
+    "South Korea":    0.24,
+    "Australia":      0.30,
+    "Switzerland":    0.185,
+}
 
 SECTOR_GROWTH_DEFAULTS: dict[str, float] = {
     "Technology": 0.15,
@@ -54,7 +79,11 @@ def calculate_cost_of_equity(risk_free_rate: float, beta: Optional[float]) -> fl
 
 
 def estimate_wacc_dynamic(
-    market_cap: Optional[float], total_debt: float, beta: Optional[float], risk_free_rate: float
+    market_cap: Optional[float],
+    total_debt: float,
+    beta: Optional[float],
+    risk_free_rate: float,
+    country: str = "United States",
 ) -> float:
     """
     Calculates WACC using Cost of Equity (CAPM) and Cost of Debt.
@@ -74,20 +103,18 @@ def estimate_wacc_dynamic(
     weight_debt = total_debt / enterprise_value
 
     # 3. Estimate Cost of Debt (Kd)
-    # Hard to get exact interest rates from Yahoo info.
-    # Heuristic: RiskFree + Spread (1.5% for large cap, 3% for small cap)
+    # Heuristic: risk-free rate + credit spread (1.5% large cap, 3% small cap)
     credit_spread = 0.015 if market_cap > 10e9 else 0.03
     kd = risk_free_rate + credit_spread
 
-    # 4. Estimate Tax Rate
-    # Heuristic: Standard corp tax rate or derived from financials.
-    # Using standard 21% (US) is safer than volatile effective rates.
-    tax_rate = 0.21
+    # 4. Country-specific corporate tax rate for after-tax cost of debt.
+    # Defaults to 25% (conservative international average) for unknown countries.
+    tax_rate = COUNTRY_TAX_RATES.get(country, 0.25)
 
     # 5. Final WACC Formula
     wacc = (weight_equity * ke) + (weight_debt * kd * (1 - tax_rate))
 
-    # Clamp results to realistic bounds (e.g., 5% to 15%)
+    # Clamp results to realistic bounds (5% to 15%)
     return _clamp(wacc, 0.05, 0.15)
 
 
@@ -146,15 +173,18 @@ def _extract_trailing_fcf(cashflow: dict[str, Any]) -> tuple[Optional[float], Op
         if fcf is not None:
             series.append(fcf)
 
-    # 2) Use only positive FCF values for a stable DCF base
-    pos_fcf = [v for v in series if v > 0]
-    if not pos_fcf:
+    # 2) Require the most recent FCF to be positive — we can't project forward
+    # from a negative base.  Earlier negative years are kept in the series so
+    # that the median and CAGR reflect the full history (including bad years)
+    # rather than silently inflating the baseline by dropping them.
+    if not series or series[-1] <= 0:
         return None, None
 
-    # 3) Calculate components for smoothing
-    last_fcf = pos_fcf[-1]
-    median_last_3 = _median(pos_fcf[-3:])
-    fcf_cagr = _calculate_cagr(pos_fcf[0], pos_fcf[-1], len(pos_fcf) - 1) if len(pos_fcf) >= 2 else None
+    # 3) Calculate components for smoothing using the full series
+    last_fcf = series[-1]
+    median_last_3 = _median(series[-3:])  # may include negative years — honest
+    # _calculate_cagr returns None if first value is non-positive (sign changes)
+    fcf_cagr = _calculate_cagr(series[0], series[-1], len(series) - 1) if len(series) >= 2 else None
 
     forecasted_fcf = None
     if fcf_cagr is not None:
@@ -219,6 +249,7 @@ def _estimate_dcf_inputs(instrument: Instrument, risk_free_rate: float) -> DcfIn
     info = instrument.yahoo.info or {}
     cashflow = instrument.yahoo.cashflow or {}
     sector = info.get("sector") or ""
+    country = info.get("country") or ""
 
     current_fcf, fcf_cagr = _extract_trailing_fcf(cashflow)
 
@@ -228,19 +259,30 @@ def _estimate_dcf_inputs(instrument: Instrument, risk_free_rate: float) -> DcfIn
     total_cash: float = _safe_number(info.get("totalCash")) or 0.0
     total_debt: float = _safe_number(info.get("totalDebt")) or 0.0
 
-    # Estimate initial growth rate, preferring analyst estimates, then historical FCF growth
-    rev_g = _safe_number(info.get("revenueGrowth"))
-    if rev_g is not None:
-        initial_growth = rev_g
-    elif fcf_cagr is not None:
-        initial_growth = fcf_cagr
+    # Blend available growth signals for a more stable estimate.
+    # revenueGrowth alone is trailing TTM and can mislead for cyclical sectors
+    # (e.g. semiconductor downcycles, defense budget ramp-ups).
+    #
+    # earningsGrowth from Yahoo is a single-quarter YoY figure — it can be
+    # extremely volatile (a one-off bad quarter looks like -80%).  We pre-clamp
+    # each signal individually before blending so no single noisy reading
+    # dominates the average.  The outer clamp below is the final safety net.
+    _SIG_LO, _SIG_HI = -0.25, 0.35
+    rev_g  = _safe_number(info.get("revenueGrowth"))
+    earn_g = _safe_number(info.get("earningsGrowth"))
+    if rev_g  is not None: rev_g  = _clamp(rev_g,  _SIG_LO, _SIG_HI)
+    if earn_g is not None: earn_g = _clamp(earn_g, _SIG_LO, _SIG_HI)
+
+    candidates = [g for g in [rev_g, earn_g, fcf_cagr] if g is not None]
+    if candidates:
+        initial_growth = sum(candidates) / len(candidates)
     else:
         initial_growth = SECTOR_GROWTH_DEFAULTS.get(sector, 0.08)
 
-    initial_growth = _clamp(initial_growth, -0.20, 0.30)  # Clamp to a safer range
+    initial_growth = _clamp(initial_growth, -0.20, 0.30)
 
     market_cap = _safe_number(info.get("marketCap"))
-    wacc = estimate_wacc_dynamic(market_cap, total_debt, info.get("beta"), risk_free_rate)
+    wacc = estimate_wacc_dynamic(market_cap, total_debt, info.get("beta"), risk_free_rate, country)
 
     return {
         "current_fcf": current_fcf,
@@ -264,15 +306,15 @@ async def get_dcf_prices(
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
     ) as aiohttp_session:
-        risk_free_rate = await get_risk_free_rate(aiohttp_session)
+        risk_free_rates = await get_risk_free_rates(aiohttp_session)
     return await asyncio.gather(
-        *[_get_dcf_price(instrument, risk_free_rate, years, wacc, growth, terminal) for instrument in instruments]
+        *[_get_dcf_price(instrument, risk_free_rates, years, wacc, growth, terminal) for instrument in instruments]
     )
 
 
 async def _get_dcf_price(
     instrument: Instrument,
-    risk_free_rate: float,
+    risk_free_rates: dict[str, float],
     years: int = 10,
     wacc_override: Optional[float] = None,
     growth_override: Optional[float] = None,
@@ -284,6 +326,7 @@ async def _get_dcf_price(
 
     Args:
         instrument: The instrument object with financial data.
+        risk_free_rates: Dict of {currency: rate} from get_risk_free_rates().
         years: The number of years for the high-growth stage.
         wacc_override, growth_override, terminal_override: Optional values to override estimates.
         allow_negative: If True, returns negative DCF values; otherwise returns None.
@@ -291,6 +334,21 @@ async def _get_dcf_price(
     Returns:
         The calculated intrinsic value per share, or None if inputs are invalid.
     """
+    info = (instrument.yahoo.info or {}) if instrument.yahoo else {}
+
+    # Financial stocks (banks, insurance): FCF has a completely different meaning
+    # for companies whose business IS managing cash. Skip DCF; use P/BV or DDM instead.
+    if info.get("sector") in SECTORS_WITHOUT_DCF:
+        return None
+
+    # Use the risk-free rate matching the instrument's reporting currency so that
+    # EUR cash flows are discounted at EUR rates, GBP at GBP rates, etc.
+    # Yahoo returns "GBp" or "GBX" for LSE pence-denominated stocks — both map to GBP.
+    currency = info.get("currency") or "USD"
+    if currency.upper() in ("GBX", "GBP"):
+        currency = "GBP"
+    risk_free_rate = risk_free_rates.get(currency, risk_free_rates.get("USD", 0.04))
+
     est = _estimate_dcf_inputs(instrument, risk_free_rate)
 
     # Apply any user-provided overrides
