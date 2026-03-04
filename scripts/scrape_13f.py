@@ -369,13 +369,15 @@ def _get_existing_report_dates(session: Session, cik: str) -> set[str]:
 
 
 def _build_cusip_to_instrument_map(session: Session) -> dict[str, int]:
-    """Build CUSIP -> instrument_id from Instrument.isin. US ISIN = US + 9-char CUSIP + check digit.
-    Keys are uppercased for case-insensitive lookup (13F XML may use different casing)."""
+    """Build CUSIP -> instrument_id from Instrument.isin.
+    All ISINs follow the same 12-char structure: 2-char country code + 9-char CUSIP + 1 check digit.
+    This works for US ISINs (US + CUSIP) and non-US cross-listings (e.g. CA11271J1075 -> 11271J107
+    for Brookfield Corp BN). Keys are uppercased for case-insensitive lookup."""
     result = session.execute(select(Instrument.id, Instrument.isin).where(Instrument.isin.is_not(None)))
     mapping: dict[str, int] = {}
     for row in result.all():
         isin = (row.isin or "").strip().upper()
-        if not isin.startswith("US") or len(isin) < 11:
+        if len(isin) < 11:
             continue
         cusip = isin[2:11]
         mapping[cusip.upper()] = row.id
