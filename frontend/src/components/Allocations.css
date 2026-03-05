@@ -1,220 +1,365 @@
+/* ── Container ───────────────────────────────────────────────────────────────*/
 .allocations-container {
   padding: 20px;
   background: #f8f9fa;
   min-height: 100vh;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
 }
 
-.chart-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 30px;
-  flex-wrap: wrap;
-  gap: 15px;
-}
-
-.chart-header h2 {
-  color: #1f2937; /* darker for readability */
-  margin: 0;
-  font-size: 24px;
+.alloc-page-title {
+  color: #1f2937;
+  font-size: 22px;
   font-weight: 600;
+  margin: 0 0 20px 0;
 }
 
-.time-range-selector {
+/* ── Summary cards ───────────────────────────────────────────────────────────*/
+.alloc-summary-cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.alloc-summary-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 14px 16px;
+  border: 1px solid #e5e7eb;
+  border-left: 4px solid #e5e7eb;
+}
+
+.alloc-summary-card.positive { border-left-color: #16a34a; }
+.alloc-summary-card.negative { border-left-color: #dc2626; }
+
+.alloc-summary-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6b7280;
+  margin-bottom: 4px;
+}
+
+.alloc-summary-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.alloc-summary-return {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.alloc-summary-card.positive .alloc-summary-return { color: #16a34a; }
+.alloc-summary-card.negative .alloc-summary-return { color: #dc2626; }
+
+.alloc-summary-pnl {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 2px;
+}
+
+/* ── Sector + Country performance panels ─────────────────────────────────────*/
+.alloc-perf-section {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.alloc-perf-panel {
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.alloc-perf-header {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.time-range-btn {
-  padding: 8px 16px;
-  border: 1px solid #dee2e6;
-  background: white;
-  color: #374151; /* darker neutral */
+.alloc-perf-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+}
+
+/* ── Sort toggle ─────────────────────────────────────────────────────────────*/
+.alloc-sort-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.alloc-sort-label {
+  font-size: 11px;
+  color: #6b7280;
+  margin-right: 2px;
+}
+
+.alloc-sort-btn {
+  padding: 3px 10px;
+  border: 1px solid #d1d5db;
+  background: #fff;
+  color: #374151;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 500;
-  transition: all 0.2s ease;
+  transition: all 0.15s;
 }
 
-.time-range-btn:hover {
-  background: #f3f4f6;
-  border-color: #cfd4da;
-}
+.alloc-sort-btn:hover { background: #f3f4f6; }
 
-.time-range-btn.active {
-  background: #2563eb; /* slightly deeper blue */
-  color: white;
+.alloc-sort-btn.active {
+  background: #2563eb;
+  color: #fff;
   border-color: #2563eb;
 }
 
-.allocation-charts {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
-  gap: 20px;
+/* ── Performance table ───────────────────────────────────────────────────────*/
+.perf-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
 }
 
-.chart-panel {
-  background: #ffffff;
-  border-radius: 6px;
-  padding: 15px 15px 15px 0;
-  border: 1px solid #e5e7eb;
-}
-
-.chart-panel h3 {
-  color: #111827; /* darkest for headings */
-  margin: 0 0 15px 0;
-  font-size: 16px;
+.perf-table thead th {
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 11px;
   font-weight: 600;
-  text-align: center;
-}
-
-.allocation-panel {
-  min-height: 350px;
-}
-
-/* Recharts customization */
-.recharts-cartesian-grid-horizontal line,
-.recharts-cartesian-grid-vertical line {
-  stroke: #e9ecef;
-  stroke-dasharray: 3 3;
-}
-
-.recharts-tooltip-wrapper {
-  outline: none;
-}
-
-.recharts-tooltip-content {
-  background: rgba(17, 24, 39, 0.9) !important; /* darker tooltip */
-  border: none !important;
-  border-radius: 6px !important;
-  color: white !important;
-}
-
-.recharts-tooltip-label {
-  color: white !important;
-  font-weight: 600;
-}
-
-.recharts-legend-wrapper {
-  padding-top: 10px;
-}
-
-.recharts-legend-item {
-  cursor: pointer;
-  transition: opacity 0.2s ease;
-}
-
-.recharts-legend-item:hover {
-  opacity: 0.7;
-}
-
-/* Loading and Error States */
-.loading, .error {
-  text-align: center;
-  padding: 40px 20px;
   color: #6b7280;
-  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid #e5e7eb;
+  white-space: nowrap;
 }
 
-.error {
-  color: #dc2626;
+.perf-table tbody tr {
+  border-bottom: 1px solid #f3f4f6;
 }
 
-/* Responsive Design */
-@media (max-width: 768px) {
-  .allocations-container {
-    padding: 15px;
-  }
+.perf-table tbody tr:last-child { border-bottom: none; }
+.perf-table tbody tr:hover { background: #f9fafb; }
 
-  .chart-header {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .chart-header h2 {
-    text-align: center;
-    margin-bottom: 15px;
-  }
-
-  .time-range-selector {
-    justify-content: center;
-  }
-
-  .allocation-charts {
-    grid-template-columns: 1fr;
-    gap: 15px;
-  }
-
-  .chart-panel {
-    padding: 10px;
-  }
-
-  .allocation-panel {
-    min-height: 300px;
-  }
+.perf-table td {
+  padding: 7px 8px;
+  vertical-align: middle;
 }
 
-@media (max-width: 480px) {
-  .time-range-btn {
-    padding: 6px 12px;
-    font-size: 12px;
-  }
-
-  .chart-panel h3 {
-    font-size: 14px;
-  }
-}
-
-/* Chart hover effects */
-.chart-panel:hover {
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.06);
-  transition: box-shadow 0.2s ease;
-}
-
-/* Custom legend styling */
-.recharts-legend-item-text {
-  font-size: 12px;
+.perf-name-cell {
   font-weight: 500;
+  color: #111827;
+  max-width: 150px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Line chart hover effects */
-.recharts-line {
-  transition: stroke-width 0.2s ease;
+.perf-count-cell {
+  text-align: center;
 }
 
-.recharts-line:hover {
-  stroke-width: 3;
+.count-badge {
+  display: inline-block;
+  min-width: 20px;
+  padding: 1px 5px;
+  background: #f3f4f6;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #374151;
+  text-align: center;
 }
 
-/* Allocation Tables */
-.allocation-tables {
-  margin-top: 30px;
+.count-badge-hover {
+  cursor: default;
+  transition: background 0.12s, color 0.12s;
 }
 
-.allocations-section {
+.count-badge-hover:hover {
+  background: #2563eb;
+  color: #fff;
+}
+
+/* ── Holdings popover ────────────────────────────────────────────────────────*/
+.alloc-popover {
+  position: fixed;
+  z-index: 9999;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 10px 0 6px 0;
+  min-width: 220px;
+  max-width: 280px;
+  pointer-events: auto;
+}
+
+.alloc-popover-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  padding: 0 12px 6px 12px;
+  border-bottom: 1px solid #f3f4f6;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.alloc-popover-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.alloc-popover-table th {
+  padding: 3px 12px;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.alloc-popover-table th:not(:first-child),
+.alloc-popover-table td:not(:first-child) {
+  text-align: right;
+}
+
+.alloc-popover-table td {
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
+.alloc-popover-table tbody tr:hover {
+  background: #f9fafb;
+}
+
+.pop-symbol {
+  font-weight: 600;
+  color: #111827;
+}
+
+/* ── Show-more button ────────────────────────────────────────────────────────*/
+.alloc-show-more-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 5px 0;
+  background: none;
+  border: none;
+  border-top: 1px solid #f3f4f6;
+  font-size: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  text-align: center;
+  transition: color 0.12s;
+}
+
+.alloc-show-more-btn:hover {
+  color: #2563eb;
+}
+
+/* Inline bar cells */
+.perf-alloc-cell,
+.perf-return-cell {
+  min-width: 90px;
+  max-width: 130px;
+}
+
+.perf-bar-wrap {
+  position: relative;
+  height: 20px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+}
+
+.perf-alloc-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(37,99,235,0.18), rgba(37,99,235,0.50));
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.perf-return-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.perf-return-bar.pos { background: rgba(22,163,74,0.22); }
+.perf-return-bar.neg { background: rgba(220,38,38,0.18); }
+
+.perf-bar-label {
+  position: relative;
+  z-index: 1;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  color: #1f2937;
+}
+
+.perf-pnl-cell {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Color utilities */
+.color-green { color: #16a34a; }
+.color-red   { color: #dc2626; }
+
+/* ── Secondary section (Currency + ETF/Equity) ───────────────────────────────*/
+.alloc-secondary-section {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 20px;
-  margin-bottom: 30px;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
+/* Existing allocation-table styles (used by currency + ETF panels) */
 .allocation-table {
   background: white;
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-  padding: 20px;
+  border: 1px solid #e5e7eb;
+  padding: 16px;
 }
 
 .allocation-table h3 {
   color: #111827;
-  margin: 0 0 15px 0;
-  font-size: 18px;
+  margin: 0 0 12px 0;
+  font-size: 14px;
   font-weight: 600;
-  text-align: center;
 }
 
 .allocation-table table {
@@ -224,31 +369,29 @@
 
 .allocation-table th,
 .allocation-table td {
-  padding: 12px;
+  padding: 8px 10px;
   text-align: left;
-  border-bottom: 1px solid #e5e7eb;
-  color: #111827; /* make text dark */
+  border-bottom: 1px solid #f3f4f6;
+  color: #111827;
+  font-size: 13px;
 }
 
 .allocation-table th {
-  background-color: #f3f4f6;
+  font-size: 11px;
   font-weight: 600;
-  color: #111827;
-  font-size: 14px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #f9fafb;
 }
 
-.allocation-table td {
-  font-size: 14px;
-}
+.allocation-table tr:last-child td { border-bottom: none; }
+.allocation-table tbody tr:hover { background: #f9fafb; }
 
-.allocation-table tr:hover {
-  background-color: #f9fafb;
-}
-
-/* Bar styling for allocation percentages */
+/* Bar column for allocation % */
 .allocation-table td:nth-child(2) {
   position: relative;
-  min-width: 120px;
+  min-width: 100px;
 }
 
 .allocation-table td:nth-child(2)::before {
@@ -257,41 +400,118 @@
   left: 0;
   top: 0;
   bottom: 0;
-  /* lighter, higher-contrast bar */
-  background: linear-gradient(90deg, rgba(37,99,235,0.20), rgba(37,99,235,0.60));
+  background: linear-gradient(90deg, rgba(37,99,235,0.18), rgba(37,99,235,0.48));
   width: var(--bar-width, 0%);
-  border-radius: 0 4px 4px 0;
-  z-index: 1;
+  border-radius: 0 3px 3px 0;
+  z-index: 0;
 }
 
 .allocation-table td:nth-child(2) span {
   position: relative;
-  z-index: 2;
+  z-index: 1;
   font-weight: 600;
-  color: #0f172a; /* darkest text on lighter bar */
+  font-variant-numeric: tabular-nums;
 }
 
-/* Currency code styling */
 .currency-code {
   font-weight: 700;
   color: #111827;
-  margin-right: 8px;
 }
 
-/* Responsive adjustments for tables */
-@media (max-width: 768px) {
-  .allocations-section {
-    grid-template-columns: 1fr;
-    gap: 15px;
-  }
+/* ── Charts section ──────────────────────────────────────────────────────────*/
+.alloc-charts-section {
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  padding: 16px;
+  transition: opacity 0.15s;
+}
 
-  .allocation-table {
-    padding: 15px;
-  }
+.alloc-charts-loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
 
-  .allocation-table th,
-  .allocation-table td {
-    padding: 8px;
-    font-size: 13px;
-  }
+.alloc-charts-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.alloc-charts-header h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #111827;
+  margin: 0;
+}
+
+.time-range-selector {
+  display: flex;
+  gap: 4px;
+}
+
+.time-range-btn {
+  padding: 4px 12px;
+  border: 1px solid #d1d5db;
+  background: white;
+  color: #374151;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.15s;
+}
+
+.time-range-btn:hover { background: #f3f4f6; }
+
+.time-range-btn.active {
+  background: #2563eb;
+  color: white;
+  border-color: #2563eb;
+}
+
+.allocation-charts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.chart-panel {
+  border-radius: 6px;
+  padding: 12px 12px 12px 0;
+}
+
+.chart-panel h3 {
+  color: #374151;
+  margin: 0 0 10px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ── Loading / error ─────────────────────────────────────────────────────────*/
+.loading, .error {
+  text-align: center;
+  padding: 40px 20px;
+  color: #6b7280;
+  font-size: 16px;
+}
+
+.error { color: #dc2626; }
+
+/* ── Responsive ──────────────────────────────────────────────────────────────*/
+@media (max-width: 900px) {
+  .alloc-summary-cards { grid-template-columns: repeat(2, 1fr); }
+  .alloc-perf-section  { grid-template-columns: 1fr; }
+  .alloc-secondary-section { grid-template-columns: 1fr; }
+  .allocation-charts   { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .allocations-container { padding: 12px; }
+  .alloc-summary-cards   { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .alloc-summary-return  { font-size: 16px; }
+  .perf-pnl-cell         { display: none; }
 }
