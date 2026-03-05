@@ -68,6 +68,11 @@ def parse_csv_row(row: dict[str, str], row_num: int, instruments_lookup: dict[st
         print(f"  ⚠️  Error parsing date in row {row_num}: {e}")
         return None
 
+    # Get currency first — needed for fee classification below
+    currency = row.get("Currency (Price / share)", "USD").strip()
+    csv_ticker = row.get("Ticker", "")  # May be empty for deposits/interest
+    csv_name = row.get("Name", "").strip()
+
     # Parse pricing and fees
     fill_price = safe_float(row["Price / share"]) if row.get("Price / share") else None
     filled_value = safe_float(row["Total"])
@@ -80,18 +85,16 @@ def parse_csv_row(row: dict[str, str], row_num: int, instruments_lookup: dict[st
         ("Currency conversion fee", "CURRENCY_CONVERSION_FEE"),
         ("Stamp duty reserve tax", "STAMP_DUTY_RESERVE_TAX"),
         ("French transaction tax", "FRENCH_TRANSACTION_TAX"),
-        ("Withholding tax", "WITHHOLDING_TAX"),  # Added for dividends
+        ("Withholding tax", "WITHHOLDING_TAX"),
     ]
 
     for csv_column, fee_name in fee_configs:
         fee_amount = safe_float(row.get(csv_column, ""))
         if fee_amount:
-            fees.append({"name": fee_name, "quantity": -fee_amount, "timeCharged": time_str})
-
-    # Get currency and name from CSV, then normalize ticker using name-based matching
-    currency = row.get("Currency (Price / share)", "USD").strip()
-    csv_ticker = row.get("Ticker", "")  # May be empty for deposits/interest
-    csv_name = row.get("Name", "").strip()
+            # Withholding tax is in the stock's trading currency (e.g. USD for ASML).
+            # All other fees (conversion fee, stamp duty, etc.) are in GBP.
+            fee_currency = currency if fee_name == "WITHHOLDING_TAX" else "GBP"
+            fees.append({"name": fee_name, "quantity": -fee_amount, "currency": fee_currency, "timeCharged": time_str})
 
     # Normalize ticker using name-based matching (only for transactions with tickers)
     normalized_ticker: Optional[str] = None
@@ -173,6 +176,19 @@ def store_transaction(session, transaction_data: dict[str, Any]) -> bool:
     if csv_id:
         existing = session.execute(
             select(TransactionHistory).filter(TransactionHistory.csv_id == csv_id)
+        ).scalar_one_or_none()
+        if existing:
+            return False  # Skip duplicate
+    else:
+        # Fallback: dedup by (timestamp, ticker, action, total) when ID is absent
+        timestamp = datetime.strptime(transaction_data["dateCreated"], "%Y-%m-%d %H:%M:%S")
+        existing = session.execute(
+            select(TransactionHistory).filter(
+                TransactionHistory.timestamp == timestamp,
+                TransactionHistory.ticker == transaction_data["ticker"],
+                TransactionHistory.action == TransactionAction(transaction_data["action"]),
+                TransactionHistory.total == transaction_data["total"],
+            )
         ).scalar_one_or_none()
         if existing:
             return False  # Skip duplicate

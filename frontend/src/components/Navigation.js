@@ -76,6 +76,9 @@ const Navigation = () => {
           <Link to="/13f" className={linkClass('/13f')} onClick={handleLinkClick}>
             13F
           </Link>
+          <Link to="/transactions" className={linkClass('/transactions')} onClick={handleLinkClick}>
+            Transactions
+          </Link>
           <label className="nav-hide-amounts">
             <span className="nav-hide-amounts-label">Hide amounts</span>
             <input

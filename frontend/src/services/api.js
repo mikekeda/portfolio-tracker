@@ -139,6 +139,12 @@ export const portfolioAPI = {
     });
     return response.data;
   },
+
+  // Get full transaction history + income summary
+  getTransactions: async () => {
+    const response = await apiClient.get('/api/transactions');
+    return response.data;
+  },
 };
 
 // Export the apiClient for use in other modules
