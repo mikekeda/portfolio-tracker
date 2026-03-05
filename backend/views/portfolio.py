@@ -517,6 +517,56 @@ async def get_portfolio_history(
     return {"history": history_data, "days": days, "benchmark": BENCHES}
 
 
+@router.get("/api/portfolio/indicators/history")
+async def get_portfolio_indicators_history(
+    days: int = 365,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[dict[str, Any]]:
+    """
+    Historical time-series of portfolio risk/return metrics from PortfolioDaily.
+    days=0 returns all available history.
+
+    Selects only the metric columns to avoid loading the JSONB allocation blobs
+    (country_allocation, sector_allocation, etc.) that are not needed here.
+    """
+    cols = (
+        PortfolioDaily.date,
+        PortfolioDaily.value,
+        PortfolioDaily.unrealised_profit,
+        PortfolioDaily.realised_profit,
+        PortfolioDaily.invested,
+        PortfolioDaily.sortino_ratio,
+        PortfolioDaily.beta,
+        PortfolioDaily.mwrr,
+        PortfolioDaily.twrr,
+    )
+    if days == 0:
+        query = select(*cols).order_by(PortfolioDaily.date)
+    else:
+        cutoff = datetime.now(TIMEZONE).date() - timedelta(days=days)
+        query = select(*cols).where(PortfolioDaily.date >= cutoff).order_by(PortfolioDaily.date)
+
+    result = await session.execute(query)
+    rows = result.all()
+    return [
+        {
+            "date": row.date.isoformat(),
+            "value": row.value,
+            "profit": row.unrealised_profit,
+            "return_pct": (
+                round((row.unrealised_profit + row.realised_profit) / row.invested * 100, 4)
+                if row.invested
+                else None
+            ),
+            "sortino_ratio": row.sortino_ratio,
+            "beta": row.beta,
+            "mwrr": row.mwrr,
+            "twrr": row.twrr,
+        }
+        for row in rows
+    ]
+
+
 @router.get("/api/tickers")
 async def get_instruments(session: AsyncSession = Depends(get_db_session)) -> dict[str, list[dict[str, Any]]]:
     """Get all instruments in the database for autocomplete."""

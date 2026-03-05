@@ -24,6 +24,7 @@ from backend.utils.market_data import (
     gen_fear_greed_index,
     gen_market_breadth_indicator,
     gen_sp500_above_sma200,
+    get_consumer_sentiment,
     get_yield_spread,
 )
 from config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER, TIMEZONE, VIX, logger
@@ -58,10 +59,11 @@ async def update_market_metrics():
 
                 # 1. Fetch external API data concurrently
                 logger.info("Fetching external data...")
-                buffett, yield_spread, fear_greed_data = await asyncio.gather(
+                buffett, yield_spread, fear_greed_data, consumer_sentiment = await asyncio.gather(
                     gen_buffett_indicator(http_session),
                     get_yield_spread(http_session),
                     gen_fear_greed_index(http_session),
+                    get_consumer_sentiment(http_session),
                 )
 
                 # 2. Fetch/Calculate DB-dependent metrics
@@ -76,7 +78,8 @@ async def update_market_metrics():
                 fear_greed = fear_greed_data["value"] if fear_greed_data else None
 
                 logger.info(
-                    f"Metrics: Buffett={buffett}, Yield={yield_spread}, F&G={fear_greed}, VIX={vix}, Breadth={breadth}, SMA200%={sma200_pct}"
+                    f"Metrics: Buffett={buffett}, Yield={yield_spread}, F&G={fear_greed}, "
+                    f"VIX={vix}, Breadth={breadth}, SMA200%={sma200_pct}, CS={consumer_sentiment}"
                 )
 
                 # Upsert into DB
@@ -93,6 +96,7 @@ async def update_market_metrics():
                 metric.vix = vix
                 metric.market_breadth_indicator = breadth
                 metric.sp500_above_sma200 = sma200_pct
+                metric.consumer_sentiment = consumer_sentiment
                 metric.updated_at = datetime.now(TIMEZONE).replace(tzinfo=None)
 
                 await db_session.commit()

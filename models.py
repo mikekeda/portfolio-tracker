@@ -511,6 +511,7 @@ class MarketMetricsDaily(Base):
     vix: Mapped[float] = mapped_column(Float, nullable=True)
     market_breadth_indicator: Mapped[float] = mapped_column(Float, nullable=True)
     sp500_above_sma200: Mapped[float] = mapped_column(Float, nullable=True)
+    consumer_sentiment: Mapped[float] = mapped_column(Float, nullable=True)
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())

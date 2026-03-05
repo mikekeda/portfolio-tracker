@@ -2,15 +2,17 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any
 
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
+from backend.utils.market_data import gen_fred_latest
 from backend.views._shared import get_rates
 from config import TIMEZONE
-from models import HoldingDaily, Instrument, Pie, PieInstrument
+from models import HoldingDaily, Instrument, MarketMetricsDaily, Pie, PieInstrument
 
 router = APIRouter()
 
@@ -85,6 +87,65 @@ async def get_movers(
     movers.sort(key=lambda x: x["change_pct"], reverse=True)
 
     return movers
+
+
+@router.get("/api/market/indicators/history")
+async def get_market_indicators_history(
+    days: int = 365,
+    session: AsyncSession = Depends(get_db_session),
+) -> list[dict[str, Any]]:
+    """
+    Returns historical market metrics for charting.
+    days=0 returns all available history.
+    market_breadth_indicator is returned pre-multiplied by 100 (as a percent).
+    consumer_sentiment is included when stored (nullable until the migration is applied and the
+    script has run at least once).
+    """
+    if days == 0:
+        query = select(MarketMetricsDaily).order_by(MarketMetricsDaily.date)
+    else:
+        cutoff = datetime.now(TIMEZONE).date() - timedelta(days=days)
+        query = (
+            select(MarketMetricsDaily)
+            .where(MarketMetricsDaily.date >= cutoff)
+            .order_by(MarketMetricsDaily.date)
+        )
+
+    result = await session.execute(query)
+    rows = result.scalars().all()
+    return [
+        {
+            "date": row.date.isoformat(),
+            "buffett_indicator": row.buffett_indicator,
+            "yield_spread": row.yield_spread,
+            "fear_greed_index": row.fear_greed_index,
+            "vix": row.vix,
+            "market_breadth_indicator": (
+                round(row.market_breadth_indicator * 100, 2)
+                if row.market_breadth_indicator is not None
+                else None
+            ),
+            "sp500_above_sma200": row.sp500_above_sma200,
+            "consumer_sentiment": row.consumer_sentiment,
+        }
+        for row in rows
+    ]
+
+
+@router.get("/api/market/indicators/consumer-sentiment/history")
+async def get_consumer_sentiment_history(months: int = 36) -> list[dict[str, Any]]:
+    """
+    Fetch historical University of Michigan Consumer Sentiment (UMCSENT) from FRED.
+    Returns oldest-first so charts render chronologically.
+    months=0 returns ~10 years (120 observations).
+    """
+    limit = 120 if months == 0 else max(3, months)
+    async with aiohttp.ClientSession() as http_session:
+        obs = await gen_fred_latest(http_session, "UMCSENT", limit=limit)
+    if not obs:
+        return []
+    # gen_fred_latest returns newest-first; reverse for chart chronological order
+    return [{"date": o["date"], "value": o["value"]} for o in reversed(obs)]
 
 
 @router.get("/api/pies")

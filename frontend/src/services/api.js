@@ -145,6 +145,24 @@ export const portfolioAPI = {
     const response = await apiClient.get('/api/transactions');
     return response.data;
   },
+
+  // Get historical market indicator data for charting (days=0 = all history)
+  getMarketIndicatorsHistory: async (days = 365) => {
+    const response = await apiClient.get(`/api/market/indicators/history?days=${days}`);
+    return response.data;
+  },
+
+  // Get historical consumer sentiment from FRED (months=0 = ~10 years)
+  getConsumerSentimentHistory: async (months = 36) => {
+    const response = await apiClient.get(`/api/market/indicators/consumer-sentiment/history?months=${months}`);
+    return response.data;
+  },
+
+  // Get historical portfolio risk/return metrics (days=0 = all history)
+  getPortfolioIndicatorsHistory: async (days = 365) => {
+    const response = await apiClient.get(`/api/portfolio/indicators/history?days=${days}`);
+    return response.data;
+  },
 };
 
 // Export the apiClient for use in other modules

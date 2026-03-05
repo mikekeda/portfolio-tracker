@@ -1,4 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { portfolioAPI } from '../services/api';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import TopMovers from './TopMovers';
@@ -337,12 +349,312 @@ const getConsumerSentimentTooltip = (value) => {
   return `Consumer Sentiment: ${value.toFixed(1)} (${level})\n\n${recommendation}\n\nUniversity of Michigan index (base 1966 = 100). Monthly survey of consumer expectations; low readings often align with fear, high with optimism.`;
 };
 
+// ── Macro / Portfolio indicator history chart ──────────────────────────────────
+
+// Market indicators (stored in MarketMetricsDaily)
+const MARKET_INDICATOR_CONFIGS = {
+  buffett_indicator: {
+    label: 'Buffett Indicator',
+    yFormatter: v => `${v?.toFixed(1)}%`,
+    color: '#e74c3c',
+    referenceLines: [
+      { y: 75,  label: 'Undervalued', stroke: '#28a745' },
+      { y: 100, label: '100%',        stroke: '#ffc107' },
+      { y: 150, label: 'Overvalued',  stroke: '#dc3545' },
+    ],
+  },
+  yield_spread: {
+    label: 'Yield Spread (10Y–2Y)',
+    yFormatter: v => `${v?.toFixed(2)}%`,
+    color: '#3498db',
+    referenceLines: [
+      { y: 0, label: 'Inverted', stroke: '#dc3545' },
+    ],
+  },
+  fear_greed_index: {
+    label: 'Fear & Greed Index',
+    yFormatter: v => v?.toFixed(1),
+    color: '#9b59b6',
+    referenceLines: [
+      { y: 25, label: 'Extreme Fear',  stroke: '#28a745' },
+      { y: 50, label: 'Neutral',       stroke: '#6c757d' },
+      { y: 75, label: 'Extreme Greed', stroke: '#dc3545' },
+    ],
+  },
+  vix: {
+    label: 'VIX',
+    yFormatter: v => v?.toFixed(1),
+    color: '#e67e22',
+    referenceLines: [
+      { y: 15, label: 'Low',      stroke: '#28a745' },
+      { y: 25, label: 'Elevated', stroke: '#ffc107' },
+      { y: 35, label: 'High',     stroke: '#dc3545' },
+    ],
+  },
+  market_breadth_indicator: {
+    label: 'Market Breadth',
+    yFormatter: v => `${v >= 0 ? '+' : ''}${v?.toFixed(1)}%`,
+    color: '#2ecc71',
+    referenceLines: [
+      { y: 0, label: 'Neutral', stroke: '#6c757d' },
+    ],
+  },
+  sp500_above_sma200: {
+    label: '% S&P 500 > SMA200',
+    yFormatter: v => `${v?.toFixed(1)}%`,
+    color: '#1abc9c',
+    referenceLines: [
+      { y: 40, label: 'Bear Zone', stroke: '#dc3545' },
+      { y: 60, label: 'Bull Zone', stroke: '#28a745' },
+    ],
+  },
+};
+
+// Consumer Sentiment (monthly FRED data, fetched via dedicated endpoint)
+const CS_CONFIG = {
+  label: 'Consumer Sentiment',
+  yFormatter: v => v?.toFixed(1),
+  color: '#f39c12',
+  referenceLines: [
+    { y: 60, label: 'Very Low', stroke: '#28a745' },
+    { y: 90, label: 'High',     stroke: '#dc3545' },
+  ],
+};
+
+// Portfolio risk/return metrics (stored in PortfolioDaily)
+const PORTFOLIO_INDICATOR_CONFIGS = {
+  value: {
+    label: 'Total Value',
+    yFormatter: v => `£${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+    color: '#3498db',
+    area: true,
+    referenceLines: [],
+  },
+  profit: {
+    label: 'Total Profit',
+    yFormatter: v => `£${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+    color: '#28a745',
+    area: true,
+    referenceLines: [
+      { y: 0, label: 'Breakeven', stroke: '#6c757d' },
+    ],
+  },
+  return_pct: {
+    label: 'Total Return',
+    yFormatter: v => `${v?.toFixed(2)}%`,
+    color: '#9b59b6',
+    area: true,
+    referenceLines: [
+      { y: 0, label: 'Breakeven', stroke: '#6c757d' },
+    ],
+  },
+  sortino_ratio: {
+    label: 'Sortino Ratio',
+    yFormatter: v => v?.toFixed(2),
+    color: '#3498db',
+    referenceLines: [
+      { y: 1.0, label: 'Min. Acceptable', stroke: '#ffc107' },
+      { y: 2.0, label: 'Excellent',        stroke: '#28a745' },
+    ],
+  },
+  beta: {
+    label: 'Beta',
+    yFormatter: v => v?.toFixed(2),
+    color: '#e67e22',
+    referenceLines: [
+      { y: 0.9, label: 'Low Beta',  stroke: '#ffc107' },
+      { y: 1.3, label: 'High Beta', stroke: '#dc3545' },
+    ],
+  },
+  mwrr: {
+    label: 'Money-Weighted Return',
+    yFormatter: v => `${v?.toFixed(1)}%`,
+    color: '#9b59b6',
+    referenceLines: [
+      { y: 0,  label: 'Breakeven', stroke: '#6c757d' },
+      { y: 10, label: '10%',       stroke: '#28a745' },
+    ],
+  },
+  twrr: {
+    label: 'Time-Weighted Return',
+    yFormatter: v => `${v?.toFixed(1)}%`,
+    color: '#2ecc71',
+    referenceLines: [
+      { y: 0,  label: 'Breakeven', stroke: '#6c757d' },
+      { y: 10, label: '10%',       stroke: '#28a745' },
+    ],
+  },
+};
+
+const RANGE_OPTIONS = [
+  { label: '3M', days: 90 },
+  { label: '6M', days: 180 },
+  { label: '1Y', days: 365 },
+  { label: 'All', days: 0 },
+];
+
+const ChartIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true">
+    <polyline
+      points="1,10 4,6 6.5,8 9.5,3 12,5"
+      stroke="currentColor" strokeWidth="1.6"
+      strokeLinecap="round" strokeLinejoin="round"
+    />
+  </svg>
+);
+
+const formatTickDate = (dateStr) => {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' });
+};
+
+const MacroTooltip = ({ active, payload, label, config }) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="macro-tooltip">
+      <div className="macro-tooltip-date">{formatTickDate(label)}</div>
+      <div className="macro-tooltip-value" style={{ color: config.color }}>
+        {config.yFormatter(payload[0].value)}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * Generic chart modal for any indicator.
+ * config     – { label, yFormatter, color, referenceLines }
+ * currentValue – the current scalar to show in the header
+ * fetchHistory – async (days: number) => { date: string, value: number }[]
+ *                days=0 means "all available"
+ */
+const MacroChartModal = ({ config, currentValue, fetchHistory, onClose }) => {
+  const [range, setRange] = useState(365);
+  const [history, setHistory] = useState([]);
+  const [loadingChart, setLoadingChart] = useState(true);
+
+  // Keep a stable ref so useEffect doesn't need fetchHistory in its deps
+  const fetchRef = useRef(fetchHistory);
+  fetchRef.current = fetchHistory;
+
+  // Close on ESC
+  useEffect(() => {
+    const handleKey = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  // Fetch history when range changes.
+  // isCurrent prevents a slower earlier request from overwriting a faster later one
+  // when the user switches range tabs quickly.
+  useEffect(() => {
+    let isCurrent = true;
+    setLoadingChart(true);
+    fetchRef.current(range)
+      .then(data  => { if (isCurrent) setHistory(data); })
+      .catch(err  => { if (isCurrent) console.error('Failed to load indicator history', err); })
+      .finally(() => { if (isCurrent) setLoadingChart(false); });
+    return () => { isCurrent = false; };
+  }, [range]);
+
+  const ChartEl = config.area ? AreaChart : LineChart;
+  const SeriesEl = config.area ? Area : Line;
+
+  return (
+    <div className="macro-modal-overlay" onClick={onClose}>
+      <div className="macro-modal" onClick={e => e.stopPropagation()}>
+        <div className="macro-modal-header">
+          <div>
+            <h3 className="macro-modal-title">{config.label}</h3>
+            {currentValue != null && (
+              <span className="macro-modal-current">
+                Current: {config.yFormatter(currentValue)}
+              </span>
+            )}
+          </div>
+          <div className="macro-modal-controls">
+            <div className="macro-range-buttons">
+              {RANGE_OPTIONS.map(opt => (
+                <button
+                  key={opt.label}
+                  className={`macro-range-btn${range === opt.days ? ' active' : ''}`}
+                  onClick={() => setRange(opt.days)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            <button className="macro-modal-close" onClick={onClose} aria-label="Close">×</button>
+          </div>
+        </div>
+        <div className="macro-modal-body">
+          {loadingChart ? (
+            <div className="macro-chart-placeholder">Loading…</div>
+          ) : history.length === 0 ? (
+            <div className="macro-chart-placeholder">No historical data available</div>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <ChartEl data={history} margin={{ top: 8, right: 20, bottom: 4, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis
+                  dataKey="date"
+                  tickFormatter={formatTickDate}
+                  interval="preserveStartEnd"
+                  tick={{ fontSize: 11 }}
+                  minTickGap={60}
+                />
+                <YAxis
+                  tickFormatter={config.yFormatter}
+                  tick={{ fontSize: 11 }}
+                  width={60}
+                />
+                <Tooltip content={(props) => <MacroTooltip {...props} config={config} />} />
+                {config.referenceLines.map(ref => (
+                  <ReferenceLine
+                    key={ref.y}
+                    y={ref.y}
+                    stroke={ref.stroke}
+                    strokeDasharray="4 3"
+                    strokeWidth={1}
+                    label={{
+                      value: ref.label,
+                      position: 'insideTopRight',
+                      fontSize: 10,
+                      fill: ref.stroke,
+                    }}
+                  />
+                ))}
+                <SeriesEl
+                  type="monotone"
+                  dataKey="value"
+                  stroke={config.color}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                  {...(config.area ? { fill: config.color, fillOpacity: 0.12 } : {})}
+                />
+              </ChartEl>
+            </ResponsiveContainer>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 const Dashboard = () => {
   const { hideAmounts } = useHideAmounts();
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState('1d');
+  // { config, currentValue, fetchHistory } | null
+  const [macroModal, setMacroModal] = useState(null);
+  const openMacroModal = useCallback((config, currentValue, fetchHistory) => {
+    setMacroModal({ config, currentValue, fetchHistory });
+  }, []);
+  const closeMacroModal = useCallback(() => setMacroModal(null), []);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -400,17 +712,51 @@ const Dashboard = () => {
       <div className="indicators-section">
         <h2 className="section-heading">Portfolio Indicators</h2>
         <div className="summary-cards">
-          <div className="card">
+          <div className="card macro-card">
+            {!hideAmounts && (
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                PORTFOLIO_INDICATOR_CONFIGS.value,
+                summary.total_value,
+                async (days) => {
+                  const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                  return d.filter(r => r.value != null).map(r => ({ date: r.date, value: r.value }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
+            )}
             <h3>Total Value</h3>
             <p className="value">{hideAmounts ? MASK : `£${summary.total_value.toLocaleString()}`}</p>
           </div>
-          <div className="card">
+          <div className="card macro-card">
+            {!hideAmounts && (
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                PORTFOLIO_INDICATOR_CONFIGS.profit,
+                summary.total_profit,
+                async (days) => {
+                  const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                  return d.filter(r => r.profit != null).map(r => ({ date: r.date, value: r.profit }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
+            )}
             <h3>Total Profit</h3>
             <p className={`value ${summary.total_profit >= 0 ? 'positive' : 'negative'}`}>
               {hideAmounts ? MASK : `£${summary.total_profit.toLocaleString()}`}
             </p>
           </div>
-          <div className="card">
+          <div className="card macro-card">
+            <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+              PORTFOLIO_INDICATOR_CONFIGS.return_pct,
+              summary.total_return_pct,
+              async (days) => {
+                const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                return d.filter(r => r.return_pct != null).map(r => ({ date: r.date, value: r.return_pct }));
+              }
+            )}>
+              <ChartIcon />
+            </button>
             <h3>Total Return</h3>
             <p className={`value ${summary.total_return_pct >= 0 ? 'positive' : 'negative'}`}>
               {summary.total_return_pct >= 0 ? '+' : ''}{summary.total_return_pct.toFixed(2)}%
@@ -428,7 +774,17 @@ const Dashboard = () => {
             </p>
           </div>
           {summary.mwrr && (
-            <div className="card" title={getMwrrTooltip(summary.mwrr)}>
+            <div className="card macro-card" title={getMwrrTooltip(summary.mwrr)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                PORTFOLIO_INDICATOR_CONFIGS.mwrr,
+                summary.mwrr,
+                async (days) => {
+                  const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                  return d.filter(r => r.mwrr != null).map(r => ({ date: r.date, value: r.mwrr }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Money-Weighted RR</h3>
               <p className={`value ${getMwrrColor(summary.mwrr)}`}>
                 {summary.mwrr.toFixed(2)}%
@@ -436,7 +792,17 @@ const Dashboard = () => {
             </div>
           )}
           {summary.twrr && (
-            <div className="card" title={getTwrrTooltip(summary.twrr)}>
+            <div className="card macro-card" title={getTwrrTooltip(summary.twrr)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                PORTFOLIO_INDICATOR_CONFIGS.twrr,
+                summary.twrr,
+                async (days) => {
+                  const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                  return d.filter(r => r.twrr != null).map(r => ({ date: r.date, value: r.twrr }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Time-Weighted RR</h3>
               <p className={`value ${getTwrrColor(summary.twrr)}`}>
                 {summary.twrr.toFixed(2)}%
@@ -444,7 +810,17 @@ const Dashboard = () => {
             </div>
           )}
           {summary.sortino_ratio && (
-            <div className="card" title={getSortinoTooltip(summary.sortino_ratio)}>
+            <div className="card macro-card" title={getSortinoTooltip(summary.sortino_ratio)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                PORTFOLIO_INDICATOR_CONFIGS.sortino_ratio,
+                summary.sortino_ratio,
+                async (days) => {
+                  const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                  return d.filter(r => r.sortino_ratio != null).map(r => ({ date: r.date, value: r.sortino_ratio }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Sortino</h3>
               <p className={`value ${getSortinoColor(summary.sortino_ratio)}`}>
                 {summary.sortino_ratio.toFixed(2)}
@@ -452,7 +828,17 @@ const Dashboard = () => {
             </div>
           )}
           {summary.beta && (
-            <div className="card" title={getBetaTooltip(summary.beta)}>
+            <div className="card macro-card" title={getBetaTooltip(summary.beta)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                PORTFOLIO_INDICATOR_CONFIGS.beta,
+                summary.beta,
+                async (days) => {
+                  const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                  return d.filter(r => r.beta != null).map(r => ({ date: r.date, value: r.beta }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Beta</h3>
               <p className={`value ${getBetaColor(summary.beta)}`}>
                 {summary.beta.toFixed(2)}
@@ -466,30 +852,40 @@ const Dashboard = () => {
       <div className="indicators-section">
         <h2 className="section-heading">Market Indicators</h2>
         <div className="summary-cards">
-          {summary.buffett_indicator !== null && summary.buffett_indicator !== undefined && (
-            <div className="card" title={getBuffettIndicatorTooltip(summary.buffett_indicator)}>
+          {summary.buffett_indicator != null && (
+            <div className="card macro-card" title={getBuffettIndicatorTooltip(summary.buffett_indicator)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.buffett_indicator,
+                summary.buffett_indicator,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.buffett_indicator != null).map(r => ({ date: r.date, value: r.buffett_indicator }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Buffett Indicator</h3>
-              <a
-                href="https://currentmarketvaluation.com/models/buffett-indicator.php"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="value-link"
-              >
+              <a href="https://currentmarketvaluation.com/models/buffett-indicator.php" target="_blank" rel="noopener noreferrer" className="value-link">
                 <p className={`value ${getBuffettIndicatorColor(summary.buffett_indicator)}`}>
                   {summary.buffett_indicator.toFixed(1)}%
                 </p>
               </a>
             </div>
           )}
-          {summary.yield_spread !== null && summary.yield_spread !== undefined && (
-            <div className="card" title={getYieldSpreadTooltip(summary.yield_spread)}>
+          {summary.yield_spread != null && (
+            <div className="card macro-card" title={getYieldSpreadTooltip(summary.yield_spread)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.yield_spread,
+                summary.yield_spread,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.yield_spread != null).map(r => ({ date: r.date, value: r.yield_spread }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Yield Spread</h3>
-              <a
-                href="https://fred.stlouisfed.org/series/T10Y2Y"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="value-link"
-              >
+              <a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank" rel="noopener noreferrer" className="value-link">
                 <p className={`value ${getYieldSpreadColor(summary.yield_spread)}`}>
                   {summary.yield_spread.toFixed(2)}%
                 </p>
@@ -497,73 +893,101 @@ const Dashboard = () => {
             </div>
           )}
           {summary.fear_greed_index && (
-            <div className="card" title={getFearGreedTooltip(summary.fear_greed_index)}>
+            <div className="card macro-card" title={getFearGreedTooltip(summary.fear_greed_index)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.fear_greed_index,
+                summary.fear_greed_index.value,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.fear_greed_index != null).map(r => ({ date: r.date, value: r.fear_greed_index }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Fear & Greed</h3>
-              <a
-                href="https://edition.cnn.com/markets/fear-and-greed"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="value-link"
-              >
+              <a href="https://edition.cnn.com/markets/fear-and-greed" target="_blank" rel="noopener noreferrer" className="value-link">
                 <p className={`value ${getFearGreedColor(summary.fear_greed_index.label)}`}>
                   {summary.fear_greed_index.value.toFixed(1)}
                 </p>
               </a>
             </div>
           )}
-          {summary.vix && (
-            <div className="card" title={getVixTooltip(summary.vix)}>
+          {summary.vix != null && (
+            <div className="card macro-card" title={getVixTooltip(summary.vix)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.vix,
+                summary.vix,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.vix != null).map(r => ({ date: r.date, value: r.vix }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>VIX</h3>
-              <a
-                href="/chart?symbols=^VIX&days=365"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="value-link"
-              >
-                <p className={`value ${getVIXColor(summary.vix)}`}>{summary.vix.toFixed(2)}</p>
-              </a>
+              <p className={`value ${getVIXColor(summary.vix)}`}>{summary.vix.toFixed(2)}</p>
             </div>
           )}
-          {summary.market_breadth_indicator !== null && summary.market_breadth_indicator !== undefined && (
-            <div className="card" title={getMarketBreadthTooltip(summary.market_breadth_indicator)}>
+          {summary.market_breadth_indicator != null && (
+            <div className="card macro-card" title={getMarketBreadthTooltip(summary.market_breadth_indicator)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.market_breadth_indicator,
+                summary.market_breadth_indicator * 100,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.market_breadth_indicator != null).map(r => ({ date: r.date, value: r.market_breadth_indicator }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Market Breadth</h3>
-              <a
-                href="https://www.investopedia.com/terms/a/advancedeclineline.asp"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="value-link"
-              >
-                <p className={`value ${getMarketBreadthColor(summary.market_breadth_indicator)}`}>
-                  {(summary.market_breadth_indicator * 100 >= 0 ? '+' : '')}
-                  {(summary.market_breadth_indicator * 100).toFixed(1)}%
-                </p>
-              </a>
+              <p className={`value ${getMarketBreadthColor(summary.market_breadth_indicator)}`}>
+                {(summary.market_breadth_indicator * 100 >= 0 ? '+' : '')}
+                {(summary.market_breadth_indicator * 100).toFixed(1)}%
+              </p>
             </div>
           )}
-          {summary.sp500_above_sma200 !== null && summary.sp500_above_sma200 !== undefined && (
-            <div className="card" title={getSma200Tooltip(summary.sp500_above_sma200)}>
+          {summary.sp500_above_sma200 != null && (
+            <div className="card macro-card" title={getSma200Tooltip(summary.sp500_above_sma200)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.sp500_above_sma200,
+                summary.sp500_above_sma200,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.sp500_above_sma200 != null).map(r => ({ date: r.date, value: r.sp500_above_sma200 }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>% &gt; SMA200</h3>
-              <a
-                href="https://stockcharts.com/h-sc/ui?s=$SPXA200R"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="value-link"
-              >
+              <a href="https://stockcharts.com/h-sc/ui?s=$SPXA200R" target="_blank" rel="noopener noreferrer" className="value-link">
                 <p className={`value ${getSma200Color(summary.sp500_above_sma200)}`}>
                   {summary.sp500_above_sma200.toFixed(1)}%
                 </p>
               </a>
             </div>
           )}
-          {summary.consumer_sentiment !== null && summary.consumer_sentiment !== undefined && (
-            <div className="card" title={getConsumerSentimentTooltip(summary.consumer_sentiment)}>
+          {summary.consumer_sentiment != null && (
+            <div className="card macro-card" title={getConsumerSentimentTooltip(summary.consumer_sentiment)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                CS_CONFIG,
+                summary.consumer_sentiment,
+                async (days) => {
+                  // Prefer DB history (stored daily alongside other metrics).
+                  // Fall back to live FRED fetch if DB has no CS data yet
+                  // (e.g. before the first run after the migration).
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  const dbData = d.filter(r => r.consumer_sentiment != null)
+                                  .map(r => ({ date: r.date, value: r.consumer_sentiment }));
+                  if (dbData.length > 0) return dbData;
+                  const months = days === 0 ? 0 : Math.max(3, Math.ceil(days / 30));
+                  return portfolioAPI.getConsumerSentimentHistory(months);
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Consumer Sentiment</h3>
-              <a
-                href="https://fred.stlouisfed.org/series/UMCSENT"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="value-link"
-              >
+              <a href="https://fred.stlouisfed.org/series/UMCSENT" target="_blank" rel="noopener noreferrer" className="value-link">
                 <p className={`value ${getConsumerSentimentColor(summary.consumer_sentiment)}`}>
                   {summary.consumer_sentiment.toFixed(1)}
                 </p>
@@ -583,6 +1007,15 @@ const Dashboard = () => {
         <TopMovers selectedPeriod={selectedPeriod} setSelectedPeriod={setSelectedPeriod} />
       </div>
 
+      {/* Indicator History Modal */}
+      {macroModal && (
+        <MacroChartModal
+          config={macroModal.config}
+          currentValue={macroModal.currentValue}
+          fetchHistory={macroModal.fetchHistory}
+          onClose={closeMacroModal}
+        />
+      )}
     </div>
   );
 };
