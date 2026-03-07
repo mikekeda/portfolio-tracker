@@ -1,8 +1,9 @@
 from collections import defaultdict
+from datetime import date as date_type
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app import get_db_session
@@ -11,9 +12,18 @@ from backend.utils.form13f import (
     _compute_form13f_signal_score,
     _safe_pct,
 )
-from models import Form13FFiling, Form13FHolding, Form13FManager, Instrument
+from models import Form13FFiling, Form13FHolding, Form13FManager, HoldingDaily, Instrument
 
 router = APIRouter()
+
+# Max activity names shown per category in manager card tooltips
+_MAX_ACTIVITY_NAMES = 5
+
+
+def _top_activity(items: list[dict]) -> list[dict]:
+    """Sort by _sort key descending, take top N, strip the internal _sort key."""
+    items.sort(key=lambda x: x["_sort"], reverse=True)
+    return [{k: v for k, v in item.items() if k != "_sort"} for item in items[:_MAX_ACTIVITY_NAMES]]
 
 
 def _aggregate_holdings_by_cusip(holdings: list) -> dict[str, dict]:
@@ -84,7 +94,7 @@ def _build_portfolio_and_moves(
         )
 
         instr = instruments.get(item["instrument_id"])
-        pct = item["value"] / total_value * 100 if total_value > 0 else 0.0
+        pct = item["value"] / total_value * 100 if total_value else 0.0
 
         portfolio.append({
             "cusip": cusip,
@@ -226,12 +236,14 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                     "count": 0,
                     "managers": [],
                     "total_value": 0,
-                    # buy_count / sell_count populated below when prev data is available
                     "buy_count": 0,
                     "sell_count": 0,
+                    # Always present so the API schema is consistent even when there's no activity
+                    "buy_managers": [],
+                    "sell_managers": [],
                 }
             held[cusip]["count"] += 1
-            held[cusip]["managers"].append(manager_name)
+            held[cusip]["managers"].append({"name": manager_name, "current_value": item["value"]})
             held[cusip]["total_value"] += item["value"]
 
         if not prev_by_cusip:
@@ -248,10 +260,18 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
             )
             if score <= 0:
                 continue
+            # Skip positions with no reported dollar value (options, warrants, or missing data).
+            # These produce misleading 0-value entries since price cannot be inferred.
+            if item["value"] == 0:
+                continue
             change = _compute_form13f_change(
                 item["shares"], shares_prev, value=item["value"], value_prev=value_prev_buy
             )
-            value_added = item["value"] - value_prev_buy
+            # Capital deployed = shares added × current quarter-end price.
+            # This is independent of stock price movement and shows actual money spent.
+            price_now = item["value"] / item["shares"] if item["shares"] else 0
+            shares_added = item["shares"] - shares_prev
+            transaction_value = round(shares_added * price_now)   # always positive for buys
             instr = instruments.get(item["instrument_id"])
             if cusip not in buying:
                 buying[cusip] = {
@@ -264,17 +284,21 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                     "total_value_added": 0,
                 }
             buying[cusip]["count"] += 1
-            buying[cusip]["managers"].append({"name": manager_name, "change": change})
-            buying[cusip]["total_value_added"] += value_added
+            buying[cusip]["managers"].append({"name": manager_name, "change": change, "value_change": transaction_value})
+            buying[cusip]["total_value_added"] += transaction_value
 
         # Selling signals: closed or significantly trimmed positions
         for cusip, prev_item in prev_by_cusip.items():
             latest_item = latest_by_cusip.get(cusip)
             if latest_item is None:
+                # Skip closes if previous value was 0 (options / missing data)
+                if prev_item["value"] == 0:
+                    continue
                 change = "Closed"
-                value_removed = prev_item["value"]
                 instr_id = prev_item["instrument_id"]
                 issuer = prev_item["issuer"]
+                # Full exit: capital extracted = full previous position value
+                transaction_value = -round(prev_item["value"])
             else:
                 score = _compute_form13f_signal_score(
                     latest_item["shares"], prev_item["shares"],
@@ -286,9 +310,13 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                     latest_item["shares"], prev_item["shares"],
                     value=latest_item["value"], value_prev=prev_item["value"],
                 )
-                value_removed = prev_item["value"] - latest_item["value"]
                 instr_id = latest_item["instrument_id"] or prev_item["instrument_id"]
                 issuer = latest_item["issuer"]
+                # Capital extracted = shares sold × current quarter-end price.
+                # Independent of price movement; shows actual proceeds received.
+                price_now = latest_item["value"] / latest_item["shares"] if latest_item["shares"] else 0
+                shares_sold = prev_item["shares"] - latest_item["shares"]
+                transaction_value = -round(shares_sold * price_now)  # negative = extracted
 
             instr = instruments.get(instr_id)
             if cusip not in selling:
@@ -302,16 +330,18 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                     "total_value_removed": 0,
                 }
             selling[cusip]["count"] += 1
-            selling[cusip]["managers"].append({"name": manager_name, "change": change})
-            selling[cusip]["total_value_removed"] += value_removed
+            selling[cusip]["managers"].append({"name": manager_name, "change": change, "value_change": transaction_value})
+            selling[cusip]["total_value_removed"] += abs(transaction_value)
 
     # Merge buy/sell counts per CUSIP and compute net signal
-    # Propagate buy/sell trend counts into held items for trend indicator
+    # Propagate buy/sell trend counts + full manager objects (with change + value_change) into held items
     for cusip, h in held.items():
         if cusip in buying:
             h["buy_count"] += buying[cusip]["count"]
+            h["buy_managers"] = buying[cusip]["managers"]   # keep full {name, change, value_change}
         if cusip in selling:
             h["sell_count"] += selling[cusip]["count"]
+            h["sell_managers"] = selling[cusip]["managers"]  # keep full {name, change, value_change}
 
     all_cusips = set(buying) | set(selling)
     consensus_buys: list[dict] = []
@@ -341,6 +371,16 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
         }
 
         if buy_count > 0 and sell_count > 0 and net == 0:
+            # Enrich with stable holders (from held dict) so the tooltip can show who's on the fence
+            buy_names  = {m["name"] for m in item["buy_managers"]}
+            sell_names = {m["name"] for m in item["sell_managers"]}
+            if cusip in held:
+                item["managers"] = [
+                    m for m in held[cusip]["managers"]
+                    if m["name"] not in buy_names and m["name"] not in sell_names
+                ]
+            else:
+                item["managers"] = []
             disputed.append(item)
         elif net > 0:
             consensus_buys.append(item)
@@ -428,38 +468,86 @@ async def get_form13f_managers_list(session: AsyncSession = Depends(get_db_sessi
         latest_cusips = _aggregate_holdings_by_cusip(holdings_by_filing.get(latest_ids[mid], []))
         prev_cusips = _aggregate_holdings_by_cusip(holdings_by_filing.get(prev_ids.get(mid), [])) if mid in prev_ids else {}
 
-        # Count activity types
+        # Count activity types and collect top stock names per category.
+        # Sorting strategy (matches signal strength):
+        #   new      → biggest current position first (size = conviction)
+        #   increased → biggest current position first (highest-conviction adds)
+        #   trimmed  → biggest % reduction first (strongest exit signal)
+        #   closed   → biggest previous position first (impact of full exit)
         activity: dict[str, int] = {"new": 0, "closed": 0, "increased": 0, "trimmed": 0, "stable": 0}
+        total_val = latest_filing.total_value or 0
+        prev_total_val = (mf[1].total_value if len(mf) >= 2 else 0) or 0
+
+        def _portfolio_pct(value: float, use_prev: bool = False) -> float | None:
+            base = prev_total_val if use_prev else total_val
+            if not base or not value:
+                return None
+            return round(value / base * 100, 1)
+
+        # Collect all classified items first, then sort per category
+        _all_new:      list[dict] = []
+        _all_increased: list[dict] = []
+        _all_trimmed:  list[dict] = []
+        _all_closed:   list[dict] = []
+
         if prev_cusips:
             for cusip, item in latest_cusips.items():
                 prev = prev_cusips.get(cusip)
-                # prev_cusips is non-empty, so None here means the CUSIP wasn't held last quarter → new position
                 shares_prev = prev["shares"] if prev is not None else 0
                 value_prev_act = prev["value"] if prev is not None else 0
                 change = _compute_form13f_change(
                     item["shares"], shares_prev, value=item["value"], value_prev=value_prev_act
                 )
+                name = item.get("issuer") or cusip
                 if change == "New":
                     activity["new"] += 1
-                elif change == "Closed":
-                    activity["closed"] += 1
+                    _all_new.append({
+                        "name": name,
+                        "pct": _portfolio_pct(item["value"]),
+                        "_sort": item.get("value", 0),
+                    })
                 elif change == "—":
                     activity["stable"] += 1
                 else:
                     m_obj = change.replace("+", "").replace("%", "")
                     try:
-                        pct = float(m_obj)
-                        if pct >= 10:
+                        pct_val = float(m_obj)
+                        if pct_val >= 10:
                             activity["increased"] += 1
-                        elif pct <= -30:
+                            _all_increased.append({
+                                "name": name,
+                                "pct": _portfolio_pct(item["value"]),
+                                "change": change,
+                                "_sort": item.get("value", 0),
+                            })
+                        elif pct_val <= -30:
                             activity["trimmed"] += 1
+                            _all_trimmed.append({
+                                "name": name,
+                                "pct": _portfolio_pct(item["value"]),
+                                "change": change,
+                                "_sort": abs(pct_val),   # biggest % cut first
+                            })
                         else:
                             activity["stable"] += 1
                     except ValueError:
                         activity["stable"] += 1
-            for cusip in prev_cusips:
+
+            for cusip, prev_item in prev_cusips.items():
                 if cusip not in latest_cusips:
                     activity["closed"] += 1
+                    _all_closed.append({
+                        "name": prev_item.get("issuer") or cusip,
+                        "pct": _portfolio_pct(prev_item.get("value", 0), use_prev=True),
+                        "_sort": prev_item.get("value", 0),
+                    })
+
+        activity_names = {
+            "new":       _top_activity(_all_new),
+            "increased": _top_activity(_all_increased),
+            "trimmed":   _top_activity(_all_trimmed),
+            "closed":    _top_activity(_all_closed),
+        }
 
         result.append({
             "id": m.id,
@@ -470,6 +558,7 @@ async def get_form13f_managers_list(session: AsyncSession = Depends(get_db_sessi
             "num_positions": len(latest_cusips),
             "filing_count": len(mf),
             "activity": activity if prev_cusips else None,
+            "activity_names": activity_names if prev_cusips else None,
         })
 
     return result
@@ -482,8 +571,6 @@ async def get_form13f_manager_detail(
     session: AsyncSession = Depends(get_db_session),
 ) -> dict:
     """Full portfolio + moves for a single manager for a given quarter (default: latest)."""
-    from datetime import date as date_type
-
     manager_result = await session.execute(
         select(Form13FManager).where(Form13FManager.id == manager_id)
     )
@@ -555,3 +642,170 @@ async def get_form13f_manager_detail(
         "portfolio": portfolio,
         "moves": moves,
     }
+
+
+@router.get("/api/13f/not-in-portfolio")
+async def get_13f_not_in_portfolio(
+    min_managers: int = 2,
+    session: AsyncSession = Depends(get_db_session),
+) -> list:
+    """
+    Stocks that tracked institutional managers hold but the user does not.
+    Includes buy_count: how many managers opened or increased the position this quarter.
+    Ranked by manager count, then total AUM.
+    Only returns instruments matched in our DB (instrument_id IS NOT NULL).
+    """
+    # 1. Current portfolio instrument IDs
+    latest_date_result = await session.execute(select(func.max(HoldingDaily.date)))
+    latest_date = latest_date_result.scalar()
+    held_instrument_ids: set[int] = set()
+    if latest_date:
+        held_result = await session.execute(
+            select(HoldingDaily.instrument_id).where(
+                HoldingDaily.date == latest_date,
+                HoldingDaily.quantity > 0,
+            )
+        )
+        held_instrument_ids = {row.instrument_id for row in held_result.all()}
+
+    # 2. Latest and previous filing ID per manager (prev needed for buy_count)
+    managers_result = await session.execute(select(Form13FManager))
+    managers_objects = managers_result.scalars().all()
+    manager_ids = [m.id for m in managers_objects]
+    managers_by_id: dict[int, str] = {m.id: m.name for m in managers_objects}
+    if not manager_ids:
+        return []
+
+    filings_result = await session.execute(
+        select(Form13FFiling)
+        .where(Form13FFiling.manager_id.in_(manager_ids))
+        .order_by(Form13FFiling.manager_id, Form13FFiling.report_date.desc())
+    )
+    latest_fid_by_mgr: dict[int, int] = {}
+    prev_fid_by_mgr: dict[int, int] = {}
+    for f in filings_result.scalars().all():
+        if f.manager_id not in latest_fid_by_mgr:
+            latest_fid_by_mgr[f.manager_id] = f.id
+        elif f.manager_id not in prev_fid_by_mgr:
+            prev_fid_by_mgr[f.manager_id] = f.id
+
+    all_fids = list(set(latest_fid_by_mgr.values()) | set(prev_fid_by_mgr.values()))
+    latest_fids_set = set(latest_fid_by_mgr.values())
+    filing_to_manager = {fid: mid for mid, fid in latest_fid_by_mgr.items()}
+
+    # 3. Holdings from latest + prev filings (aggregated by filing+instrument)
+    rows_result = await session.execute(
+        select(
+            Form13FHolding.instrument_id,
+            Form13FHolding.filing_id,
+            Form13FHolding.value,
+            Form13FHolding.shares,
+        )
+        .where(
+            Form13FHolding.filing_id.in_(all_fids),
+            Form13FHolding.instrument_id.is_not(None),
+        )
+    )
+    # agg[(filing_id, instrument_id)] = {value, shares}  — sums multiple share classes
+    agg: dict[tuple[int, int], dict] = {}
+    for row in rows_result.all():
+        k = (row.filing_id, row.instrument_id)
+        if k not in agg:
+            agg[k] = {"value": 0, "shares": 0}
+        agg[k]["value"] += row.value
+        agg[k]["shares"] += row.shares
+
+    # 4. Per instrument: manager_count, buy_count, total_value
+    by_instrument: dict[int, dict] = {}
+    for (fid, inst_id), data in agg.items():
+        if fid not in latest_fids_set:
+            continue  # only process latest-filing rows here
+        if inst_id in held_instrument_ids:
+            continue
+
+        manager_id = filing_to_manager[fid]
+        prev_fid = prev_fid_by_mgr.get(manager_id)
+        prev = agg.get((prev_fid, inst_id)) if prev_fid else None
+
+        if inst_id not in by_instrument:
+            by_instrument[inst_id] = {
+                "manager_ids": {},          # manager_id -> current_value
+                "buy_managers_data": {},    # manager_id -> {change, value_change}
+                "sell_managers_data": {},   # manager_id -> {change, value_change}
+                "total_value": 0,
+            }
+
+        by_instrument[inst_id]["manager_ids"][manager_id] = data["value"]
+        by_instrument[inst_id]["total_value"] += data["value"]
+
+        if prev_fid is not None:
+            price_now = data["value"] / data["shares"] if data["shares"] else 0
+            # Buying: new position OR shares increased by ≥10% (matches _compute_form13f_signal_score)
+            if prev is None or data["shares"] > prev["shares"] * 1.10:
+                shares_added = data["shares"] - (prev["shares"] if prev else 0)
+                transaction_value = round(shares_added * price_now)  # capital deployed
+                change = "New" if prev is None else f"+{round((data['shares'] / prev['shares'] - 1) * 100)}%"
+                by_instrument[inst_id]["buy_managers_data"][manager_id] = {
+                    "change": change,
+                    "value_change": transaction_value,
+                }
+            # Selling: shares decreased by >10%
+            elif prev is not None and data["shares"] < prev["shares"] * 0.90:
+                shares_sold = prev["shares"] - data["shares"]
+                transaction_value = -round(shares_sold * price_now)  # capital extracted, negative
+                pct = round((data["shares"] / prev["shares"] - 1) * 100)
+                by_instrument[inst_id]["sell_managers_data"][manager_id] = {
+                    "change": f"{pct}%",
+                    "value_change": transaction_value,
+                }
+
+    # 5. Filter, resolve names, sort
+    candidates = [
+        {"instrument_id": iid, **v}
+        for iid, v in by_instrument.items()
+        if len(v["manager_ids"]) >= min_managers
+    ]
+    if not candidates:
+        return []
+
+    inst_ids = [c["instrument_id"] for c in candidates]
+    instr_result = await session.execute(select(Instrument).where(Instrument.id.in_(inst_ids)))
+    instruments = {i.id: i for i in instr_result.scalars().all()}
+
+    result = []
+    for c in candidates:
+        instr = instruments.get(c["instrument_id"])
+        if not instr:
+            continue
+        # All managers sorted by position size descending (biggest holders first)
+        all_mgrs = sorted(
+            [{"name": managers_by_id[mid], "current_value": val}
+             for mid, val in c["manager_ids"].items() if mid in managers_by_id],
+            key=lambda x: x["current_value"],
+            reverse=True,
+        )
+        buy_mgrs = sorted(
+            [{"name": managers_by_id[mid], **data}
+             for mid, data in c["buy_managers_data"].items() if mid in managers_by_id],
+            key=lambda x: x["value_change"],
+            reverse=True,
+        )
+        sell_mgrs = sorted(
+            [{"name": managers_by_id[mid], **data}
+             for mid, data in c["sell_managers_data"].items() if mid in managers_by_id],
+            key=lambda x: x["value_change"],   # most negative (biggest exit) first
+        )
+        result.append({
+            "yahoo_symbol": instr.yahoo_symbol,
+            "name": instr.name,
+            "manager_count": len(c["manager_ids"]),
+            "buy_count": len(c["buy_managers_data"]),
+            "sell_count": len(c["sell_managers_data"]),
+            "total_value": c["total_value"],
+            "managers": all_mgrs,             # [{name, current_value}] sorted by size
+            "buying_managers": buy_mgrs,      # [{name, change, value_change}]
+            "selling_managers": sell_mgrs,    # [{name, change, value_change}]
+        })
+
+    result.sort(key=lambda x: (-x["manager_count"], -x["total_value"]))
+    return result[:20]

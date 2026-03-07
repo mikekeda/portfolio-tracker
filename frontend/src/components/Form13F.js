@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import apiClient from '../services/api';
 import './Form13F.css';
@@ -33,6 +34,7 @@ function formatQuarter(isoDate) {
 }
 
 function formatShares(n) {
+  if (n == null) return '—';
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return n.toLocaleString();
@@ -54,44 +56,218 @@ function getChangeClass(change) {
 
 // ─── Highlights section ───────────────────────────────────────────────────────
 
-const HighlightItem = ({ item, mode }) => {
-  const value = mode === 'sell'
-    ? item.total_value_removed
-    : mode === 'held'
-      ? item.total_value
-      : item.total_value_added;
+// ── Tooltip helpers ──────────────────────────────────────────────────────────
 
-  const buyMgrs = (item.buy_managers || []).map(m => typeof m === 'string' ? m : m.name);
-  const sellMgrs = (item.sell_managers || []).map(m => typeof m === 'string' ? m : m.name);
-  const heldMgrs = item.managers || [];
+// Parse a manager's change string ("+87.5%", "-45%", "New") into a sortable number.
+// "New" is +Infinity — highest conviction action.
+function parseMgrChange(m) {
+  const c = m?.change;
+  if (!c || c === '—') return 0;
+  if (c === 'New') return Infinity;
+  const n = parseFloat(c.replace('+', '').replace('%', ''));
+  return isNaN(n) ? 0 : n;
+}
 
-  let tooltip = '';
+// Primary sort key: dollar value_change (capital deployed/extracted).
+// Falls back to % change when value unavailable.
+function mgrSortKey(m, direction) {
+  if (m.value_change != null) return m.value_change;
+  const pct = parseMgrChange(m);
+  return direction === 'buy' ? pct : -pct;
+}
+
+function buildMgrSection(label, mgrs, direction) {
+  if (!mgrs.length) return null;
+  const sorted = [...mgrs].sort((a, b) =>
+    direction === 'buy'
+      ? mgrSortKey(b, 'buy')  - mgrSortKey(a, 'buy')
+      : mgrSortKey(a, 'sell') - mgrSortKey(b, 'sell')
+  );
+  const isGreen   = direction === 'buy';
+  const hasValChg = sorted.some(m => m.value_change != null && m.value_change !== 0);
+  const total     = hasValChg ? sorted.reduce((s, m) => s + (m.value_change || 0), 0) : 0;
+  return (
+    <div className="hi-tip-section">
+      <div className={`hi-tip-section-label ${isGreen ? 'buying' : 'selling'}`}>{label}</div>
+      <table className="hi-tip-table">
+        <thead>
+          <tr>
+            <th>Manager</th>
+            <th>Change</th>
+            {hasValChg && <th>Value Δ</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((m, i) => {
+            const pct    = parseMgrChange(m);
+            const chgCls = !m.change || m.change === '—' ? ''
+              : pct > 0 || m.change === 'New' ? 'positive' : 'negative';
+            const valCls = !m.value_change ? '' : m.value_change > 0 ? 'positive' : 'negative';
+            return (
+              <tr key={i}>
+                <td className="hi-tip-name">{m.name}</td>
+                <td className={`hi-tip-change ${chgCls}`}>{m.change || '—'}</td>
+                {hasValChg && (
+                  <td className={`hi-tip-change ${valCls}`}>
+                    {m.value_change != null && m.value_change !== 0 ? formatValueChange(m.value_change) : '—'}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+        {hasValChg && total !== 0 && sorted.length > 1 && (
+          <tfoot>
+            <tr className="hi-tip-total-row">
+              <td colSpan={2}>Total</td>
+              <td className={`hi-tip-change ${total > 0 ? 'positive' : 'negative'}`}>
+                {formatValueChange(total)}
+              </td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
+// Holding section: managers who didn't change position.
+// Shows current position value (not delta) sorted biggest first, with a total.
+function buildHoldingSection(mgrs) {
+  if (!mgrs.length) return null;
+  const sorted = [...mgrs].sort((a, b) => {
+    if (a.current_value !== b.current_value) return (b.current_value || 0) - (a.current_value || 0);
+    return a.name.localeCompare(b.name);
+  });
+  const hasValue = sorted.some(m => m.current_value);
+  const total    = hasValue ? sorted.reduce((s, m) => s + (m.current_value || 0), 0) : 0;
+  return (
+    <div className="hi-tip-section">
+      <div className="hi-tip-section-label holding">= Holding ({sorted.length})</div>
+      <table className="hi-tip-table">
+        <thead>
+          <tr>
+            <th>Manager</th>
+            {hasValue && <th>Position</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((m, i) => (
+            <tr key={i}>
+              <td className="hi-tip-name">{m.name}</td>
+              {hasValue && <td className="hi-tip-change">{m.current_value ? formatAUM(m.current_value) : '—'}</td>}
+            </tr>
+          ))}
+        </tbody>
+        {hasValue && total > 0 && sorted.length > 1 && (
+          <tfoot>
+            <tr className="hi-tip-total-row">
+              <td>Total</td>
+              <td className="hi-tip-change">{formatAUM(total)}</td>
+            </tr>
+          </tfoot>
+        )}
+      </table>
+    </div>
+  );
+}
+
+// Build rich JSX tooltip for a highlight panel item.
+function buildHighlightContent(item, mode) {
+  const buyMgrs  = item.buy_managers  || [];
+  const sellMgrs = item.sell_managers || [];
+  // Stable = all holders that are neither buying nor selling this quarter
+  const buyNames  = new Set(buyMgrs.map(m => m.name));
+  const sellNames = new Set(sellMgrs.map(m => m.name));
+  const heldMgrs  = (item.managers || []).filter(m => !buyNames.has(m.name) && !sellNames.has(m.name));
+
+  let sections;
   if (mode === 'held') {
-    tooltip = heldMgrs.join(', ');
+    sections = [
+      buyMgrs.length  ? buildMgrSection(`▲ Buying (${buyMgrs.length})`,   buyMgrs,  'buy')  : null,
+      heldMgrs.length ? buildHoldingSection(heldMgrs)                                        : null,
+      sellMgrs.length ? buildMgrSection(`▼ Trimming (${sellMgrs.length})`, sellMgrs, 'sell') : null,
+    ];
   } else if (mode === 'mixed') {
-    tooltip = [
-      buyMgrs.length ? `Buying: ${buyMgrs.join(', ')}` : '',
-      sellMgrs.length ? `Selling: ${sellMgrs.join(', ')}` : '',
-    ].filter(Boolean).join('\n');
+    sections = [
+      buildMgrSection(`▲ Buying (${buyMgrs.length})`,   buyMgrs,  'buy'),
+      heldMgrs.length ? buildHoldingSection(heldMgrs)              : null,
+      buildMgrSection(`▼ Selling (${sellMgrs.length})`, sellMgrs, 'sell'),
+    ];
+  } else if (mode === 'buy') {
+    sections = [
+      buildMgrSection(`▲ Buying (${buyMgrs.length})`, buyMgrs, 'buy'),
+      sellMgrs.length ? buildMgrSection(`▼ Also selling (${sellMgrs.length})`, sellMgrs, 'sell') : null,
+    ];
   } else {
-    const primary = mode === 'buy' ? buyMgrs : sellMgrs;
-    const other   = mode === 'buy' ? sellMgrs : buyMgrs;
-    const otherLabel = mode === 'buy' ? 'Also selling' : 'Also buying';
-    tooltip = [
-      primary.length ? primary.join(', ') : '',
-      other.length   ? `${otherLabel}: ${other.join(', ')}` : '',
-    ].filter(Boolean).join('\n');
+    sections = [
+      buildMgrSection(`▼ Selling (${sellMgrs.length})`, sellMgrs, 'sell'),
+      buyMgrs.length ? buildMgrSection(`▲ Also buying (${buyMgrs.length})`, buyMgrs, 'buy') : null,
+    ];
   }
 
-  // Held: derive trend from buy_count / sell_count if available
+  const filtered = sections.filter(Boolean);
+  if (!filtered.length) return null;
+  return <div className="hi-tip-wrap">{filtered}</div>;
+}
+
+// Tooltip rendered via portal into document.body — bypasses CSS transform
+// containing-blocks on ancestor elements (e.g. the card hover-lift).
+// Always floats below the trigger element (rich table popover).
+const HiTooltip = ({ visible, content, x, y }) => {
+  if (!visible || !content) return null;
+  return createPortal(
+    <div className="hi-tooltip-popup" style={{ top: y, left: x }}>
+      {content}
+    </div>,
+    document.body
+  );
+};
+
+function useHiTooltip() {
+  const [tip, setTip] = useState({ visible: false, content: null, x: 0, y: 0 });
+  // showRich: JSX content, appears below the trigger element
+  const showRich = useCallback((e, content) => {
+    if (!content) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const tooltipMaxH = 340;
+    const below = rect.bottom + 6 + tooltipMaxH;
+    const y = below > window.innerHeight
+      ? Math.max(4, rect.top - tooltipMaxH - 6)
+      : rect.bottom + 6;
+    setTip({
+      visible: true, content,
+      x: Math.min(rect.left, window.innerWidth - 300),
+      y,
+    });
+  }, []);
+  const hide = useCallback(() => setTip(t => ({ ...t, visible: false })), []);
+  return { tip, showRich, hide };
+}
+
+// ── Highlight item ────────────────────────────────────────────────────────────
+
+const HighlightItem = React.memo(function HighlightItem({ item, mode, onTipRich, onTipHide }) {
+  // Mixed signals has equal buyers and sellers — showing one side's capital is misleading.
+  const value = mode === 'sell'  ? item.total_value_removed
+    : mode === 'held'            ? item.total_value
+    : mode === 'mixed'           ? null
+    :                              item.total_value_added;
+
   const heldTrend = mode === 'held' && item.buy_count != null
     ? item.buy_count > item.sell_count ? 'accumulating'
     : item.sell_count > item.buy_count ? 'distributing'
     : 'stable'
     : null;
 
+  // Tooltip only on the badge — avoids triggering on ticker/name hover.
+  const content = buildHighlightContent(item, mode);
+  const badgeTip = onTipRich && content
+    ? { onMouseEnter: e => onTipRich(e, content), onMouseLeave: onTipHide }
+    : {};
+
   return (
-    <div className="hi-item" title={tooltip}>
+    <div className="hi-item">
       <div className="hi-item-left">
         {item.yahoo_symbol ? (
           <Link className="hi-ticker" to={`/stock/${encodeURIComponent(item.yahoo_symbol)}`}>
@@ -105,7 +281,7 @@ const HighlightItem = ({ item, mode }) => {
       <div className="hi-item-right">
         {mode === 'held' ? (
           <>
-            <span className="hi-count-badge hi-badge-held">{item.count} mgrs</span>
+            <span className="hi-count-badge hi-badge-held" {...badgeTip}>{item.count} mgrs</span>
             {heldTrend && heldTrend !== 'stable' && (
               <span className={`hi-trend hi-trend-${heldTrend}`}>
                 {heldTrend === 'accumulating' ? '▲' : '▼'}
@@ -113,11 +289,11 @@ const HighlightItem = ({ item, mode }) => {
             )}
           </>
         ) : mode === 'mixed' ? (
-          <span className="hi-count-badge hi-badge-mixed">
+          <span className="hi-count-badge hi-badge-mixed" {...badgeTip}>
             {item.buy_count}↑ {item.sell_count}↓
           </span>
         ) : (
-          <span className={`hi-count-badge hi-badge-${mode}`}>
+          <span className={`hi-count-badge hi-badge-${mode}`} {...badgeTip}>
             {mode === 'buy' ? `+${item.net_managers}` : item.net_managers}
             <span className="hi-badge-detail">
               {item.buy_count}↑{item.sell_count > 0 ? ` ${item.sell_count}↓` : ''}
@@ -128,24 +304,170 @@ const HighlightItem = ({ item, mode }) => {
       </div>
     </div>
   );
-};
+});
+
+// ── Isolated panel component — React.memo ensures it only re-renders when its
+// own items change (not when sibling panels' tooltips update).
+const HighlightPanel = React.memo(function HighlightPanel({ className, title, count, subtitle, items, mode }) {
+  const { tip, showRich, hide } = useHiTooltip();
+  return (
+    <div className={`highlight-panel ${className}`}>
+      <div className="hi-panel-title">
+        {title}
+        <span className="hi-panel-count">{count}</span>
+      </div>
+      {subtitle && <div className="hi-panel-subtitle">{subtitle}</div>}
+      {items.length === 0
+        ? <div className="hi-empty">No data</div>
+        : items.map(item => (
+            <HighlightItem key={item.cusip} item={item} mode={mode} onTipRich={showRich} onTipHide={hide} />
+          ))
+      }
+      <HiTooltip {...tip} />
+    </div>
+  );
+});
+
+// ── Radar panel (isolated component so sort/hover don't re-render other panels)
+
+const RADAR_SORTS = [
+  { key: 'mgrs',   label: 'Mgrs'   },
+  { key: 'value',  label: 'Value'  },
+  { key: 'buying', label: 'Buying' },
+];
+
+function buildRadarContent(item) {
+  const buyMgrs  = item.buying_managers  || [];
+  const sellMgrs = item.selling_managers || [];
+  const buyNames  = new Set(buyMgrs.map(m => m.name));
+  const sellNames = new Set(sellMgrs.map(m => m.name));
+  const stableMgrs = (item.managers || []).filter(m => !buyNames.has(m.name) && !sellNames.has(m.name));
+
+  const sections = [
+    buyMgrs.length    ? buildMgrSection(`▲ Buying (${buyMgrs.length})`,  buyMgrs,  'buy')  : null,
+    stableMgrs.length ? buildHoldingSection(stableMgrs)                                     : null,
+    sellMgrs.length   ? buildMgrSection(`▼ Selling (${sellMgrs.length})`, sellMgrs, 'sell') : null,
+  ].filter(Boolean);
+
+  if (!sections.length) return null;
+  return <div className="hi-tip-wrap">{sections}</div>;
+}
+
+const RadarPanel = React.memo(function RadarPanel({ radar }) {
+  const [radarSort, setRadarSort] = useState('mgrs');
+  const { tip, showRich, hide } = useHiTooltip();
+
+  const sorted = useMemo(() => {
+    const r = [...radar];
+    if (radarSort === 'value')       r.sort((a, b) => b.total_value - a.total_value);
+    else if (radarSort === 'buying') r.sort((a, b) => b.buy_count - a.buy_count || b.manager_count - a.manager_count);
+    else                             r.sort((a, b) => b.manager_count - a.manager_count || b.total_value - a.total_value);
+    return r;
+  }, [radar, radarSort]);
+
+  return (
+    <div className="highlight-panel hl-radar">
+      <div className="hi-panel-title">
+        On Their Radar
+        <span className="hi-panel-count">{sorted.length}</span>
+        <div className="hi-panel-sort">
+          {RADAR_SORTS.map(s => (
+            <button
+              key={s.key}
+              className={`hi-sort-pill ${radarSort === s.key ? 'active' : ''}`}
+              onClick={e => { e.stopPropagation(); setRadarSort(s.key); }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="hi-panel-subtitle">Not in your portfolio · held by 2+ managers · buying activity shown</div>
+      <div className="hi-items-scroll">
+        {sorted.map(item => (
+          <div key={item.yahoo_symbol || item.name} className="hi-item">
+            <div className="hi-item-left">
+              {item.yahoo_symbol ? (
+                <Link className="hi-ticker" to={`/stock/${encodeURIComponent(item.yahoo_symbol)}`}>
+                  {item.yahoo_symbol}
+                </Link>
+              ) : (
+                <span className="hi-ticker hi-ticker-none">—</span>
+              )}
+              <span className="hi-name" title={item.name}>{item.name}</span>
+            </div>
+            <div className="hi-item-right">
+              {item.buy_count > 0 && (
+                <span className="hi-trend hi-trend-accumulating">
+                  ▲{item.buy_count}
+                </span>
+              )}
+              {item.sell_count > 0 && (
+                <span className="hi-trend hi-trend-distributing">
+                  ▼{item.sell_count}
+                </span>
+              )}
+              <span
+                className="hi-count-badge hi-badge-held"
+                onMouseEnter={e => showRich(e, buildRadarContent(item))}
+                onMouseLeave={hide}
+              >
+                {item.manager_count} mgrs
+              </span>
+              <span className="hi-value">{formatAUM(item.total_value)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <HiTooltip {...tip} />
+    </div>
+  );
+});
+
+// ── Highlights section ────────────────────────────────────────────────────────
 
 const HighlightsSection = () => {
-  const [data, setData] = useState(null);
+  const [data, setData]   = useState(null);
+  const [radar, setRadar] = useState([]);
 
   useEffect(() => {
+    // Independent fetches so a failure in one doesn't blank out the other
     apiClient.get('/api/13f/highlights')
-      .then(res => setData(res.data))
-      .catch(() => {}); // non-critical — fail silently
+      .then(r => setData(r.data))
+      .catch(() => setData({ most_bought: [], most_sold: [], most_held: [], disputed: [] }));
+
+    apiClient.get('/api/13f/not-in-portfolio')
+      .then(r => setRadar(r.data || []))
+      .catch(() => setRadar([]));
   }, []);
 
-  if (!data) return null;
+  if (!data) return (
+    <div className="highlights-section">
+      <div className="highlights-header">
+        <h3 className="highlights-title">Consensus Signals</h3>
+      </div>
+      <div className="highlights-grid">
+        {[0, 1, 2].map(i => (
+          <div key={i} className="highlight-panel hi-skeleton">
+            <div className="hi-skel-title" />
+            {[0, 1, 2, 3, 4].map(j => <div key={j} className="hi-skel-row" />)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   const buys     = data.most_bought || [];
   const sells    = data.most_sold   || [];
   const held     = data.most_held   || [];
   const mixed    = data.disputed    || [];
   const hasMixed = mixed.length > 0;
+  const hasRadar = radar.length > 0;
+  // 5 cols when both Mixed + Radar; 4 cols when only one; 3 cols default.
+  // highlight-panel has min-width:0 so columns shrink gracefully on narrow screens.
+  let gridClass = '';
+  if (hasRadar && hasMixed) gridClass = 'highlights-grid-5';
+  else if (hasRadar || hasMixed) gridClass = 'highlights-grid-4';
 
   return (
     <div className="highlights-section">
@@ -155,46 +477,21 @@ const HighlightsSection = () => {
           Net conviction across all tracked managers · ranked by net buyers − sellers
         </span>
       </div>
-      <div className={`highlights-grid ${hasMixed ? 'highlights-grid-4' : ''}`}>
-
-        <div className="highlight-panel hl-buys">
-          <div className="hi-panel-title">
-            Consensus Buys
-            <span className="hi-panel-count">{buys.length}</span>
-          </div>
-          {buys.length === 0 ? <div className="hi-empty">No data</div>
-            : buys.map(item => <HighlightItem key={item.cusip} item={item} mode="buy" />)}
-        </div>
-
-        <div className="highlight-panel hl-sells">
-          <div className="hi-panel-title">
-            Consensus Sells
-            <span className="hi-panel-count">{sells.length}</span>
-          </div>
-          {sells.length === 0 ? <div className="hi-empty">No data</div>
-            : sells.map(item => <HighlightItem key={item.cusip} item={item} mode="sell" />)}
-        </div>
-
-        <div className="highlight-panel hl-held">
-          <div className="hi-panel-title">
-            Most Widely Held
-            <span className="hi-panel-count">{held.length}</span>
-          </div>
-          {held.length === 0 ? <div className="hi-empty">No data</div>
-            : held.map(item => <HighlightItem key={item.cusip} item={item} mode="held" />)}
-        </div>
-
+      <div className={`highlights-grid ${gridClass}`}>
+        <HighlightPanel className="hl-buys"  title="Consensus Buys"  count={buys.length}  items={buys}  mode="buy"  />
+        <HighlightPanel className="hl-sells" title="Consensus Sells" count={sells.length} items={sells} mode="sell" />
+        <HighlightPanel className="hl-held"  title="Most Widely Held" count={held.length} items={held}  mode="held" />
         {hasMixed && (
-          <div className="highlight-panel hl-disputed">
-            <div className="hi-panel-title">
-              Mixed Signals
-              <span className="hi-panel-count">{mixed.length}</span>
-            </div>
-            <div className="hi-panel-subtitle">Smart money divided equally</div>
-            {mixed.map(item => <HighlightItem key={item.cusip} item={item} mode="mixed" />)}
-          </div>
+          <HighlightPanel
+            className="hl-disputed"
+            title="Mixed Signals"
+            count={mixed.length}
+            subtitle="Smart money divided equally"
+            items={mixed}
+            mode="mixed"
+          />
         )}
-
+        {hasRadar && <RadarPanel radar={radar} />}
       </div>
     </div>
   );
@@ -202,9 +499,67 @@ const HighlightsSection = () => {
 
 // ─── Overview page ────────────────────────────────────────────────────────────
 
-const ManagerCard = ({ manager }) => {
+// Build JSX table content for an activity pill popover (mirrors Allocations style).
+// totalCount is the real count from activity (may exceed the top-5 names shown).
+function buildPillContent(names, title, totalCount) {
+  if (!names?.length) return null;
+  const hasChange = names.some(n => typeof n === 'object' && n.change);
+  const hiddenCount = (totalCount || 0) - names.length;
+  return (
+    <div className="pill-tip-wrap">
+      <div className="pill-tip-title">{title}</div>
+      <table className="pill-tip-table">
+        <thead>
+          <tr>
+            <th>Stock</th>
+            <th>Portfolio</th>
+            {hasChange && <th>Change</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {names.map((item, i) => {
+            const name   = typeof item === 'string' ? item : item.name;
+            const pct    = typeof item === 'object' ? item.pct    : null;
+            const change = typeof item === 'object' ? item.change : null;
+            const pos    = change && !change.startsWith('-');
+            return (
+              <tr key={i}>
+                <td className="pill-tip-name">{name}</td>
+                <td className="pill-tip-pct">{pct != null ? `${pct}%` : '—'}</td>
+                {hasChange && (
+                  <td className={`pill-tip-change ${pos ? 'positive' : 'negative'}`}>
+                    {change || '—'}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {hiddenCount > 0 && (
+        <div className="pill-tip-more">…and {hiddenCount} more</div>
+      )}
+    </div>
+  );
+}
+
+// Build pill hover props using the rich table popover (showRich positions below the pill).
+function pillRichProps(names, title, totalCount, showRich, hide) {
+  if (!names?.length) return {};
+  const content = buildPillContent(names, title, totalCount);
+  if (!content) return {};
+  return {
+    onMouseEnter: e => { e.stopPropagation(); showRich(e, content); },
+    onMouseLeave: hide,
+    onClick:      e => e.stopPropagation(),
+  };
+}
+
+const ManagerCard = React.memo(function ManagerCard({ manager }) {
   const navigate = useNavigate();
-  const act = manager.activity;
+  const { tip, showRich, hide } = useHiTooltip();
+  const act   = manager.activity;
+  const names = manager.activity_names || {};
 
   return (
     <div className="manager-card" onClick={() => navigate(`/13f/${manager.id}`)}>
@@ -231,16 +586,24 @@ const ManagerCard = ({ manager }) => {
       {act ? (
         <div className="manager-card-activity">
           {act.new > 0 && (
-            <span className="activity-pill activity-new">+{act.new} New</span>
+            <span className="activity-pill activity-new" {...pillRichProps(names.new, 'New Positions', act.new, showRich, hide)}>
+              +{act.new} New
+            </span>
           )}
           {act.increased > 0 && (
-            <span className="activity-pill activity-increase">↑{act.increased} Inc</span>
+            <span className="activity-pill activity-increase" {...pillRichProps(names.increased, 'Increased', act.increased, showRich, hide)}>
+              ↑{act.increased} Inc
+            </span>
           )}
           {act.trimmed > 0 && (
-            <span className="activity-pill activity-trimmed">↓{act.trimmed} Trim</span>
+            <span className="activity-pill activity-trimmed" {...pillRichProps(names.trimmed, 'Trimmed', act.trimmed, showRich, hide)}>
+              ↓{act.trimmed} Trim
+            </span>
           )}
           {act.closed > 0 && (
-            <span className="activity-pill activity-closed">✕{act.closed} Closed</span>
+            <span className="activity-pill activity-closed" {...pillRichProps(names.closed, 'Closed Positions', act.closed, showRich, hide)}>
+              ✕{act.closed} Closed
+            </span>
           )}
           {act.stable > 0 && (
             <span className="activity-pill activity-stable">={act.stable} Stable</span>
@@ -255,9 +618,11 @@ const ManagerCard = ({ manager }) => {
       <div className="manager-card-footer">
         <span className="manager-card-link">View Portfolio →</span>
       </div>
+
+      <HiTooltip {...tip} />
     </div>
   );
-};
+});
 
 const MANAGER_SORTS = [
   { key: 'name', label: 'Name' },
@@ -304,6 +669,19 @@ const Form13FOverview = () => {
 
   const sorted = useMemo(() => sortManagers(managers, sortBy), [managers, sortBy]);
 
+  const latestFilingDate = useMemo(() => {
+    if (!managers.length) return null;
+    return managers.reduce((max, m) =>
+      !max || m.latest_report_date > max ? m.latest_report_date : max, null);
+  }, [managers]);
+
+  const stalenessMonths = useMemo(() => {
+    if (!latestFilingDate) return null;
+    const d = new Date(latestFilingDate + 'T00:00:00');
+    const now = new Date();
+    return (now.getFullYear() - d.getFullYear()) * 12 + (now.getMonth() - d.getMonth());
+  }, [latestFilingDate]);
+
   if (loading) return <div className="f13f-loading">Loading institutional holders…</div>;
   if (error) return <div className="f13f-error">{error}</div>;
 
@@ -312,8 +690,15 @@ const Form13FOverview = () => {
       <div className="f13f-page-header">
         <h2>13F Institutional Holdings</h2>
         <p className="f13f-page-subtitle">
-          {managers.length} tracked managers · SEC 13F filings are quarterly (45-day lag)
+          {managers.length} tracked managers · SEC 13F filings report with 45-day lag
+          {latestFilingDate && ` · Latest data: ${formatQuarter(latestFilingDate)}`}
         </p>
+        {stalenessMonths > 4 && (
+          <div className="f13f-stale-warning">
+            Data is {stalenessMonths} months old — positions may have changed significantly.
+            Run <code>scripts/scrape_13f.py</code> to update.
+          </div>
+        )}
       </div>
 
       <HighlightsSection />
@@ -347,7 +732,7 @@ const Form13FOverview = () => {
 
 // ─── Moves section ────────────────────────────────────────────────────────────
 
-const PositionCard = ({ position, showPrev = false }) => {
+const PositionCard = ({ position }) => {
   const isLinked = !!position.yahoo_symbol;
   const nameEl = isLinked ? (
     <Link className="pos-ticker-link" to={`/stock/${encodeURIComponent(position.yahoo_symbol)}`}>
@@ -453,6 +838,16 @@ const MovesSection = ({ moves }) => {
 
 // ─── Portfolio table ──────────────────────────────────────────────────────────
 
+// Defined outside PortfolioTable so React sees a stable component type across renders.
+const SortHeader = ({ label, field, sortKey, sortDir, onSort }) => (
+  <th className="sortable-th" onClick={() => onSort(field)}>
+    {label}
+    <span className="sort-arrow">
+      {sortKey === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ' ↕'}
+    </span>
+  </th>
+);
+
 const PortfolioTable = ({ portfolio }) => {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState('rank');
@@ -488,16 +883,6 @@ const PortfolioTable = ({ portfolio }) => {
     });
   }, [portfolio, search, sortKey, sortDir]);
 
-  const SortHeader = ({ label, field }) => (
-    <th className="sortable-th" onClick={() => handleSort(field)}>
-      {label}
-      <span className="sort-arrow">
-        {sortKey === field ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ' ↕'}
-      </span>
-    </th>
-  );
-
-
   return (
     <div className="portfolio-table-wrapper">
       <div className="portfolio-search-bar">
@@ -515,14 +900,14 @@ const PortfolioTable = ({ portfolio }) => {
         <table className="portfolio-table">
           <thead>
             <tr>
-              <SortHeader label="#" field="rank" />
-              <SortHeader label="Ticker" field="yahoo_symbol" />
-              <SortHeader label="Company" field="name" />
-              <SortHeader label="Value ($)" field="value" />
-              <SortHeader label="% Fund" field="pct_of_portfolio" />
-              <SortHeader label="Shares" field="shares" />
-              <SortHeader label="QoQ Change" field="change_sort" />
-              <SortHeader label="Value Δ" field="value_change" />
+              <SortHeader label="#"          field="rank"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Ticker"     field="yahoo_symbol"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Company"    field="name"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Value"      field="value"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="% Fund"     field="pct_of_portfolio" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Shares"     field="shares"          sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="QoQ Change" field="change_sort"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Value Δ"    field="value_change"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>
@@ -592,13 +977,26 @@ const Form13FDetail = () => {
 
   useEffect(() => { fetchData(null); }, [fetchData]);
 
+  // Must be computed before any early returns (Rules of Hooks — no conditional hook calls).
+  // prevTotal must include closed positions (value_prev > 0, not in portfolio array).
+  // Without them, aumChange is overstated by the full value of any closed positions.
+  const prevTotal = useMemo(() => {
+    if (!data?.prev_report_date) return null;
+    const openPrev   = (data.portfolio || []).reduce((s, p) => s + (p.value_prev || 0), 0);
+    const closedPrev = (data.moves?.closed_positions || []).reduce((s, p) => s + (p.value_prev || 0), 0);
+    return openPrev + closedPrev;
+  }, [data]);
+
   const handleQuarterChange = (e) => {
     const q = e.target.value;
     setSelectedQuarter(q);
     fetchData(q);
   };
 
-  if (loading) return <div className="f13f-loading">Loading portfolio…</div>;
+  // On initial load (no data yet) show full-page loader.
+  // On quarter change data is still set to the previous quarter — keep the header
+  // visible and only replace the tab content with a loading indicator.
+  if (loading && !data) return <div className="f13f-loading">Loading portfolio…</div>;
   if (error) return (
     <div className="f13f-container">
       <Link to="/13f" className="f13f-back">← Back to all managers</Link>
@@ -608,8 +1006,6 @@ const Form13FDetail = () => {
   if (!data) return null;
 
   const { manager, available_quarters, report_date, prev_report_date, total_value, num_positions, portfolio, moves } = data;
-
-  const prevTotal = prev_report_date ? data.portfolio.reduce((s, p) => s + (p.value_prev || 0), 0) : null;
   const aumChange = prevTotal != null ? total_value - prevTotal : null;
 
   return (
@@ -671,8 +1067,12 @@ const Form13FDetail = () => {
       </div>
 
       <div className="f13f-tab-content">
-        {activeTab === 'moves' && <MovesSection moves={moves} />}
-        {activeTab === 'portfolio' && <PortfolioTable portfolio={portfolio} />}
+        {loading
+          ? <div className="f13f-loading">Loading…</div>
+          : activeTab === 'moves'
+            ? <MovesSection moves={moves} />
+            : <PortfolioTable portfolio={portfolio} />
+        }
       </div>
     </div>
   );
