@@ -10,6 +10,7 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
+import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import { renderCountryWithFlag } from '../utils/countryUtils';
 import SharedTooltip from './SharedTooltip';
 import './Allocations.css';
@@ -47,14 +48,14 @@ const fmtGBP  = (v)  => v == null ? '—' : `£${v.toLocaleString(undefined, { m
 
 // ── Subcomponents ─────────────────────────────────────────────────────────────
 
-const SummaryCard = ({ label, name, returnPct, pnl }) => {
+const SummaryCard = ({ label, name, returnPct, pnl, hideAmounts }) => {
   const positive = returnPct == null || returnPct >= 0;
   return (
     <div className={`alloc-summary-card ${positive ? 'positive' : 'negative'}`}>
       <div className="alloc-summary-label">{label}</div>
       <div className="alloc-summary-name">{name ?? '—'}</div>
       <div className="alloc-summary-return">{fmtPct(returnPct)}</div>
-      {pnl != null && <div className="alloc-summary-pnl">{fmtPnl(pnl)}</div>}
+      {pnl != null && <div className="alloc-summary-pnl">{hideAmounts ? MASK : fmtPnl(pnl)}</div>}
     </div>
   );
 };
@@ -80,7 +81,7 @@ const SortToggle = ({ value, onChange }) => (
 const isTouchDevice = () => typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
 
 /** Floating popover listing holdings within a sector or country group. */
-const HoldingsPopover = ({ popover, onMouseEnter, onMouseLeave, onBackdropClick }) => {
+const HoldingsPopover = ({ popover, onMouseEnter, onMouseLeave, onBackdropClick, hideAmounts }) => {
   if (!popover) return null;
   return (
     <>
@@ -103,7 +104,7 @@ const HoldingsPopover = ({ popover, onMouseEnter, onMouseLeave, onBackdropClick 
           <tr>
             <th>Symbol</th>
             <th>Return</th>
-            <th>Value</th>
+            {!hideAmounts && <th>Value</th>}
           </tr>
         </thead>
         <tbody>
@@ -115,7 +116,7 @@ const HoldingsPopover = ({ popover, onMouseEnter, onMouseLeave, onBackdropClick 
                 <td className={ret == null ? '' : ret >= 0 ? 'color-green' : 'color-red'}>
                   {fmtPct(ret)}
                 </td>
-                <td>{fmtGBP(h.market_value)}</td>
+                {!hideAmounts && <td>{fmtGBP(h.market_value)}</td>}
               </tr>
             );
           })}
@@ -127,7 +128,7 @@ const HoldingsPopover = ({ popover, onMouseEnter, onMouseLeave, onBackdropClick 
 };
 
 /** A row for sector/country performance tables. */
-const PerfRow = ({ name, renderName, allocPct, returnPct, pnl, count, maxAlloc, maxReturn, onCountEnter, onCountLeave, onCountClick }) => {
+const PerfRow = ({ name, renderName, allocPct, returnPct, pnl, count, maxAlloc, maxReturn, onCountEnter, onCountLeave, onCountClick, hideAmounts }) => {
   const positive = returnPct == null || returnPct >= 0;
   const allocBarPct = Math.min((allocPct / maxAlloc) * 100, 100);
   const returnBarPct = returnPct == null ? 0 : Math.min(Math.abs(returnPct) / maxReturn * 100, 100);
@@ -165,9 +166,11 @@ const PerfRow = ({ name, renderName, allocPct, returnPct, pnl, count, maxAlloc, 
           </span>
         </div>
       </td>
-      <td className={`perf-pnl-cell ${positive ? 'color-green' : 'color-red'}`}>
-        {fmtPnl(pnl)}
-      </td>
+      {!hideAmounts && (
+        <td className={`perf-pnl-cell ${positive ? 'color-green' : 'color-red'}`}>
+          {fmtPnl(pnl)}
+        </td>
+      )}
     </tr>
   );
 };
@@ -189,6 +192,7 @@ const CHART_COLORS = [
 ];
 
 const Allocations = () => {
+  const { hideAmounts } = useHideAmounts();
   const [chartData,        setChartData]        = useState(null);
   const [allocations,      setAllocations]      = useState(null);
   const [holdings,         setHoldings]         = useState([]);
@@ -408,24 +412,28 @@ const Allocations = () => {
           name={summaryStats.bestSector?.[0]}
           returnPct={summaryStats.bestSector?.[1]?.returnPct}
           pnl={summaryStats.bestSector?.[1]?.pnl}
+          hideAmounts={hideAmounts}
         />
         <SummaryCard
           label="Weakest Sector"
           name={summaryStats.worstSector?.[0]}
           returnPct={summaryStats.worstSector?.[1]?.returnPct}
           pnl={summaryStats.worstSector?.[1]?.pnl}
+          hideAmounts={hideAmounts}
         />
         <SummaryCard
           label="Best Country"
           name={summaryStats.bestCountry?.[0]}
           returnPct={summaryStats.bestCountry?.[1]?.returnPct}
           pnl={summaryStats.bestCountry?.[1]?.pnl}
+          hideAmounts={hideAmounts}
         />
         <SummaryCard
           label="Weakest Country"
           name={summaryStats.worstCountry?.[0]}
           returnPct={summaryStats.worstCountry?.[1]?.returnPct}
           pnl={summaryStats.worstCountry?.[1]?.pnl}
+          hideAmounts={hideAmounts}
         />
       </div>
 
@@ -445,7 +453,7 @@ const Allocations = () => {
                 <th title="Number of holdings">Pos</th>
                 <th>Allocation</th>
                 <th>Return</th>
-                <th>P&amp;L (£)</th>
+                {!hideAmounts && <th>P&amp;L (£)</th>}
               </tr>
             </thead>
             <tbody>
@@ -462,6 +470,7 @@ const Allocations = () => {
                   onCountEnter={(e) => showPopover(e, row.name, 'sector')}
                   onCountLeave={scheduleHidePopover}
                   onCountClick={(e) => togglePopover(e, row.name, 'sector')}
+                  hideAmounts={hideAmounts}
                 />
               ))}
             </tbody>
@@ -481,7 +490,7 @@ const Allocations = () => {
                 <th title="Number of holdings">Pos</th>
                 <th>Allocation</th>
                 <th>Return</th>
-                <th>P&amp;L (£)</th>
+                {!hideAmounts && <th>P&amp;L (£)</th>}
               </tr>
             </thead>
             <tbody>
@@ -499,6 +508,7 @@ const Allocations = () => {
                   onCountEnter={(e) => showPopover(e, row.name, 'country')}
                   onCountLeave={scheduleHidePopover}
                   onCountClick={(e) => togglePopover(e, row.name, 'country')}
+                  hideAmounts={hideAmounts}
                 />
               ))}
             </tbody>
@@ -529,7 +539,9 @@ const Allocations = () => {
               <tr>
                 <th>Currency</th>
                 <th>Allocation</th>
-                <th title="FX contribution to P&L in GBP. Negative = strong GBP hurt returns.">FX P&amp;L</th>
+                {!hideAmounts && (
+                  <th title="FX contribution to P&L in GBP. Negative = strong GBP hurt returns.">FX P&amp;L</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -553,9 +565,11 @@ const Allocations = () => {
                       <td style={{ '--bar-width': `${Math.min(pct, 100)}%` }}>
                         <span>{pct.toFixed(2)}%</span>
                       </td>
-                      <td className={fxPositive ? 'color-green' : 'color-red'}>
-                        {fxDisplay}
-                      </td>
+                      {!hideAmounts && (
+                        <td className={fxPositive ? 'color-green' : 'color-red'}>
+                          {fxDisplay}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -570,7 +584,7 @@ const Allocations = () => {
               <tr>
                 <th>Type</th>
                 <th>Allocation</th>
-                <th>Value (£)</th>
+                {!hideAmounts && <th>Value (£)</th>}
               </tr>
             </thead>
             <tbody>
@@ -582,7 +596,9 @@ const Allocations = () => {
                     <td style={{ '--bar-width': `${Math.min(pct, 100)}%` }}>
                       <span>{pct.toFixed(2)}%</span>
                     </td>
-                    <td>{fmtGBP(allocations.total_value * pct / 100)}</td>
+                    {!hideAmounts && (
+                      <td>{fmtGBP(allocations.total_value * pct / 100)}</td>
+                    )}
                   </tr>
                 ))}
             </tbody>
@@ -652,6 +668,7 @@ const Allocations = () => {
         onMouseEnter={cancelHidePopover}
         onMouseLeave={scheduleHidePopover}
         onBackdropClick={() => setPopover(null)}
+        hideAmounts={hideAmounts}
       />
     </div>
   );
