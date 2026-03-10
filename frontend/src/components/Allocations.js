@@ -140,8 +140,8 @@ const PerfRow = ({ name, renderName, allocPct, returnPct, pnl, count, maxAlloc, 
           className={`count-badge${count > 0 ? ' count-badge-hover' : ''}`}
           role="button"
           tabIndex={count > 0 ? 0 : -1}
-          onMouseEnter={count > 0 ? onCountEnter : undefined}
-          onMouseLeave={count > 0 ? onCountLeave : undefined}
+          onMouseEnter={count > 0 && !isTouchDevice() ? onCountEnter : undefined}
+          onMouseLeave={count > 0 && !isTouchDevice() ? onCountLeave : undefined}
           onClick={count > 0 ? onCountClick : undefined}
           onKeyDown={count > 0 && onCountClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCountClick(e); } } : undefined}
         >

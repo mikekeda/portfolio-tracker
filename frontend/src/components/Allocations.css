@@ -191,6 +191,7 @@
 .count-badge-hover {
   cursor: default;
   transition: background 0.12s, color 0.12s;
+  touch-action: manipulation;
 }
 
 .count-badge-hover:hover {
