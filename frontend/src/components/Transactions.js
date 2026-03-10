@@ -288,12 +288,12 @@ const Transactions = () => {
                     interval="preserveStartEnd"
                   />
                   <YAxis
-                    tickFormatter={v => `£${v}`}
+                    tickFormatter={v => (hideAmounts ? MASK : `£${v}`)}
                     tick={{ fontSize: 11 }}
                     width={55}
                   />
                   <Tooltip content={<DividendTooltip hide={hideAmounts} />} />
-                  {avgMonthlyDividend > 0 && (
+                  {!hideAmounts && avgMonthlyDividend > 0 && (
                     <ReferenceLine
                       y={avgMonthlyDividend}
                       stroke="#adb5bd"
@@ -467,7 +467,7 @@ const Transactions = () => {
                     </td>
                     <td className="r txn-mono">
                       {txn.fees > 0
-                        ? <span className="negative">−{txn.fees.toFixed(2)}</span>
+                        ? <span className="negative">{hideAmounts ? MASK : `−${txn.fees.toFixed(2)}`}</span>
                         : '—'}
                     </td>
                   </tr>
