@@ -14,6 +14,7 @@ import { renderCountryWithFlag } from '../utils/countryUtils';
 import { getPsThresholds } from '../utils/valuationUtils';
 import { calculateBarWidth, getBarColorScheme, calculateMinMax, getBarStyle, shouldBeNegativeBar } from '../utils/barUtils';
 import { getAvailableScreeners } from '../services/screeners';
+import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import './Holdings.css';
 
 const POSITION_ONLY_COLUMN_IDS = ['portfolio_pct', 'market_value', 'profit', 'return_pct'];
@@ -239,7 +240,8 @@ const SIGNAL_TOOLTIP = {
 };
 
 // This component will only re-render if its own props change
-const HoldingRow = React.memo(({ row, isSelected }) => {
+// eslint-disable-next-line no-unused-vars
+const HoldingRow = React.memo(({ row, isSelected, hideAmounts: _hideAmounts }) => {
   return (
     <tr className={isSelected ? 'selected-row' : undefined}>
       {row.getVisibleCells().map((cell) => (
@@ -263,6 +265,9 @@ HoldingRow.propTypes = {
 };
 
 const Holdings = () => {
+  const { hideAmounts } = useHideAmounts();
+  const hideAmountsRef = React.useRef(hideAmounts);
+  hideAmountsRef.current = hideAmounts;
   const [showAll, setShowAll] = useState(false);
   const [holdings, setHoldings] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -527,9 +532,9 @@ const Holdings = () => {
           const barStyle = getBarStyle(barWidth, colorScheme);
 
           return (
-            <span className="bar-column" style={barStyle}>
+            <span className="bar-column" style={hideAmountsRef.current ? {} : barStyle}>
               <span>
-                {value.toLocaleString(undefined, {
+                {hideAmountsRef.current ? MASK : value.toLocaleString(undefined, {
                   minimumFractionDigits: 0,
                   maximumFractionDigits: 0
                 })}
@@ -546,6 +551,7 @@ const Holdings = () => {
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="pnl"></span>;
+          if (hideAmountsRef.current) return <span className="pnl">{MASK}</span>;
           return (
             <span className={`pnl ${value >= 0 ? 'positive' : 'negative'}`}>
               {value.toLocaleString(undefined, {
@@ -1632,6 +1638,7 @@ const Holdings = () => {
                     key={row.id}
                     row={row}
                     isSelected={isSelected}
+                    hideAmounts={hideAmounts}
                   />
                 );
               })
