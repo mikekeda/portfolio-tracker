@@ -77,16 +77,26 @@ const SortToggle = ({ value, onChange }) => (
   </div>
 );
 
+const isTouchDevice = () => typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
+
 /** Floating popover listing holdings within a sector or country group. */
-const HoldingsPopover = ({ popover, onMouseEnter, onMouseLeave }) => {
+const HoldingsPopover = ({ popover, onMouseEnter, onMouseLeave, onBackdropClick }) => {
   if (!popover) return null;
   return (
-    <div
-      className="alloc-popover"
-      style={{ top: popover.top, left: popover.left }}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-    >
+    <>
+      {isTouchDevice() && (
+        <div
+          className="alloc-popover-backdrop"
+          aria-hidden="true"
+          onClick={onBackdropClick}
+        />
+      )}
+      <div
+        className="alloc-popover"
+        style={{ top: popover.top, left: popover.left }}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+      >
       <div className="alloc-popover-title">{popover.groupName}</div>
       <table className="alloc-popover-table">
         <thead>
@@ -112,11 +122,12 @@ const HoldingsPopover = ({ popover, onMouseEnter, onMouseLeave }) => {
         </tbody>
       </table>
     </div>
+    </>
   );
 };
 
 /** A row for sector/country performance tables. */
-const PerfRow = ({ name, renderName, allocPct, returnPct, pnl, count, maxAlloc, maxReturn, onCountEnter, onCountLeave }) => {
+const PerfRow = ({ name, renderName, allocPct, returnPct, pnl, count, maxAlloc, maxReturn, onCountEnter, onCountLeave, onCountClick }) => {
   const positive = returnPct == null || returnPct >= 0;
   const allocBarPct = Math.min((allocPct / maxAlloc) * 100, 100);
   const returnBarPct = returnPct == null ? 0 : Math.min(Math.abs(returnPct) / maxReturn * 100, 100);
@@ -127,8 +138,12 @@ const PerfRow = ({ name, renderName, allocPct, returnPct, pnl, count, maxAlloc, 
       <td className="perf-count-cell">
         <span
           className={`count-badge${count > 0 ? ' count-badge-hover' : ''}`}
+          role="button"
+          tabIndex={count > 0 ? 0 : -1}
           onMouseEnter={count > 0 ? onCountEnter : undefined}
           onMouseLeave={count > 0 ? onCountLeave : undefined}
+          onClick={count > 0 ? onCountClick : undefined}
+          onKeyDown={count > 0 && onCountClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onCountClick(e); } } : undefined}
         >
           {count}
         </span>
@@ -328,11 +343,33 @@ const Allocations = () => {
       .sort((a, b) => (b.market_value || 0) - (a.market_value || 0));
     if (!items.length) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const popoverWidth = 260;
-    const left = rect.right + 8 + popoverWidth > window.innerWidth
-      ? rect.left - popoverWidth - 8
-      : rect.right + 8;
-    setPopover({ groupName, items, top: rect.top, left });
+    const popoverWidth = Math.min(260, window.innerWidth - 24);
+    const popoverMaxH = 320;
+    const padding = 12;
+    const isMobile = window.innerWidth <= 600;
+    let left;
+    let top;
+    if (isMobile) {
+      left = Math.max(padding, (window.innerWidth - popoverWidth) / 2);
+      top = Math.max(padding, Math.min(rect.top, window.innerHeight - popoverMaxH - padding));
+    } else {
+      left = rect.right + padding + popoverWidth > window.innerWidth
+        ? rect.left - popoverWidth - padding
+        : rect.right + padding;
+      top = rect.top;
+      if (top + popoverMaxH > window.innerHeight - padding) {
+        top = Math.max(padding, window.innerHeight - popoverMaxH - padding);
+      }
+    }
+    setPopover({ groupName, items, top, left });
+  };
+
+  const togglePopover = (e, groupName, groupKey) => {
+    if (popover?.groupName === groupName) {
+      setPopover(null);
+    } else {
+      showPopover(e, groupName, groupKey);
+    }
   };
 
   const scheduleHidePopover = () => {
@@ -424,6 +461,7 @@ const Allocations = () => {
                   maxReturn={maxSectorReturn}
                   onCountEnter={(e) => showPopover(e, row.name, 'sector')}
                   onCountLeave={scheduleHidePopover}
+                  onCountClick={(e) => togglePopover(e, row.name, 'sector')}
                 />
               ))}
             </tbody>
@@ -460,6 +498,7 @@ const Allocations = () => {
                   maxReturn={maxCountryReturn}
                   onCountEnter={(e) => showPopover(e, row.name, 'country')}
                   onCountLeave={scheduleHidePopover}
+                  onCountClick={(e) => togglePopover(e, row.name, 'country')}
                 />
               ))}
             </tbody>
@@ -583,7 +622,11 @@ const Allocations = () => {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                     <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
-                    <Tooltip content={<SharedTooltip prefix={prefix} valueFormatter={v => `${v.toFixed(1)}%`} />} />
+                    <Tooltip
+                      content={<SharedTooltip prefix={prefix} valueFormatter={v => `${v.toFixed(1)}%`} />}
+                      wrapperStyle={{ zIndex: 9999, maxWidth: 'min(280px, calc(100vw - 24px))' }}
+                      contentStyle={{ pointerEvents: 'none' }}
+                    />
                     <Legend />
                     {keys.map((k, i) => (
                       <Line
@@ -608,6 +651,7 @@ const Allocations = () => {
         popover={popover}
         onMouseEnter={cancelHidePopover}
         onMouseLeave={scheduleHidePopover}
+        onBackdropClick={() => setPopover(null)}
       />
     </div>
   );

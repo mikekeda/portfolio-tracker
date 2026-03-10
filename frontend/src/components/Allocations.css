@@ -199,6 +199,20 @@
 }
 
 /* ── Holdings popover ────────────────────────────────────────────────────────*/
+.alloc-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: transparent;
+  cursor: default;
+}
+
+@media (max-width: 600px) {
+  .alloc-popover-backdrop {
+    background: rgba(0, 0, 0, 0.3);
+  }
+}
+
 .alloc-popover {
   position: fixed;
   z-index: 9999;
@@ -208,7 +222,9 @@
   box-shadow: 0 8px 24px rgba(0,0,0,0.12);
   padding: 10px 0 6px 0;
   min-width: 220px;
-  max-width: 280px;
+  max-width: min(280px, calc(100vw - 24px));
+  max-height: min(320px, calc(100vh - 24px));
+  overflow-y: auto;
   pointer-events: auto;
 }
 
@@ -514,4 +530,44 @@
   .alloc-summary-cards   { grid-template-columns: repeat(2, 1fr); gap: 8px; }
   .alloc-summary-return  { font-size: 16px; }
   .perf-pnl-cell         { display: none; }
+  .count-badge-hover    { min-width: 28px; padding: 4px 8px; cursor: pointer; }
+}
+
+/* ── Chart tooltip (Recharts) ─────────────────────────────────────────────────*/
+.allocation-charts .recharts-tooltip-wrapper {
+  outline: none;
+  pointer-events: none;
+}
+
+.allocation-charts .custom-tooltip {
+  background: rgba(0, 0, 0, 0.9);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  font-size: 13px;
+  max-width: min(260px, calc(100vw - 24px));
+}
+
+.allocation-charts .custom-tooltip .tooltip-label {
+  color: #fff;
+  font-weight: 600;
+  margin: 0 0 6px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.allocation-charts .custom-tooltip .tooltip-item {
+  margin: 2px 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 600px) {
+  .allocation-charts .custom-tooltip {
+    font-size: 12px;
+    padding: 8px 10px;
+  }
 }
