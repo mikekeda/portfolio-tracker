@@ -79,8 +79,8 @@ All scripts are located in the `scripts/` directory. When running manually, you 
 
 ```bash
 # From the project root directory
-PYTHONPATH=/home/voron/sites/portfolio_tracker python scripts/backfill_portfolio_daily.py
-PYTHONPATH=/home/voron/sites/portfolio_tracker python scripts/update_data.py
+PYTHONPATH=/home/debian/sites/portfolio_tracker python scripts/backfill_portfolio_daily.py
+PYTHONPATH=/home/debian/sites/portfolio_tracker python scripts/update_data.py
 ```
 
 **Available Scripts:**
