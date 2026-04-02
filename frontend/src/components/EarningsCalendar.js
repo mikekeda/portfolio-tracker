@@ -205,7 +205,7 @@ const DayDetail = ({ date, events }) => {
               />
 
               {ev.rationale_snippet && (
-                <p className="ec-rationale-snippet">"{ev.rationale_snippet}{ev.rationale_snippet.length >= 180 ? '…' : ''}"</p>
+                <p className="ec-rationale-snippet">&quot;{ev.rationale_snippet}{ev.rationale_snippet.length >= 180 ? '…' : ''}&quot;</p>
               )}
             </div>
           );

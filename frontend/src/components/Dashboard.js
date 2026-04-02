@@ -773,7 +773,7 @@ const Dashboard = () => {
               )}
             </p>
           </div>
-          {summary.mwrr && (
+          {summary.mwrr != null && (
             <div className="card macro-card" title={getMwrrTooltip(summary.mwrr)}>
               <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
                 PORTFOLIO_INDICATOR_CONFIGS.mwrr,
@@ -791,7 +791,7 @@ const Dashboard = () => {
               </p>
             </div>
           )}
-          {summary.twrr && (
+          {summary.twrr != null && (
             <div className="card macro-card" title={getTwrrTooltip(summary.twrr)}>
               <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
                 PORTFOLIO_INDICATOR_CONFIGS.twrr,
