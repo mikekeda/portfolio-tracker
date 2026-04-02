@@ -15,7 +15,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from datetime import datetime
 from typing import Optional
 
+import ssl
+
 import aiohttp
+import certifi
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
@@ -50,7 +53,9 @@ async def update_market_metrics():
 
     try:
         async with AsyncSessionLocal() as db_session:
-            async with aiohttp.ClientSession() as http_session:
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+            async with aiohttp.ClientSession(connector=connector) as http_session:
                 today = datetime.now(TIMEZONE).date()
 
                 # Run independent tasks concurrently

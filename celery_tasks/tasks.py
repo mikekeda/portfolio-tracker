@@ -1,6 +1,6 @@
 import asyncio
 from celery_tasks.celery_app import app
-from scripts.backfill_portfolio_daily import backfill_portfolio_daily
+from scripts.update_returns import update_returns
 from scripts.get_earnings_reports import get_earnings_reports
 from scripts.scrape_13f import main as scrape_13f_main
 from scripts.scrape_wisesheets_pe import update_pe_data
@@ -11,7 +11,7 @@ from scripts.update_pies import update_pies
 
 @app.task
 def calculate_portfolio_returns_task():
-    backfill_portfolio_daily(rebuild=False)
+    update_returns(rebuild=False)
 
 
 @app.task

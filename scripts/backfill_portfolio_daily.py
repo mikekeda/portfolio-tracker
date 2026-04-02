@@ -12,7 +12,7 @@ Key Definitions:
 - cash = available cash balance
 
 Usage:
-    python backfill_portfolio_daily2.py
+    python scripts/backfill_portfolio_daily.py
 """
 
 from datetime import date, datetime, timedelta
@@ -125,8 +125,7 @@ def get_currency_rate_on_date(session, from_currency: str, target_date: date) ->
     if rate is not None:
         return float(rate)
 
-    # TODO: Do we need this?
-    # If not found, get the last available rate before the target date
+    # If not found, forward-fill from the last available rate (handles weekends/holidays)
     last_rate = session.execute(
         select(CurrencyRateDaily.rate)
         .where(
@@ -297,7 +296,7 @@ def backfill_portfolio_daily(rebuild: bool = True):
             try:
                 # np.irr finds the internal rate of return for a series of cash flows
                 daily_mwrr = irr(irr_flows)
-                if daily_mwrr and not np.isnan(daily_mwrr):
+                if daily_mwrr is not None and not np.isnan(daily_mwrr) and daily_mwrr > -1:
                     # Annualize the daily rate
                     annual_mwrr_pct = ((1 + daily_mwrr) ** 365 - 1) * 100.0
             except ValueError:

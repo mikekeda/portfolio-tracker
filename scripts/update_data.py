@@ -782,9 +782,10 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     # Look back up to 1 year for calculations
     start_date = snapshot_date - timedelta(days=365)
 
-    # 1. Get historical portfolio values
+    # 1. Get historical portfolio values (equity only — exclude cash so beta reflects
+    #    actual equity risk, not a cash-diluted whole-account figure)
     portfolio_history = (
-        session.query(PortfolioDaily.date, PortfolioDaily.value)
+        session.query(PortfolioDaily.date, (PortfolioDaily.value - PortfolioDaily.cash).label("equity_value"))
         .filter(PortfolioDaily.date >= start_date, PortfolioDaily.date <= snapshot_date)
         .order_by(PortfolioDaily.date)
         .all()
@@ -793,10 +794,10 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     if len(portfolio_history) < 2:
         return {"sharpe": None, "sortino": None, "beta": None}
 
-    # 2. Get historical benchmark prices (e.g., S&P 500)
+    # 2. Get historical benchmark prices (e.g., S&P 500) — use adj_close to match PRICE_FIELD
     benchmark_symbol = SPY
     benchmark_prices = (
-        session.query(PricesDaily.date, PricesDaily.close_price)
+        session.query(PricesDaily.date, PricesDaily.adj_close_price)
         .filter(
             PricesDaily.symbol == benchmark_symbol, PricesDaily.date >= start_date, PricesDaily.date <= snapshot_date
         )
@@ -810,21 +811,18 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     benchmark_df = pd.DataFrame(benchmark_prices, columns=["date", "price"]).set_index("date")
     portfolio_df = pd.DataFrame(portfolio_history, columns=["date", "value"]).set_index("date")
 
-    # Re-index the daily portfolio data to match the benchmark's trading-day index.
-    # 'ffill' ensures that if a portfolio snapshot was missed, we use the last known value.
-    portfolio_df = portfolio_df.reindex(benchmark_df.index, method="ffill")
-
-    # Now, calculate returns on the *aligned* price/value data.
-    # Both series now represent returns from one trading day to the next.
-    aligned_portfolio = portfolio_df["value"].pct_change().dropna()
-    aligned_benchmark = benchmark_df["price"].pct_change().dropna()
+    # --- SHARPE / SORTINO: use the full benchmark trading-day grid with ffill ---
+    # For risk-adjusted return metrics we need daily granularity on the portfolio side.
+    portfolio_daily = portfolio_df.reindex(benchmark_df.index, method="ffill")
+    aligned_portfolio = portfolio_daily["value"].pct_change().dropna()
+    aligned_benchmark_daily = benchmark_df["price"].pct_change().dropna()
 
     if aligned_portfolio.empty or len(aligned_portfolio) < 2:
         return {"sharpe": None, "sortino": None, "beta": None}
 
     # --- DYNAMIC ANNUALIZATION FACTOR ---
     trading_days_per_year = 252
-    num_days = len(aligned_portfolio)  # This is now the number of *trading days*
+    num_days = len(aligned_portfolio)
     annualization_factor = np.sqrt(trading_days_per_year) if num_days > 60 else 1.0
 
     # Assume a risk-free rate (e.g., 4% annually for UK)
@@ -832,8 +830,6 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     risk_free_rate_daily = (1 + risk_free_rate_annual) ** (1 / trading_days_per_year) - 1
 
     excess_returns = aligned_portfolio - risk_free_rate_daily
-
-    # --- CALCULATIONS ---
 
     # Sharpe Ratio
     sharpe_ratio = (
@@ -851,10 +847,28 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
         else None
     )
 
-    # Beta
-    covariance = aligned_portfolio.cov(aligned_benchmark)
-    variance = cast(float, aligned_benchmark.var())
-    beta = float(covariance / variance) if variance != 0 else None
+    # --- BETA: only use dates with an ACTUAL portfolio snapshot ---
+    # Using ffill creates spurious 0% portfolio returns on days when the snapshot was
+    # missing (server downtime, etc.) while the benchmark moved — this drags covariance
+    # (and therefore beta) sharply downward.
+    #
+    # Fix: inner-join portfolio and benchmark on their shared dates, then compute
+    # "holding-period" returns over each actual snapshot interval. Both series then
+    # cover identical time spans regardless of gaps.
+    beta_combined = pd.concat(
+        [portfolio_df["value"], benchmark_df["price"].reindex(portfolio_df.index, method="ffill")],
+        axis=1,
+        keys=["portfolio", "benchmark"],
+    ).dropna()
+
+    beta: Optional[float] = None
+    if len(beta_combined) >= 20:
+        beta_portfolio_returns = beta_combined["portfolio"].pct_change().dropna()
+        beta_benchmark_returns = beta_combined["benchmark"].pct_change().dropna()
+        covariance = beta_portfolio_returns.cov(beta_benchmark_returns)
+        variance = cast(float, beta_benchmark_returns.var())
+        if variance != 0:
+            beta = float(covariance / variance)
 
     return {"sharpe": sharpe_ratio, "sortino": sortino_ratio, "beta": beta}
 
