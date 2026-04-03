@@ -64,52 +64,21 @@ def build_url(ticker: str) -> str:
 
 def fetch_html(driver: webdriver.Firefox, url: str) -> str:
     """Fetch HTML from Wisesheets, handling the Quarterly/Annual toggle."""
-    try:
-        driver.get(url)
+    driver.get(url)
 
-        # Wait for the page to load and look for the Quarterly (TTM) toggle
-        wait = WebDriverWait(driver, 10)
+    # Wait for the page to load and look for the Quarterly (TTM) toggle
+    wait = WebDriverWait(driver, 5)
 
-        # Try to find and click the "Quarterly (TTM)" button
-        try:
-            # Try different selectors for the quarterly button
-            selectors = [
-                "//button[contains(text(), 'Quarterly (TTM)')]",
-                "//button[contains(text(), 'Quarterly')]",
-                "//button[contains(text(), 'TTM')]",
-                "//button[contains(@class, 'quarterly')]",
-                "//button[contains(@class, 'ttm')]",
-                "//*[contains(text(), 'Quarterly (TTM)')]",
-                "//*[contains(text(), 'Quarterly')]",
-            ]
+    # Try to find and click the "Quarterly (TTM)" button
+    selector = "//div[contains(text(), 'Quarterly (TTM)')]"
 
-            quarterly_button = None
-            for selector in selectors:
-                try:
-                    quarterly_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                    logger.debug(f"Found quarterly button with selector: {selector}")
-                    break
-                except Exception:
-                    continue
+    quarterly_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
+    quarterly_button.click()
+    # Wait a moment for the data to update
+    sleep(3)
 
-            if quarterly_button:
-                quarterly_button.click()
-                # Wait a moment for the data to update
-                sleep(3)
-                logger.debug("Successfully clicked quarterly button")
-            else:
-                logger.warning("Could not find quarterly button with any selector")
-
-        except Exception as e:
-            logger.warning(f"Could not click Quarterly (TTM) button: {e}")
-            # Continue anyway, we might still get some data
-
-        # Get the updated HTML
-        html = driver.page_source
-        return html
-
-    finally:
-        pass
+    # Get the updated HTML
+    return driver.page_source
 
 
 def _clean_number(value: str) -> Optional[float]:
