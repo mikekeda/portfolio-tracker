@@ -1,21 +1,22 @@
 """
 Scrape Wisesheets PE ratio historical data for a given stock.
 """
-
+import platform
 import sys
 from collections import defaultdict
+from contextlib import contextmanager
 from datetime import datetime
 from time import sleep
 from typing import Optional
 
-# import pandas as pd  # Not needed for this scraper
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
 from selenium import webdriver
 from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import selectinload
 
@@ -34,14 +35,8 @@ HEADERS = {
 }
 
 
-def build_url(ticker: str) -> str:
-    ticker = ticker.strip().upper()
-    return f"https://www.wisesheets.io/pe-ratio/{ticker}"
-
-
-def fetch_html(url: str) -> str:
-    """Fetch HTML from Wisesheets, handling the Quarterly/Annual toggle."""
-    # Set up Chrome options for headless browsing
+@contextmanager
+def init_webdriver():
     browser_options = Options()
     browser_options.add_argument("--headless")
     browser_options.add_argument("--no-sandbox")
@@ -50,9 +45,26 @@ def fetch_html(url: str) -> str:
     browser_options.add_argument("--window-size=1920,1080")
     browser_options.add_argument(f"--user-agent={HEADERS['User-Agent']}")
 
-    driver = None
+    service = (
+        Service(executable_path="/usr/local/bin/geckodriver")
+        if sys.platform == "linux" and platform.machine() == "aarch64"
+        else None
+    )
+    driver = webdriver.Firefox(service=service, options=browser_options)
     try:
-        driver = webdriver.Firefox(options=browser_options)
+        yield driver
+    finally:
+        driver.quit()
+
+
+def build_url(ticker: str) -> str:
+    ticker = ticker.strip().upper()
+    return f"https://www.wisesheets.io/pe-ratio/{ticker}"
+
+
+def fetch_html(driver: webdriver.Firefox, url: str) -> str:
+    """Fetch HTML from Wisesheets, handling the Quarterly/Annual toggle."""
+    try:
         driver.get(url)
 
         # Wait for the page to load and look for the Quarterly (TTM) toggle
@@ -75,7 +87,7 @@ def fetch_html(url: str) -> str:
             for selector in selectors:
                 try:
                     quarterly_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-                    logger.debug(f"Found quarterly button with selector: {selector}", file=sys.stderr)
+                    logger.debug(f"Found quarterly button with selector: {selector}")
                     break
                 except Exception:
                     continue
@@ -84,12 +96,12 @@ def fetch_html(url: str) -> str:
                 quarterly_button.click()
                 # Wait a moment for the data to update
                 sleep(3)
-                logger.debug("Successfully clicked quarterly button", file=sys.stderr)
+                logger.debug("Successfully clicked quarterly button")
             else:
-                logger.warning("Could not find quarterly button with any selector", file=sys.stderr)
+                logger.warning("Could not find quarterly button with any selector")
 
         except Exception as e:
-            logger.warning(f"Could not click Quarterly (TTM) button: {e}", file=sys.stderr)
+            logger.warning(f"Could not click Quarterly (TTM) button: {e}")
             # Continue anyway, we might still get some data
 
         # Get the updated HTML
@@ -97,8 +109,7 @@ def fetch_html(url: str) -> str:
         return html
 
     finally:
-        if driver:
-            driver.quit()
+        pass
 
 
 def _clean_number(value: str) -> Optional[float]:
@@ -263,7 +274,7 @@ def update_pe_data(limit: int = 100) -> None:
         query = (
             select(InstrumentYahoo)
             .where(InstrumentYahoo.pes != {})
-            .order_by(last_pe_date_expr.nulls_first())
+            .order_by(last_pe_date_expr.nulls_first(), InstrumentYahoo.updated_at.nulls_first())
             .limit(limit)
             .options(selectinload(InstrumentYahoo.instrument))
         )
@@ -272,34 +283,40 @@ def update_pe_data(limit: int = 100) -> None:
         tickers = [row.instrument.yahoo_symbol for row in rows][:10]
         logger.info(f"Found {len(rows)} instruments to update: {tickers},...")
 
-        for row in rows:
-            ticker = row.instrument.yahoo_symbol
-            url = build_url(ticker)
+        with init_webdriver() as driver:
+            for row in rows:
+                ticker = row.instrument.yahoo_symbol
+                url = build_url(ticker)
 
-            try:
-                html = fetch_html(url)
-                pe_data = parse_pe_data(html)
+                try:
+                    html = fetch_html(driver, url)
+                    pe_data = parse_pe_data(html)
 
-                # Convert to the same format as Macrotrends scraper
-                formatted_data = {}
-                for date, pe_value in pe_data.items():
-                    formatted_data[date] = {
-                        "stock_price": None,  # Not available from Wisesheets
-                        "ttm_eps": None,  # Not available from Wisesheets
-                        "pe_ratio": pe_value,
-                    }
+                    # Convert to the same format as Macrotrends scraper
+                    formatted_data = {}
+                    for date, pe_value in pe_data.items():
+                        formatted_data[date] = {
+                            "stock_price": None,  # Not available from Wisesheets
+                            "ttm_eps": None,  # Not available from Wisesheets
+                            "pe_ratio": pe_value,
+                        }
 
-                row.pes = formatted_data
-                row.updated_at = datetime.now(TIMEZONE)
-                session.commit()
+                    now = datetime.now(TIMEZONE)
+                    result = session.execute(
+                        update(InstrumentYahoo)
+                        .where(InstrumentYahoo.instrument_id == row.instrument_id)
+                        .values(pes=formatted_data, updated_at=now)
+                    )
+                    session.commit()
+                    logger.info(f"Updated {ticker}: rowcount={result.rowcount}, instrument_id={row.instrument_id}")
 
-            except Exception as e:
-                logger.error(f"Error scraping {ticker} (instrument_id={row.instrument_id}): {e}", exc_info=True)
-                session.rollback()
-                sleep(20)
-                continue
+                except Exception as e:
+                    logger.error(f"Error scraping {ticker} (instrument_id={row.instrument_id}): {e}", exc_info=True)
+                    session.rollback()
+                    sleep(20)
+                    continue
 
-            sleep(15)  # Be respectful to the server
+                sleep(15)  # Be respectful to the server
 
 
 if __name__ == "__main__":
