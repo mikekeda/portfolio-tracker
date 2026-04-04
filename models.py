@@ -3,6 +3,7 @@ SQLAlchemy models for Trading212 Portfolio Manager
 ==================================================
 Defines the database schema using SQLAlchemy ORM.
 """
+# pylint: disable=unsubscriptable-object
 
 import enum
 from datetime import date, datetime

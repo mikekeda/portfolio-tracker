@@ -239,8 +239,8 @@ def backfill_portfolio_daily(rebuild: bool = True):
             logger.info("All is up to date, no update is needed!")
             return
 
-        logger.info(f"📊 Total days to backfill: {total_days}")
-        logger.info(f"📋 Loaded {len(all_transactions)} transactions")
+        logger.info("📊 Total days to backfill: %s", total_days)
+        logger.info("📋 Loaded %s transactions", len(all_transactions))
 
         while current_date <= today:
             # Track cash flow for this day
@@ -374,7 +374,7 @@ def backfill_portfolio_daily(rebuild: bool = True):
             # Commit every 10 records to avoid long transactions
             if processed % 10 == 0:
                 session.commit()
-                logger.debug(f"📈 Processed {processed}/{total_days} days, current: {current_date}")
+                logger.debug("📈 Processed %s/%s days, current: %s", processed, total_days, current_date)
 
             current_date += timedelta(days=1)
 
@@ -382,8 +382,8 @@ def backfill_portfolio_daily(rebuild: bool = True):
         session.commit()
 
         logger.info("✅ Backfill complete!")
-        logger.info(f"📊 Processed: {processed} days")
-        logger.info(f"📅 Date range: {backfill_start_date} to {today}")
+        logger.info("📊 Processed: %s days", processed)
+        logger.info("📅 Date range: %s to %s", backfill_start_date, today)
         logger.info("📝 All calculations complete including unrealised_profit and value!")
 
         PRICE_CACHE.clear()  # clear cache between runs

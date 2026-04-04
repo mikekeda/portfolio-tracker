@@ -44,7 +44,11 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
                 holding_data["screener_score"] = 0
             return
 
-        logger.debug(f"Evaluating {len(available_screeners)} screeners for {len(portfolio_data)} holdings")
+        logger.debug(
+            "Evaluating %s screeners for %s holdings",
+            len(available_screeners),
+            len(portfolio_data),
+        )
 
         for holding_data in portfolio_data:
             passed_screeners = []
@@ -89,12 +93,12 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
         )
 
     except ImportError as e:
-        logger.error(f"Failed to import screener configuration: {e}")
+        logger.error("Failed to import screener configuration: %s", e)
         for holding_data in portfolio_data:
             holding_data["passedScreeners"] = []
             holding_data["screener_score"] = 0
     except Exception as e:
-        logger.error(f"Unexpected error in screener calculation: {e}", exc_info=True)
+        logger.error("Unexpected error in screener calculation: %s", e, exc_info=True)
         # Continue without screener results if calculation fails
         for holding_data in portfolio_data:
             holding_data["passedScreeners"] = []
@@ -118,7 +122,7 @@ def validate_screener_fields(available_screeners: list, sample_holding: dict) ->
     if missing_fields:
         # This is downgraded to a warning, as some data might not be available for all stocks,
         # which is a normal occurrence. The eval engine handles this gracefully.
-        logger.warning(f"Screener fields not found in sample holding data: {missing_fields}")
+        logger.warning("Screener fields not found in sample holding data: %s", missing_fields)
 
     # This validation can be noisy if technical indicators haven't been added yet.
     # It's more for initial setup debugging.
@@ -143,4 +147,4 @@ def validate_screener_fields(available_screeners: list, sample_holding: dict) ->
     unexpected_fields = set(sample_holding.keys()) - all_known_fields
 
     if unexpected_fields:
-        logger.debug(f"Fields in holding data not defined in screeners: {unexpected_fields}")
+        logger.debug("Fields in holding data not defined in screeners: %s", unexpected_fields)

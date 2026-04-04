@@ -214,7 +214,7 @@ def update_currency_rates(currencies: tuple[str, ...]) -> dict[str, float]:
             )
 
             if existing:
-                logger.info(f"Updated rate {currency}: {rates[currency]}")
+                logger.info("Updated rate %s: %s", currency, rates[currency])
                 existing.rate = rates[currency]
                 existing.updated_at = datetime.now(TIMEZONE)
             else:
@@ -238,9 +238,9 @@ def request_json(url: str, headers: dict[str, str], retries: int = REQUEST_RETRY
             r = requests.get(url, headers=headers, timeout=10)
             if r.status_code == 200:
                 return r.json()
-            logger.warning(f"HTTP {r.status_code} for {url}: {r.text}")
+            logger.warning("HTTP %s for %s: %s", r.status_code, url, r.text)
         except requests.RequestException as exc:
-            logger.warning(f"Request error for {url}: {exc}")
+            logger.warning("Request error for %s: %s", url, exc)
         if attempt < retries - 1:
             time.sleep(2**attempt)
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
@@ -418,7 +418,7 @@ def update_holdings() -> list[HoldingDaily]:
                     result.append(new_holding)
                     created += 1
 
-    logger.info(f"Created {created} holdings, updated {updated} holdings")
+    logger.info("Created %s holdings, updated %s holdings", created, updated)
 
     return result
 
@@ -467,7 +467,7 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
                     print(instrument["isin"], instrument["ticker"])
                     raise e
 
-    logger.info(f"Created {created} instruments, updated {updated} instruments")
+    logger.info("Created %s instruments, updated %s instruments", created, updated)
 
     return instruments
 
@@ -535,7 +535,7 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
         try:
             session.execute(on_conflict_stmt)
         except Exception as e:
-            logger.error(f"Failed to bulk upsert prices for {tickers}: {e}")
+            logger.error("Failed to bulk upsert prices for %s: %s", tickers, e)
             session.rollback()  # Rollback this batch
 
 
@@ -632,14 +632,14 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
         # Fetch and store news
         yahoo_data["news"] = ticker.get_news()
     except ValueError as e:
-        logger.warning(f"Problem with parsing DataFrame {ticker.ticker}: {e}")
+        logger.warning("Problem with parsing DataFrame %s: %s", ticker.ticker, e)
 
     return ticker.ticker, yahoo_data
 
 
 def get_yahoo_ticker_data(symbols: list[str]) -> dict[str, YahooData]:
     """Update Yahoo Finance data for all holdings."""
-    logger.info(f"Fetching {len(symbols)} Yahoo Finance profiles")
+    logger.info("Fetching %s Yahoo Finance profiles", len(symbols))
     yahoo_data: dict[str, YahooData] = {}
 
     # Fetch in batches

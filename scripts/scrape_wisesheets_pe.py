@@ -251,7 +251,7 @@ def update_pe_data(limit: int = 100) -> None:
 
         rows = session.execute(query).scalars().all()
         tickers = [row.instrument.yahoo_symbol for row in rows][:10]
-        logger.info(f"Found {len(rows)} instruments to update: {tickers},...")
+        logger.info("Found %s instruments to update: %s,...", len(rows), tickers)
 
         with init_webdriver() as driver:
             for row in rows:
@@ -278,10 +278,21 @@ def update_pe_data(limit: int = 100) -> None:
                         .values(pes=formatted_data, updated_at=now)
                     )
                     session.commit()
-                    logger.info(f"Updated {ticker}: rowcount={result.rowcount}, instrument_id={row.instrument_id}")
+                    logger.info(
+                        "Updated %s: rowcount=%s, instrument_id=%s",
+                        ticker,
+                        result.rowcount,
+                        row.instrument_id,
+                    )
 
                 except Exception as e:
-                    logger.error(f"Error scraping {ticker} (instrument_id={row.instrument_id}): {e}", exc_info=True)
+                    logger.error(
+                        "Error scraping %s (instrument_id=%s): %s",
+                        ticker,
+                        row.instrument_id,
+                        e,
+                        exc_info=True,
+                    )
                     session.rollback()
                     sleep(20)
                     continue

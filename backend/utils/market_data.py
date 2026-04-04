@@ -84,7 +84,7 @@ async def gen_fear_greed_index(session: aiohttp.ClientSession) -> Optional[dict[
 
             return {"value": fear_greed_value, "label": fear_greed_label, "timestamp": data["timestamp"]}
     except Exception as e:
-        logger.warning(f"Error fetching Fear & Greed Index: {e}")
+        logger.warning("Error fetching Fear & Greed Index: %s", e)
         return None
 
 

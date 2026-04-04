@@ -171,7 +171,7 @@ def update_pe_data(limit: int = 100) -> None:
 
         rows = session.execute(query).scalars().all()
         tickers = [row.instrument.yahoo_symbol for row in rows][:10]
-        logger.info(f"Found {len(rows)} instruments to update: {tickers},...")
+        logger.info("Found %s instruments to update: %s,...", len(rows), tickers)
 
         for row in rows:
             ticker = row.instrument.yahoo_symbol
@@ -181,7 +181,7 @@ def update_pe_data(limit: int = 100) -> None:
             try:
                 html = fetch_html(url)
             except Exception as e:
-                logger.error(f"Error fetching HTML for {ticker} (instrument_id={row.instrument_id}): {e}")
+                logger.error("Error fetching HTML for %s (instrument_id=%s): %s", ticker, row.instrument_id, e)
                 sleep(20)
                 continue
 
@@ -191,7 +191,7 @@ def update_pe_data(limit: int = 100) -> None:
                 row.updated_at = datetime.now(TIMEZONE)
                 session.commit()
             else:
-                logger.warning(f"No PE data found for {ticker}")
+                logger.warning("No PE data found for %s", ticker)
 
             sleep(15)  # Be respectful to the server
 

@@ -202,7 +202,7 @@ async def calculate_volume_ratio_from_db(symbol: str, session: AsyncSession) -> 
         return today_volume / avg_20_volume
 
     except Exception as e:
-        logger.warning(f"Failed to calculate volume ratio for {symbol}: {e}")
+        logger.warning("Failed to calculate volume ratio for %s: %s", symbol, e)
         return None
 
 
@@ -229,7 +229,7 @@ async def calculate_volume_contraction_from_db(symbol: str, session: AsyncSessio
         return vol_20 < vol_60
 
     except Exception as e:
-        logger.warning(f"Failed to calculate volume contraction for {symbol}: {e}")
+        logger.warning("Failed to calculate volume contraction for %s: %s", symbol, e)
         return None
 
 
@@ -257,7 +257,7 @@ def calculate_relative_strength_vs_spy(symbol_prices: list[float], spy_prices: l
 
         return relative_strength
     except Exception as e:
-        logger.warning(f"Failed to calculate relative strength: {e}")
+        logger.warning("Failed to calculate relative strength: %s", e)
         return None
 
 
@@ -322,6 +322,6 @@ async def calculate_technical_indicators_for_symbols(
                 "volume_ratio": volume_ratio,
             }
     except Exception as e:
-        logger.error(f"Failed to calculate technical indicators: {e}", exc_info=True)
+        logger.error("Failed to calculate technical indicators: %s", e, exc_info=True)
 
     return rsi_data, technical_data

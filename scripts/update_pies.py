@@ -17,11 +17,11 @@ def update_pies():
             url = "https://live.trading212.com/api/v0/equity/pies"
             pies = request_json(url, {"Authorization": TRADING212_API_KEY})
 
-            logger.info(f"Found {len(pies)} pies to update")
+            logger.info("Found %s pies to update", len(pies))
 
             for pie_data in pies:
                 pie_id = pie_data["id"]
-                logger.debug(f"Processing pie {pie_id}...")
+                logger.debug("Processing pie %s...", pie_id)
 
                 # Fetch detailed pie data
                 sleep(10)  # Rate limiting
@@ -30,14 +30,14 @@ def update_pies():
 
                 # Store/update pie data
                 pie = store_pie_data(session, pie_data, detailed_data)
-                logger.debug(f"✓ Updated pie {pie_id}: {pie.name}")
+                logger.debug("✓ Updated pie %s: %s", pie_id, pie.name)
 
             session.commit()
             logger.debug("✓ All pies updated successfully!")
 
         except Exception as e:
             session.rollback()
-            logger.error(f"❌ Error updating pies: {e}")
+            logger.error("❌ Error updating pies: %s", e)
             raise
 
 
@@ -51,11 +51,11 @@ def store_pie_data(session, pie_data: dict, detailed_data: dict) -> Pie:
 
     if existing_pie:
         pie = existing_pie
-        logger.debug(f"  Updating existing pie {pie_id}")
+        logger.debug("  Updating existing pie %s", pie_id)
     else:
         pie = Pie(id=pie_id)
         session.add(pie)
-        logger.debug(f"  Creating new pie {pie_id}")
+        logger.debug("  Creating new pie %s", pie_id)
 
     # Update pie basic data (from first API call)
     pie.cash = pie_data.get("cash", 0.0)
@@ -113,7 +113,7 @@ def store_pie_instruments(session, pie: Pie, instruments_data: list):
         )
         session.add(instrument)
 
-    logger.info(f"  Updated {pie.name} ({len(instruments_data)} instruments)")
+    logger.info("  Updated %s (%s instruments)", pie.name, len(instruments_data))
 
 
 if __name__ == "__main__":
