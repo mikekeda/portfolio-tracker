@@ -5,6 +5,7 @@ Updates all database tables with fresh data from Trading212 API and Yahoo Financ
 """
 
 import concurrent.futures
+import logging
 import math
 import time
 from collections import defaultdict
@@ -49,6 +50,12 @@ from models import (
     PortfolioDaily,
     PricesDaily,
 )
+
+# yfinance can emit very noisy per-symbol error logs on known delisted/legacy tickers.
+# We keep our own aggregated error reporting and suppress third-party spam.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("yfinance.shared").setLevel(logging.CRITICAL)
+logging.getLogger("yfinance.multi").setLevel(logging.CRITICAL)
 
 
 # GET /api/v0/equity/metadata/instruments
@@ -469,7 +476,13 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
     """Update price data from Yahoo Finance."""
     now = datetime.now(TIMEZONE)
 
-    logger.info("Downloading prices (start: %s) for %s", start.strftime("%Y-%m-%d"), tickers)
+    preview = tickers[:10]
+    logger.info(
+        "Downloading prices (start: %s) for %d tickers (first 10: %s)",
+        start.strftime("%Y-%m-%d"),
+        len(tickers),
+        preview,
+    )
 
     df = yf.download(
         tickers=tickers,

@@ -113,7 +113,7 @@ def store_pie_instruments(session, pie: Pie, instruments_data: list):
         )
         session.add(instrument)
 
-    logger.info(f"  Updated {len(instruments_data)} instruments")
+    logger.info(f"  Updated {pie.name} ({len(instruments_data)} instruments)")
 
 
 if __name__ == "__main__":

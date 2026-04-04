@@ -7,7 +7,7 @@ import json
 import logging
 from datetime import date
 from pathlib import Path
-from time import sleep
+from time import perf_counter, sleep
 from typing import Any, Literal
 
 import requests
@@ -403,16 +403,16 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     ).scalar_one_or_none()
 
     if existing_report:
-        logger.info("  [skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
+        logger.debug("  [skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
         return existing_report
 
     # 3. Check HTML cache
     html_cached = _check_file_exists_for_date(ticker, report_date)
 
     if html_cached:
-        logger.info("  [cache] %s %s period %s — regenerating summary (no download)", ticker, form, report_date)
+        logger.debug("  [cache] %s %s period %s — regenerating summary (no download)", ticker, form, report_date)
     else:
-        logger.info("  [download] %s %s period %s — fetching from SEC", ticker, form, report_date)
+        logger.debug("  [download] %s %s period %s — fetching from SEC", ticker, form, report_date)
 
     # 4. Get HTML (returns cached file if present, downloads otherwise)
     try:
@@ -531,8 +531,15 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
 
         result = session.execute(query).all()
 
-        logger.info("Processing %d instruments: %s", len(result), [r.yahoo_symbol for r in result])
+        total = len(result)
+        start_ts = perf_counter()
+        logger.info(
+            "Processing %d instruments (first 10: %s)",
+            total,
+            [r.yahoo_symbol for r in result[:10]],
+        )
 
+        processed = 0
         for row in result:
             # Most recent Yahoo earnings date before today (used only for logging context)
             last_earnings_date = next(
@@ -542,7 +549,7 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
                 logger.warning("No valid earnings date found for %s despite query filter, skipping", row.yahoo_symbol)
                 continue
 
-            logger.info("── %s  (Yahoo last earnings: %s)", row.yahoo_symbol, last_earnings_date)
+            logger.debug("── %s  (Yahoo last earnings: %s)", row.yahoo_symbol, last_earnings_date)
 
             get_earnings_report(
                 ticker=row.yahoo_symbol,
@@ -550,8 +557,19 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
                 session=session,
                 instrument_id=row.id,
             )
+            processed += 1
+            if processed % 10 == 0 or processed == total:
+                elapsed = perf_counter() - start_ts
+                logger.info(
+                    "Earnings progress: %d/%d processed (elapsed %.1fs)",
+                    processed,
+                    total,
+                    elapsed,
+                )
 
             sleep(1)
+
+        logger.info("Earnings task complete: %d instruments processed in %.1fs", processed, perf_counter() - start_ts)
 
 
 if __name__ == "__main__":

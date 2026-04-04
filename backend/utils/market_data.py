@@ -109,7 +109,14 @@ async def gen_fred_latest(
         async with session.get(
             "https://api.stlouisfed.org/fred/series/observations", params=params, headers=headers
         ) as resp:
-            data = await resp.json()
+            if resp.status != 200:
+                # Avoid logging full URL/query string to prevent API key leakage.
+                logger.warning("FRED fetch error for %s: HTTP %s", series_id, resp.status)
+                return None
+
+            # Parse JSON without relying on server Content-Type; FRED occasionally returns
+            # incorrect headers via upstream edge/CDN layers.
+            data = await resp.json(content_type=None)
             obs = data.get("observations", [])
             out = []
             for o in obs:
@@ -118,8 +125,11 @@ async def gen_fred_latest(
                     continue
                 out.append({"date": o["date"], "value": float(v)})
             return out or None
+    except aiohttp.ContentTypeError:
+        logger.warning("FRED fetch error for %s: unexpected content type", series_id)
+        return None
     except Exception as e:
-        logger.warning(f"FRED fetch error for {series_id}: {e}")
+        logger.warning("FRED fetch error for %s: %s", series_id, e.__class__.__name__)
         return None
 
 
