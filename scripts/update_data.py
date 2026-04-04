@@ -463,9 +463,13 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
                         session.add(new_instrument)
                         instruments.append(new_instrument)
                         created += 1
-                except Exception as e:
-                    print(instrument["isin"], instrument["ticker"])
-                    raise e
+                except Exception:
+                    logger.exception(
+                        "Failed to upsert instrument (isin=%s, ticker=%s)",
+                        instrument.get("isin"),
+                        instrument.get("ticker"),
+                    )
+                    raise
 
     logger.info("Created %s instruments, updated %s instruments", created, updated)
 

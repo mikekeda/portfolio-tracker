@@ -8,6 +8,7 @@ Primarily targets US stocks (matching logic is simple).
 import requests
 from sqlalchemy import select
 
+from config import logger
 from models import Instrument
 from scripts.update_data import get_session
 
@@ -20,9 +21,9 @@ def fetch_sec_ticker_map() -> dict[str, str]:
     Returns a dict mapping {TICKER: CIK_STRING}
     e.g. {'AAPL': '0000320193'}
     """
-    print("Fetching SEC tickers...")
+    logger.info("Fetching SEC tickers...")
     headers = {"User-Agent": USER_AGENT}
-    resp = requests.get(SEC_TICKERS_URL, headers=headers)
+    resp = requests.get(SEC_TICKERS_URL, headers=headers, timeout=30)
     resp.raise_for_status()
     data = resp.json()
 
@@ -33,7 +34,7 @@ def fetch_sec_ticker_map() -> dict[str, str]:
         val_ticker = entry["ticker"].upper()
         result[val_ticker] = val_cik
 
-    print(f"Loaded {len(result)} tickers from SEC.")
+    logger.info("Loaded %s tickers from SEC.", len(result))
     return result
 
 
@@ -62,7 +63,7 @@ def populate_ciks():
                 inst.cik = found_cik
                 updated_count += 1
 
-        print(f"Total instruments updated with CIK: {updated_count}")
+        logger.info("Total instruments updated with CIK: %s", updated_count)
 
 
 if __name__ == "__main__":

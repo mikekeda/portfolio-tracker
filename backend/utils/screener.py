@@ -89,7 +89,9 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
         # Log summary for debugging
         total_matches = sum(len(h.get("passedScreeners", [])) for h in portfolio_data)
         logger.debug(
-            f"Screener evaluation complete: {total_matches} total matches across {len(portfolio_data)} holdings"
+            "Screener evaluation complete: %s total matches across %s holdings",
+            total_matches,
+            len(portfolio_data),
         )
 
     except ImportError as e:

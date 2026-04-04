@@ -325,14 +325,26 @@ def backfill_portfolio_daily(rebuild: bool = True):
 
             # Debug output
             logger.debug(
-                f"📊 {current_date}: Cash={cash_balance:.2f}, Invested={invested:.2f}, Unrealised={unrealised_profit:.2f}, Realised={total_realised_profit:.2f}, Value={value:.2f} "
-                f"MWRR={annual_mwrr_pct:.2f}%, TWRR={annual_twrr_pct:.2f}%"
+                "📊 %s: Cash=%.2f, Invested=%.2f, Unrealised=%.2f, Realised=%.2f, Value=%.2f MWRR=%.2f%%, TWRR=%.2f%%",
+                current_date,
+                cash_balance,
+                invested,
+                unrealised_profit,
+                total_realised_profit,
+                value,
+                annual_mwrr_pct,
+                annual_twrr_pct,
             )
             if current_date == today:
                 for isin, holding in sorted(list(holdings.items()), key=lambda x: x[1].name):
                     current_price = get_price(session, isin, current_date)
                     logger.debug(
-                        f"   {holding.name}: {holding.quantity:.4f} @ £{holding.avg_buy_price:.2f} = £{holding.total_cost:.2f} (market: £{current_price:.2f})"
+                        "   %s: %.4f @ £%.2f = £%.2f (market: £%.2f)",
+                        holding.name,
+                        holding.quantity,
+                        holding.avg_buy_price,
+                        holding.total_cost,
+                        current_price,
                     )
 
             if rebuild:

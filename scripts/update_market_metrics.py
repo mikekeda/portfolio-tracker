@@ -77,8 +77,14 @@ async def update_market_metrics():
                 fear_greed = fear_greed_data["value"] if fear_greed_data else None
 
                 logger.info(
-                    f"Metrics: Buffett={buffett}, Yield={yield_spread}, F&G={fear_greed}, "
-                    f"VIX={vix}, Breadth={breadth}, SMA200%={sma200_pct}, CS={consumer_sentiment}"
+                    "Metrics: Buffett=%s, Yield=%s, F&G=%s, VIX=%s, Breadth=%s, SMA200%%=%s, CS=%s",
+                    buffett,
+                    yield_spread,
+                    fear_greed,
+                    vix,
+                    breadth,
+                    sma200_pct,
+                    consumer_sentiment,
                 )
 
                 # Upsert into DB
