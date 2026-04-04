@@ -372,7 +372,7 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
 
         if buy_count > 0 and sell_count > 0 and net == 0:
             # Enrich with stable holders (from held dict) so the tooltip can show who's on the fence
-            buy_names  = {m["name"] for m in item["buy_managers"]}
+            buy_names = {m["name"] for m in item["buy_managers"]}
             sell_names = {m["name"] for m in item["sell_managers"]}
             if cusip in held:
                 item["managers"] = [

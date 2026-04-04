@@ -15,7 +15,7 @@ from bs4 import BeautifulSoup
 from google import genai
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
-from sqlalchemy.sql import text as sql_text, text
+from sqlalchemy.sql import text as sql_text
 
 from config import GEMINI_API_KEY, logger
 from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
@@ -134,7 +134,11 @@ class EarningsReportMetrics(BaseModel):
     )
     summary: str = Field(
         ...,
-        description="Markdown-formatted summary (300-500 words) with sections: Key Financial Results, Strategic Highlights, Risks & Headwinds, Future Outlook, Investment Thesis, Bottom Line. Use bold for key numbers, include specific percentages and comparisons.",
+        description=(
+            "Markdown-formatted summary (300-500 words) with sections: Key Financial Results, "
+            "Strategic Highlights, Risks & Headwinds, Future Outlook, Investment Thesis, Bottom Line. "
+            "Use bold for key numbers, include specific percentages and comparisons."
+        ),
     )
 
 
@@ -270,7 +274,9 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
             text = text[:max_chars]
 
         prompt = f"""
-        You are a value-oriented financial analyst helping a retail investor decide whether {ticker} is a good buy for their portfolio. Analyze this {form} earnings report and extract structured metrics while generating a comprehensive summary.
+        You are a value-oriented financial analyst helping a retail investor decide whether
+        {ticker} is a good buy for their portfolio. Analyze this {form} earnings report and
+        extract structured metrics while generating a comprehensive summary.
 
         **CRITICAL: EPS Guidance is the highest priority** - Stock price = EPS × PE ratio. If EPS guidance grows 10%, stock should theoretically grow 10% with same PE.
 
@@ -282,7 +288,9 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
              Calculate growth_pct vs prior year actual EPS if available.
            - **Revenue guidance**: extract in millions for next quarter and full year; calculate growth_pct if prior period available.
            - **Operating margin guidance**: capture if stated explicitly (e.g. "operating margin of approximately 20%", "adjusted EBIT margin ~15%").
-           - **Outlook commentary**: if no specific numbers exist, write 1–2 sentences summarising management's qualitative forward outlook (e.g. "expects double-digit revenue growth driven by cloud segment").
+           - **Outlook commentary**: if no specific numbers exist, write 1–2 sentences
+             summarising management's qualitative forward outlook
+             (e.g. "expects double-digit revenue growth driven by cloud segment").
            - **IMPORTANT**: For numeric fields, only populate from explicitly stated numbers. Do NOT infer or estimate numbers not in the text.
 
         2. **Consensus Comparison (if available):**

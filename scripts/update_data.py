@@ -560,7 +560,7 @@ def update_prices(tickers_to_add: set[str]) -> None:
 
         # Get prices for existing tickers
         for i in range(0, len(existing_prices), BATCH_SIZE_YF):
-            sub = existing_prices[i : i + BATCH_SIZE_YF]
+            sub = existing_prices[i:i + BATCH_SIZE_YF]
             start = min([row.max_date for row in sub]) + timedelta(days=1)
             if start > (today - timedelta(days=[3, 1, 1, 1, 1, 1, 2][today.weekday()])):
                 break
@@ -644,7 +644,7 @@ def get_yahoo_ticker_data(symbols: list[str]) -> dict[str, YahooData]:
 
     # Fetch in batches
     for i in range(0, len(symbols), BATCH_SIZE_YF):
-        batch = symbols[i : i + BATCH_SIZE_YF]
+        batch = symbols[i:i + BATCH_SIZE_YF]
 
         # Use yfinance's batch download capability
         tickers = yf.Tickers(" ".join(batch))

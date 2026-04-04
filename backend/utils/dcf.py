@@ -268,10 +268,12 @@ def _estimate_dcf_inputs(instrument: Instrument, risk_free_rate: float) -> DcfIn
     # each signal individually before blending so no single noisy reading
     # dominates the average.  The outer clamp below is the final safety net.
     _SIG_LO, _SIG_HI = -0.25, 0.35
-    rev_g  = _safe_number(info.get("revenueGrowth"))
+    rev_g = _safe_number(info.get("revenueGrowth"))
     earn_g = _safe_number(info.get("earningsGrowth"))
-    if rev_g  is not None: rev_g  = _clamp(rev_g,  _SIG_LO, _SIG_HI)
-    if earn_g is not None: earn_g = _clamp(earn_g, _SIG_LO, _SIG_HI)
+    if rev_g is not None:
+        rev_g = _clamp(rev_g, _SIG_LO, _SIG_HI)
+    if earn_g is not None:
+        earn_g = _clamp(earn_g, _SIG_LO, _SIG_HI)
 
     candidates = [g for g in [rev_g, earn_g, fcf_cagr] if g is not None]
     if candidates:

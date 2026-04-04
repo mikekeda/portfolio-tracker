@@ -6,12 +6,6 @@ into the MarketMetricsDaily table using async logic and shared backend utilities
 """
 
 import asyncio
-import os
-import sys
-
-# Add project root to path to allow imports from backend
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from datetime import datetime
 from typing import Optional
 

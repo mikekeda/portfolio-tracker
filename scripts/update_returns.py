@@ -13,16 +13,12 @@ Usage:
 """
 
 import argparse
-import os
-import sys
 from datetime import date, timedelta
 from typing import Optional
 
 import numpy as np
 from numpy_financial import irr
 from sqlalchemy import case, func, select, update
-
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from config import logger
 from models import PortfolioDaily, TransactionAction, TransactionHistory

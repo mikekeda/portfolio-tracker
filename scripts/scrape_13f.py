@@ -94,13 +94,13 @@ INVESTORS: list[dict[str, str]] = [
     {"name": "Baupost Group", "cik": "1061768"},
     {"name": "Pershing Square", "cik": "1336528"},
     {"name": "Pabrai Investment Funds", "cik": "1173334"},
-    {"name": "Scion Asset Management", "cik": "1649339"},   # Contrarian; small AUM but high-conviction buys
-    {"name": "Yacktman Asset Management", "cik": "905567"}, # GARP – quality compounders at a discount; patient, low turnover
+    {"name": "Scion Asset Management", "cik": "1649339"},  # Contrarian; small AUM but high-conviction buys
+    {"name": "Yacktman Asset Management", "cik": "905567"},  # GARP – quality compounders at a discount; patient, low turnover
     {"name": "Dodge & Cox", "cik": "200217"},               # Contrarian deep value; decades-long holds; adds institutional conviction signal
     {"name": "Harris Associates", "cik": "813917"},         # Oakmark funds; concentrated value with margin of safety; mid/large cap coverage
     # Quality compounders (strong alignment with buy-and-hold, 5-10y horizon)
     {"name": "Akre Capital Management", "cik": "1112520"},  # "Triple-double" compounders, 10y+ holds
-    {"name": "Polen Capital Management", "cik": "1034524"}, # Concentrated quality growth, low turnover
+    {"name": "Polen Capital Management", "cik": "1034524"},  # Concentrated quality growth, low turnover
     {"name": "Himalaya Capital", "cik": "1709323"},         # Li Lu – Buffett-adjacent, very concentrated
     # Long-term growth
     {"name": "Baillie Gifford", "cik": "1088875"},          # 5-10y growth horizon, $120B AUM
