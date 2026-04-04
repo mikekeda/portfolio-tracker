@@ -69,10 +69,10 @@ def find_golden_cross_in_last_n_days(prices: list[float], n_days: int) -> Option
 
     # Use rolling window approach for simplicity and clarity
     for i in range(49, len(prices)):
-        sma_50_values.append(sum(prices[i - 49:i + 1]) / 50)
+        sma_50_values.append(sum(prices[i - 49 : i + 1]) / 50)
 
     for i in range(199, len(prices)):
-        sma_200_values.append(sum(prices[i - 199:i + 1]) / 200)
+        sma_200_values.append(sum(prices[i - 199 : i + 1]) / 200)
 
     # Align the shorter SMA50 list with the SMA200 list
     # SMA50 values are available from day 50 onwards
@@ -153,7 +153,7 @@ def calculate_bb_width_percentile(
     # Calculate BB width for each day in the last lookback days
     bb_widths = []
     for i in range(len(prices) - lookback, len(prices)):
-        window = prices[i - period + 1:i + 1]
+        window = prices[i - period + 1 : i + 1]
         bb_width = calculate_bb_width(window, period)
         if bb_width is not None:
             bb_widths.append(bb_width)

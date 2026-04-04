@@ -74,7 +74,8 @@ class Guidance(BaseModel):
     eps_guidance: EPSGuidance | None = Field(None, description="EPS guidance is most important for stock price")
     revenue_guidance: RevenueGuidance | None = None
     operating_margin_guidance: float | None = Field(
-        None, description="Guided operating margin % for next period, if explicitly stated (e.g. 'we expect operating margin of ~20%')"
+        None,
+        description="Guided operating margin % for next period, if explicitly stated (e.g. 'we expect operating margin of ~20%')",
     )
     outlook_commentary: str | None = Field(
         None,
@@ -99,7 +100,8 @@ class InvestmentAssessment(BaseModel):
     """LLM assessment of whether the stock is a good buy based on the report."""
 
     recommendation: Literal["buy", "hold", "avoid", "consider"] = Field(
-        ..., description="Overall recommendation: buy (attractive), hold (neutral), avoid (unattractive), consider (worth researching)"
+        ...,
+        description="Overall recommendation: buy (attractive), hold (neutral), avoid (unattractive), consider (worth researching)",
     )
     conviction: Literal["high", "medium", "low"] = Field(
         ..., description="Confidence in the recommendation based on clarity of data"
@@ -453,12 +455,17 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     session.commit()
 
     eps_guidance = (metrics.get("guidance") or {}).get("eps_guidance") or {}
-    assessment = (metrics.get("investment_assessment") or {})
+    assessment = metrics.get("investment_assessment") or {}
     logger.info(
         "  [saved] %s %s period %s | rec=%s conv=%s | EPS next_q=%s next_y=%s growth=%s%%",
-        ticker, form, report_date,
-        assessment.get("recommendation", "—"), assessment.get("conviction", "—"),
-        eps_guidance.get("next_quarter"), eps_guidance.get("next_year"), eps_guidance.get("growth_pct"),
+        ticker,
+        form,
+        report_date,
+        assessment.get("recommendation", "—"),
+        assessment.get("conviction", "—"),
+        eps_guidance.get("next_quarter"),
+        eps_guidance.get("next_year"),
+        eps_guidance.get("growth_pct"),
     )
     return earnings_report
 
@@ -526,11 +533,15 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
         if only_holdings:
             latest_date = session.execute(select(func.max(HoldingDaily.date))).scalar()
             if latest_date:
-                held_ids = session.execute(
-                    select(HoldingDaily.instrument_id)
-                    .where(HoldingDaily.date == latest_date)
-                    .where(HoldingDaily.quantity > 0)
-                ).scalars().all()
+                held_ids = (
+                    session.execute(
+                        select(HoldingDaily.instrument_id)
+                        .where(HoldingDaily.date == latest_date)
+                        .where(HoldingDaily.quantity > 0)
+                    )
+                    .scalars()
+                    .all()
+                )
                 query = query.filter(Instrument.id.in_(held_ids))
                 logger.info("only_holdings=True: restricting to %d held instruments", len(held_ids))
             else:

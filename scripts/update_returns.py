@@ -29,6 +29,7 @@ from scripts.update_data import get_session
 # Data loading (2 queries total, no per-holding price lookups)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def load_portfolio_snapshots(session) -> list[tuple[date, float]]:
     """Return [(date, value), ...] ordered chronologically for all rows with a value."""
     rows = session.execute(
@@ -63,6 +64,7 @@ def load_daily_cash_flows(session) -> dict[date, float]:
 # ──────────────────────────────────────────────────────────────────────────────
 # Return calculations (pure Python / numpy, no further DB access)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def compute_returns(
     snapshots: list[tuple[date, float]],
@@ -152,6 +154,7 @@ def compute_returns(
 # Main entry point
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def update_returns(rebuild: bool = False) -> None:
     logger.info("Updating MWRR/TWRR returns (rebuild=%s)...", rebuild)
 
@@ -170,9 +173,7 @@ def update_returns(rebuild: bool = False) -> None:
         if not rebuild:
             needs_update: set[date] = set()
             for row in session.execute(
-                select(PortfolioDaily.date).where(
-                    (PortfolioDaily.mwrr.is_(None)) | (PortfolioDaily.twrr.is_(None))
-                )
+                select(PortfolioDaily.date).where((PortfolioDaily.mwrr.is_(None)) | (PortfolioDaily.twrr.is_(None)))
             ).all():
                 needs_update.add(row.date)
 
@@ -186,8 +187,7 @@ def update_returns(rebuild: bool = False) -> None:
 
         # 4. Write results to DB (sequential UPDATEs, single commit at the end)
         updates = [
-            {"_date": snap_date, "_mwrr": float(mwrr), "_twrr": float(twrr)}
-            for snap_date, mwrr, twrr in computed
+            {"_date": snap_date, "_mwrr": float(mwrr), "_twrr": float(twrr)} for snap_date, mwrr, twrr in computed
         ]
         written = len(updates)
 
@@ -200,8 +200,13 @@ def update_returns(rebuild: bool = False) -> None:
         if updates:
             session.commit()
             last = updates[-1]
-            logger.info("Done. Updated %d rows. Latest (%s): MWRR=%.2f%%, TWRR=%.2f%%",
-                        written, last["_date"], last["_mwrr"], last["_twrr"])
+            logger.info(
+                "Done. Updated %d rows. Latest (%s): MWRR=%.2f%%, TWRR=%.2f%%",
+                written,
+                last["_date"],
+                last["_mwrr"],
+                last["_twrr"],
+            )
         else:
             logger.info("Done. No rows updated.")
 

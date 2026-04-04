@@ -95,26 +95,38 @@ INVESTORS: list[dict[str, str]] = [
     {"name": "Pershing Square", "cik": "1336528"},
     {"name": "Pabrai Investment Funds", "cik": "1173334"},
     {"name": "Scion Asset Management", "cik": "1649339"},  # Contrarian; small AUM but high-conviction buys
-    {"name": "Yacktman Asset Management", "cik": "905567"},  # GARP – quality compounders at a discount; patient, low turnover
-    {"name": "Dodge & Cox", "cik": "200217"},               # Contrarian deep value; decades-long holds; adds institutional conviction signal
-    {"name": "Harris Associates", "cik": "813917"},         # Oakmark funds; concentrated value with margin of safety; mid/large cap coverage
+    {
+        "name": "Yacktman Asset Management",
+        "cik": "905567",
+    },  # GARP – quality compounders at a discount; patient, low turnover
+    {
+        "name": "Dodge & Cox",
+        "cik": "200217",
+    },  # Contrarian deep value; decades-long holds; adds institutional conviction signal
+    {
+        "name": "Harris Associates",
+        "cik": "813917",
+    },  # Oakmark funds; concentrated value with margin of safety; mid/large cap coverage
     # Quality compounders (strong alignment with buy-and-hold, 5-10y horizon)
     {"name": "Akre Capital Management", "cik": "1112520"},  # "Triple-double" compounders, 10y+ holds
     {"name": "Polen Capital Management", "cik": "1034524"},  # Concentrated quality growth, low turnover
-    {"name": "Himalaya Capital", "cik": "1709323"},         # Li Lu – Buffett-adjacent, very concentrated
+    {"name": "Himalaya Capital", "cik": "1709323"},  # Li Lu – Buffett-adjacent, very concentrated
     # Long-term growth
-    {"name": "Baillie Gifford", "cik": "1088875"},          # 5-10y growth horizon, $120B AUM
+    {"name": "Baillie Gifford", "cik": "1088875"},  # 5-10y growth horizon, $120B AUM
     {"name": "Lone Pine Capital", "cik": "1061165"},
     {"name": "Coatue Management", "cik": "1135730"},
-    {"name": "Tiger Global", "cik": "1167483"},             # Volatile but tracks quality tech compounders
-    {"name": "Artisan Partners", "cik": "1466153"},         # Multi-strategy; 13F aggregates all funds (Global Value + growth); good international coverage
+    {"name": "Tiger Global", "cik": "1167483"},  # Volatile but tracks quality tech compounders
+    {
+        "name": "Artisan Partners",
+        "cik": "1466153",
+    },  # Multi-strategy; 13F aggregates all funds (Global Value + growth); good international coverage
     # Activist / engagement
     {"name": "Third Point", "cik": "1040273"},
     {"name": "ValueAct Holdings", "cik": "1418814"},
     # Macro / diversified
     {"name": "Duquesne Family Office", "cik": "1536411"},
     {"name": "Appaloosa", "cik": "1656456"},
-    {"name": "GQG Partners", "cik": "1697233"},             # Quality growth, $65B AUM, strong track record
+    {"name": "GQG Partners", "cik": "1697233"},  # Quality growth, $65B AUM, strong track record
 ]
 
 
@@ -146,12 +158,14 @@ def get_recent_13f_filings(cik: str, max_filings: int = 2) -> list[FilingMetadat
         if report_date in seen_dates:
             continue
         seen_dates.add(report_date)
-        result.append({
-            "accessionNumber": accessions[i] if i < len(accessions) else "",
-            "primaryDocument": primary_docs[i] if i < len(primary_docs) else "",
-            "form": form,
-            "reportDate": report_date,
-        })
+        result.append(
+            {
+                "accessionNumber": accessions[i] if i < len(accessions) else "",
+                "primaryDocument": primary_docs[i] if i < len(primary_docs) else "",
+                "form": form,
+                "reportDate": report_date,
+            }
+        )
         if len(result) >= max_filings:
             break
     return result
@@ -296,7 +310,10 @@ def scrape_investor(
     fetch_count = default_quarters if len(existing_dates) < default_quarters else 1
     logger.info(
         "Fetching 13F for %s (CIK %s) — %d quarter(s) [%d in DB]",
-        name, cik, fetch_count, len(existing_dates),
+        name,
+        cik,
+        fetch_count,
+        len(existing_dates),
     )
     sleep(REQUEST_DELAY)
 
@@ -339,16 +356,18 @@ def scrape_investor(
 
         total_value = sum(h["value"] for h in holdings)
 
-        results.append({
-            "investor": name,
-            "cik": cik,
-            "reportDate": report_date,
-            "form": metadata["form"],
-            "accessionNumber": accession,
-            "holdingsCount": len(holdings),
-            "totalValue": total_value,
-            "holdings": holdings,
-        })
+        results.append(
+            {
+                "investor": name,
+                "cik": cik,
+                "reportDate": report_date,
+                "form": metadata["form"],
+                "accessionNumber": accession,
+                "holdingsCount": len(holdings),
+                "totalValue": total_value,
+                "holdings": holdings,
+            }
+        )
         logger.info("  %s: report %s, %d holdings, $%s", name, report_date, len(holdings), f"{total_value:,}")
 
     return results
@@ -357,14 +376,10 @@ def scrape_investor(
 def _get_existing_report_dates(session: Session, cik: str) -> set[str]:
     """Return ISO report dates already stored in DB for a manager (by CIK)."""
     normalized = _normalize_cik(cik)
-    manager = session.execute(
-        select(Form13FManager).where(Form13FManager.cik == normalized)
-    ).scalar_one_or_none()
+    manager = session.execute(select(Form13FManager).where(Form13FManager.cik == normalized)).scalar_one_or_none()
     if not manager:
         return set()
-    rows = session.execute(
-        select(Form13FFiling.report_date).where(Form13FFiling.manager_id == manager.id)
-    ).all()
+    rows = session.execute(select(Form13FFiling.report_date).where(Form13FFiling.manager_id == manager.id)).all()
     return {row.report_date.isoformat() for row in rows}
 
 
