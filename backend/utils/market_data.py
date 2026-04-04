@@ -173,10 +173,10 @@ async def get_risk_free_rate(session: aiohttp.ClientSession) -> float:
 # FRED series IDs for 10-year government bond yields by instrument currency.
 # EUR uses the German Bund as the euro-area benchmark; all others are direct.
 _CURRENCY_FRED_SERIES: dict[str, str] = {
-    "USD": "DGS10",              # US 10-year T-note (daily)
-    "GBP": "IRLTLT01GBM156N",   # UK 10-year Gilt (monthly, OECD)
-    "EUR": "IRLTLT01DEM156N",   # Germany 10-year Bund (monthly, OECD)
-    "CAD": "IRLTLT01CAM156N",   # Canada 10-year (monthly, OECD)
+    "USD": "DGS10",  # US 10-year T-note (daily)
+    "GBP": "IRLTLT01GBM156N",  # UK 10-year Gilt (monthly, OECD)
+    "EUR": "IRLTLT01DEM156N",  # Germany 10-year Bund (monthly, OECD)
+    "CAD": "IRLTLT01CAM156N",  # Canada 10-year (monthly, OECD)
 }
 
 # Conservative fallbacks if FRED is unavailable (approximate 2025/2026 levels)
@@ -206,7 +206,9 @@ async def get_risk_free_rates(session: aiohttp.ClientSession) -> dict[str, float
     for currency, obs in zip(currencies, results):
         if isinstance(obs, Exception) or not obs:
             rates[currency] = _RFR_FALLBACKS[currency]
-            logger.warning("FRED risk-free rate fetch failed for %s, using fallback %.3f", currency, _RFR_FALLBACKS[currency])
+            logger.warning(
+                "FRED risk-free rate fetch failed for %s, using fallback %.3f", currency, _RFR_FALLBACKS[currency]
+            )
         else:
             rates[currency] = obs[0]["value"] / 100.0
     return rates

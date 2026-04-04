@@ -105,11 +105,7 @@ async def get_market_indicators_history(
         query = select(MarketMetricsDaily).order_by(MarketMetricsDaily.date)
     else:
         cutoff = datetime.now(TIMEZONE).date() - timedelta(days=days)
-        query = (
-            select(MarketMetricsDaily)
-            .where(MarketMetricsDaily.date >= cutoff)
-            .order_by(MarketMetricsDaily.date)
-        )
+        query = select(MarketMetricsDaily).where(MarketMetricsDaily.date >= cutoff).order_by(MarketMetricsDaily.date)
 
     result = await session.execute(query)
     rows = result.scalars().all()
@@ -121,9 +117,7 @@ async def get_market_indicators_history(
             "fear_greed_index": row.fear_greed_index,
             "vix": row.vix,
             "market_breadth_indicator": (
-                round(row.market_breadth_indicator * 100, 2)
-                if row.market_breadth_indicator is not None
-                else None
+                round(row.market_breadth_indicator * 100, 2) if row.market_breadth_indicator is not None else None
             ),
             "sp500_above_sma200": row.sp500_above_sma200,
             "consumer_sentiment": row.consumer_sentiment,

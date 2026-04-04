@@ -1,4 +1,5 @@
 """Transaction history and income summary endpoint."""
+
 from collections import defaultdict
 from typing import Any, Optional
 
@@ -23,14 +24,16 @@ def _fees_gbp(fees: list | None, exchange_rate: float | None) -> float:
         fee_gbp = fee_foreign * exchange_rate
     """
     total = 0.0
-    for f in (fees or []):
+    for f in fees or []:
         amount = abs(f.get("quantity", 0.0))
         currency = f.get("currency")
         # Determine whether this fee needs FX conversion
         is_foreign = (
-            currency not in (None, "GBP", "GBX")           # explicit non-GBP
-            or (currency is None                             # old record: infer by name
-                and f.get("name") == "WITHHOLDING_TAX")
+            currency not in (None, "GBP", "GBX")  # explicit non-GBP
+            or (
+                currency is None  # old record: infer by name
+                and f.get("name") == "WITHHOLDING_TAX"
+            )
         )
         if is_foreign and exchange_rate:
             amount *= exchange_rate
@@ -38,11 +41,13 @@ def _fees_gbp(fees: list | None, exchange_rate: float | None) -> float:
     return total
 
 
-_DIVIDEND_ACTIONS = frozenset({
-    TransactionAction.DIVIDEND,
-    TransactionAction.DIVIDEND_PROPERTY,
-    TransactionAction.DIVIDEND_TAX_EXEMPT,
-})
+_DIVIDEND_ACTIONS = frozenset(
+    {
+        TransactionAction.DIVIDEND,
+        TransactionAction.DIVIDEND_PROPERTY,
+        TransactionAction.DIVIDEND_TAX_EXEMPT,
+    }
+)
 _SELL_ACTIONS = frozenset({TransactionAction.MARKET_SELL, TransactionAction.LIMIT_SELL})
 
 
@@ -60,18 +65,13 @@ async def get_transactions(
     # joins on t212_code, but TransactionHistory.ticker stores the Yahoo symbol, so
     # a direct query by yahoo_symbol is more reliable.
     instr_rows = await session.execute(
-        select(Instrument.yahoo_symbol, Instrument.name, Instrument.currency)
-        .where(Instrument.yahoo_symbol.isnot(None))
+        select(Instrument.yahoo_symbol, Instrument.name, Instrument.currency).where(Instrument.yahoo_symbol.isnot(None))
     )
     instrument_map: dict[str, dict] = {
-        row.yahoo_symbol: {"name": row.name, "currency": row.currency}
-        for row in instr_rows
+        row.yahoo_symbol: {"name": row.name, "currency": row.currency} for row in instr_rows
     }
 
-    result = await session.execute(
-        select(TransactionHistory)
-        .order_by(TransactionHistory.timestamp.desc())
-    )
+    result = await session.execute(select(TransactionHistory).order_by(TransactionHistory.timestamp.desc()))
     all_txns = result.scalars().all()
 
     # ── Aggregate summary (full history, unfiltered) ──────────────────────────
@@ -115,15 +115,14 @@ async def get_transactions(
             total_realized_gains += txn.result
 
     # Build dividend chart — all months in ascending order (frontend trims to 24)
-    dividends_chart = [
-        {"month": m, "amount": round(v, 2)}
-        for m, v in sorted(dividends_by_month.items())
-    ]
+    dividends_chart = [{"month": m, "amount": round(v, 2)} for m, v in sorted(dividends_by_month.items())]
 
     # Top payers sorted by cumulative total
     top_dividend_payers = sorted(
-        [{"ticker": t, "name": d["name"], "total": round(d["total"], 2), "count": d["count"]}
-         for t, d in dividends_by_ticker.items()],
+        [
+            {"ticker": t, "name": d["name"], "total": round(d["total"], 2), "count": d["count"]}
+            for t, d in dividends_by_ticker.items()
+        ],
         key=lambda x: x["total"],
         reverse=True,
     )
@@ -134,21 +133,23 @@ async def get_transactions(
         fees = _fees_gbp(txn.fees, txn.exchange_rate)
         instr = instrument_map.get(txn.ticker) if txn.ticker else None
 
-        txn_list.append({
-            "id": txn.id,
-            "date": txn.timestamp.isoformat(),
-            "ticker": txn.ticker,
-            "name": instr["name"] if instr else None,
-            "action": txn.action.value,
-            "quantity": txn.quantity,
-            "price": txn.price,
-            "currency": instr["currency"] if instr else None,  # native stock currency
-            "total": round(txn.total, 2),     # always GBP
-            "exchange_rate": txn.exchange_rate,
-            "result": round(txn.result, 2) if txn.result is not None else None,
-            "fees": round(fees, 2),           # always GBP (converted via _fees_gbp)
-            "notes": txn.notes,
-        })
+        txn_list.append(
+            {
+                "id": txn.id,
+                "date": txn.timestamp.isoformat(),
+                "ticker": txn.ticker,
+                "name": instr["name"] if instr else None,
+                "action": txn.action.value,
+                "quantity": txn.quantity,
+                "price": txn.price,
+                "currency": instr["currency"] if instr else None,  # native stock currency
+                "total": round(txn.total, 2),  # always GBP
+                "exchange_rate": txn.exchange_rate,
+                "result": round(txn.result, 2) if txn.result is not None else None,
+                "fees": round(fees, 2),  # always GBP (converted via _fees_gbp)
+                "notes": txn.notes,
+            }
+        )
 
     return {
         "summary": {

@@ -2,6 +2,7 @@
 Shared view-layer helpers used across multiple routers:
 currency rate lookup, historical trend calculation, and the PRICE_COLUMN constant.
 """
+
 from datetime import datetime
 from typing import Optional
 

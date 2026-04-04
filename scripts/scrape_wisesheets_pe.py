@@ -1,6 +1,7 @@
 """
 Scrape Wisesheets PE ratio historical data for a given stock.
 """
+
 import platform
 import sys
 from collections import defaultdict

@@ -2,6 +2,7 @@
 Route registration: imports all routers and includes them into the FastAPI app.
 `app` is re-exported so that `run.py` can do `from backend.views import app`.
 """
+
 from backend.app import app, get_db_session  # noqa: F401  (get_db_session re-exported for convenience)
 from backend.views import chart, earnings, form13f, instrument, market, portfolio, transactions
 

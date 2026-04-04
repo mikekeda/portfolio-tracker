@@ -50,7 +50,7 @@ async def _build_earnings_reports(instrument, yh, session: AsyncSession) -> list
     announcement_dates: list[date] = []
     for report in reports:
         best: date | None = None
-        best_delta = float('inf')
+        best_delta = float("inf")
         for yd in yahoo_dates:
             delta = (yd - report.date).days
             if 0 <= delta <= 90 and delta < best_delta:
@@ -83,15 +83,17 @@ async def _build_earnings_reports(instrument, yh, session: AsyncSession) -> list
                     price_at_announcement = round(p, 2)
                     break
 
-        result.append({
-            "id": report.id,
-            "date": report.date.isoformat(),
-            "announcement_date": ann_date.isoformat() if ann_date else None,
-            "price_at_announcement": price_at_announcement,
-            "summary": report.summary,
-            "metrics": report.metrics,
-            "created_at": report.created_at.isoformat() if report.created_at else None,
-        })
+        result.append(
+            {
+                "id": report.id,
+                "date": report.date.isoformat(),
+                "announcement_date": ann_date.isoformat() if ann_date else None,
+                "price_at_announcement": price_at_announcement,
+                "summary": report.summary,
+                "metrics": report.metrics,
+                "created_at": report.created_at.isoformat() if report.created_at else None,
+            }
+        )
 
     return result
 
@@ -218,27 +220,25 @@ async def get_instrument(
 
         shares_prev = prev["shares"] if prev else None
         value_prev_h = prev["value"] if prev else None
-        change = _compute_form13f_change(
-            latest["shares"], shares_prev, value=latest["value"], value_prev=value_prev_h
-        )
+        change = _compute_form13f_change(latest["shares"], shares_prev, value=latest["value"], value_prev=value_prev_h)
         report_date_prev = prev["report_date"].isoformat() if prev else None
 
         filing_total = latest.get("filing_total_value") or 0
-        pct_of_portfolio = (
-            (latest["value"] / filing_total * 100) if filing_total and filing_total > 0 else None
-        )
+        pct_of_portfolio = (latest["value"] / filing_total * 100) if filing_total and filing_total > 0 else None
 
-        form13f_holdings.append({
-            "manager_name": latest["manager_name"],
-            "value": latest["value"],
-            "pct_of_portfolio": round(pct_of_portfolio, 2) if pct_of_portfolio is not None else None,
-            "shares": latest["shares"],
-            "report_date": latest["report_date"].isoformat(),
-            "change": change,
-            "shares_prev": shares_prev,
-            "report_date_prev": report_date_prev,
-            "sec_filing_url": _build_sec_13f_url(latest.get("manager_cik"), latest.get("accession_number")),
-        })
+        form13f_holdings.append(
+            {
+                "manager_name": latest["manager_name"],
+                "value": latest["value"],
+                "pct_of_portfolio": round(pct_of_portfolio, 2) if pct_of_portfolio is not None else None,
+                "shares": latest["shares"],
+                "report_date": latest["report_date"].isoformat(),
+                "change": change,
+                "shares_prev": shares_prev,
+                "report_date_prev": report_date_prev,
+                "sec_filing_url": _build_sec_13f_url(latest.get("manager_cik"), latest.get("accession_number")),
+            }
+        )
 
     # Sort by value descending (biggest holders first)
     form13f_holdings.sort(key=lambda x: x["value"], reverse=True)
@@ -269,23 +269,16 @@ async def get_instrument(
             )
             all_holdings = all_holdings_result.scalars().all()
             total_portfolio_value = sum(
-                h.quantity * h.current_price * currency_rates.get(h.instrument.currency, 1.0)
-                for h in all_holdings
+                h.quantity * h.current_price * currency_rates.get(h.instrument.currency, 1.0) for h in all_holdings
             )
             market_value_gbp = (
-                user_holding.quantity
-                * user_holding.current_price
-                * currency_rates.get(instrument.currency, 1.0)
+                user_holding.quantity * user_holding.current_price * currency_rates.get(instrument.currency, 1.0)
             )
-            portfolio_pct = (
-                (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
-            )
+            portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
             profit = user_holding.ppl if user_holding.ppl is not None else 0
             cost_basis = (market_value_gbp - user_holding.ppl) if user_holding.ppl is not None else 0
             return_pct = (
-                (user_holding.ppl / cost_basis * 100.0)
-                if user_holding.ppl is not None and cost_basis > 0
-                else 0.0
+                (user_holding.ppl / cost_basis * 100.0) if user_holding.ppl is not None and cost_basis > 0 else 0.0
             )
             my_position = {
                 "portfolio_pct": round(portfolio_pct, 2),
@@ -297,9 +290,7 @@ async def get_instrument(
     dcf_results = await get_dcf_prices([instrument])
     dcf_price: float | None = dcf_results[0] if dcf_results else None
     current_price = fundamentals.get("currentPrice")
-    dcf_diff: float | None = (
-        (dcf_price / current_price - 1) if (dcf_price and current_price) else None
-    )
+    dcf_diff: float | None = (dcf_price / current_price - 1) if (dcf_price and current_price) else None
 
     yh = instrument.yahoo
     return {
@@ -319,9 +310,9 @@ async def get_instrument(
         "cashflow": (yh.cashflow or {}) if yh else {},
         "prices": chart_price_data,
         "orders": chart_orders_data,
-        "pe_history": {
-            k: v["pe_ratio"] for k, v in (yh.pes or {}).items() if date.fromisoformat(k) >= start_date
-        } if yh else {},
+        "pe_history": {k: v["pe_ratio"] for k, v in (yh.pes or {}).items() if date.fromisoformat(k) >= start_date}
+        if yh
+        else {},
         "splits": {k: v for k, v in (yh.splits or {}).items() if date.fromisoformat(k) >= start_date} if yh else {},
         "recommendations": (yh.recommendations or {}) if yh else {},
         "news": yh.news if yh else [],

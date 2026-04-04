@@ -33,9 +33,7 @@ async def get_earnings_calendar(
 
     # Load all instruments with their Yahoo data
     instruments_q = (
-        select(Instrument)
-        .where(Instrument.yahoo_symbol.isnot(None))
-        .options(selectinload(Instrument.yahoo))
+        select(Instrument).where(Instrument.yahoo_symbol.isnot(None)).options(selectinload(Instrument.yahoo))
     )
     instruments = list((await session.execute(instruments_q)).scalars().all())
 
@@ -55,8 +53,9 @@ async def get_earnings_calendar(
     # Load EarningsReport rows only for the instruments we're showing
     inst_ids = {inst.id for inst in instruments}
     reports_result = await session.execute(
-        select(EarningsReport.instrument_id, EarningsReport.date, EarningsReport.metrics)
-        .where(EarningsReport.instrument_id.in_(inst_ids))
+        select(EarningsReport.instrument_id, EarningsReport.date, EarningsReport.metrics).where(
+            EarningsReport.instrument_id.in_(inst_ids)
+        )
     )
     reports_by_inst: dict[int, list] = {}
     for inst_id, rdate, metrics in reports_result.all():
@@ -71,7 +70,7 @@ async def get_earnings_calendar(
         yh = inst.yahoo
         if not yh:
             continue
-        for date_str in (yh.earnings or {}):
+        for date_str in yh.earnings or {}:
             try:
                 d = date.fromisoformat(date_str[:10])
                 if window_start <= d <= today:
@@ -149,23 +148,25 @@ async def get_earnings_calendar(
             eps_act = eps_data.get("Reported EPS") if isinstance(eps_data, dict) else None
             surprise = eps_data.get("Surprise(%)") if isinstance(eps_data, dict) else None
 
-            events.append({
-                "date": event_date.isoformat(),
-                "symbol": symbol,
-                "name": name,
-                "type": "past",
-                "has_report": has_report,
-                "eps_estimate": float(eps_est) if eps_est is not None else None,
-                "eps_actual": float(eps_act) if eps_act is not None else None,
-                "surprise_pct": float(surprise) if surprise is not None else None,
-                "signal": signal,
-                "conviction": conviction,
-                "rationale_snippet": rationale_snippet,
-                "report_period_date": report_period_date,
-                "price_at_date": price_at_date,
-                "current_price": round(current_price, 2) if current_price else None,
-                "price_change_pct": price_change_pct,
-            })
+            events.append(
+                {
+                    "date": event_date.isoformat(),
+                    "symbol": symbol,
+                    "name": name,
+                    "type": "past",
+                    "has_report": has_report,
+                    "eps_estimate": float(eps_est) if eps_est is not None else None,
+                    "eps_actual": float(eps_act) if eps_act is not None else None,
+                    "surprise_pct": float(surprise) if surprise is not None else None,
+                    "signal": signal,
+                    "conviction": conviction,
+                    "rationale_snippet": rationale_snippet,
+                    "report_period_date": report_period_date,
+                    "price_at_date": price_at_date,
+                    "current_price": round(current_price, 2) if current_price else None,
+                    "price_change_pct": price_change_pct,
+                }
+            )
 
         # ── Upcoming event from Yahoo info.earningsTimestamp ──────────────
         ts = (yh.info or {}).get("earningsTimestamp")
@@ -175,23 +176,25 @@ async def get_earnings_calendar(
             except (ValueError, OSError):
                 upcoming_date = None
             if upcoming_date and today < upcoming_date <= window_end:
-                events.append({
-                    "date": upcoming_date.isoformat(),
-                    "symbol": symbol,
-                    "name": name,
-                    "type": "upcoming",
-                    "has_report": False,
-                    "eps_estimate": None,
-                    "eps_actual": None,
-                    "surprise_pct": None,
-                    "signal": None,
-                    "conviction": None,
-                    "rationale_snippet": None,
-                    "report_period_date": None,
-                    "price_at_date": None,
-                    "current_price": round(current_price, 2) if current_price else None,
-                    "price_change_pct": None,
-                })
+                events.append(
+                    {
+                        "date": upcoming_date.isoformat(),
+                        "symbol": symbol,
+                        "name": name,
+                        "type": "upcoming",
+                        "has_report": False,
+                        "eps_estimate": None,
+                        "eps_actual": None,
+                        "surprise_pct": None,
+                        "signal": None,
+                        "conviction": None,
+                        "rationale_snippet": None,
+                        "report_period_date": None,
+                        "price_at_date": None,
+                        "current_price": round(current_price, 2) if current_price else None,
+                        "price_change_pct": None,
+                    }
+                )
 
     # Deduplicate: if a past Yahoo event and an upcoming event share same symbol+date, keep past
     seen: dict[tuple, dict] = {}

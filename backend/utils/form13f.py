@@ -2,6 +2,7 @@
 Shared 13F computation helpers: TypedDicts, constants, pure QoQ change
 functions, and the DB query helper used across multiple views.
 """
+
 from collections import defaultdict
 from datetime import date
 from typing import Optional, TypedDict
@@ -12,9 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import Form13FFiling, Form13FHolding, Form13FManager
 
 # Thresholds (USD for value, % for change)
-FORM13F_MIN_VALUE_NEW = 50_000       # Ignore "New" positions below this (pilot/noise)
-FORM13F_INCREASE_EFFECTIVE_NEW = 1000        # +1000%+ = effectively new position
-FORM13F_TRIM_EFFECTIVE_LIQUIDATION = -90     # -90%+ = effectively liquidated
+FORM13F_MIN_VALUE_NEW = 50_000  # Ignore "New" positions below this (pilot/noise)
+FORM13F_INCREASE_EFFECTIVE_NEW = 1000  # +1000%+ = effectively new position
+FORM13F_TRIM_EFFECTIVE_LIQUIDATION = -90  # -90%+ = effectively liquidated
 
 
 class Form13FHolder(TypedDict):
@@ -235,25 +236,23 @@ async def _get_form13f_for_instruments(
             value_prev = None
 
         shares = latest["shares"]
-        change = _compute_form13f_change(
-            shares, shares_prev, value=latest["value"], value_prev=value_prev
-        )
-        score = _compute_form13f_signal_score(
-            shares, shares_prev, value=latest["value"], value_prev=value_prev
-        )
+        change = _compute_form13f_change(shares, shares_prev, value=latest["value"], value_prev=value_prev)
+        score = _compute_form13f_signal_score(shares, shares_prev, value=latest["value"], value_prev=value_prev)
         filing_total = latest["filing_total_value"] or 0
         conviction = latest["value"] / filing_total if filing_total > 0 else 0.0
-        by_instrument[iid].append({
-            "manager_id": mid,
-            "manager_name": latest["manager_name"],
-            "change": change,
-            "score": score,
-            "value": latest["value"],
-            "conviction": conviction,
-            "report_date": latest["report_date"].isoformat() if latest.get("report_date") else None,
-            "shares": latest["shares"],
-            "shares_prev": shares_prev,
-        })
+        by_instrument[iid].append(
+            {
+                "manager_id": mid,
+                "manager_name": latest["manager_name"],
+                "change": change,
+                "score": score,
+                "value": latest["value"],
+                "conviction": conviction,
+                "report_date": latest["report_date"].isoformat() if latest.get("report_date") else None,
+                "shares": latest["shares"],
+                "shares_prev": shares_prev,
+            }
+        )
 
     result: dict[int, Form13FInstrumentResult] = {}
     for iid, holders in by_instrument.items():

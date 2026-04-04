@@ -59,8 +59,7 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
         .subquery()
     )
     reports_q = await session.execute(
-        select(EarningsReport.instrument_id, EarningsReport.date, EarningsReport.metrics)
-        .join(
+        select(EarningsReport.instrument_id, EarningsReport.date, EarningsReport.metrics).join(
             latest_sq,
             and_(
                 EarningsReport.instrument_id == latest_sq.c.instrument_id,
@@ -68,9 +67,7 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
             ),
         )
     )
-    latest_reports: dict[int, tuple] = {
-        inst_id: (rdate, metrics) for inst_id, rdate, metrics in reports_q.all()
-    }
+    latest_reports: dict[int, tuple] = {inst_id: (rdate, metrics) for inst_id, rdate, metrics in reports_q.all()}
     if not latest_reports:
         return {}
 
@@ -151,7 +148,9 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
 
 
 @router.get("/api/portfolio/current")
-async def get_current_portfolio(session: AsyncSession = Depends(get_db_session), show_all: bool = False) -> dict[str, Any]:
+async def get_current_portfolio(
+    session: AsyncSession = Depends(get_db_session), show_all: bool = False
+) -> dict[str, Any]:
     """Get current portfolio holdings with detailed information. show_all=true: all monitored instruments."""
     # Get the latest snapshot date
     result = await session.execute(select(func.max(HoldingDaily.date)))
@@ -167,7 +166,12 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session),
         )
         instruments = list(instruments_result.scalars().all())
         if not instruments:
-            return {"holdings": [], "total_holdings": 0, "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS, "last_updated": None}
+            return {
+                "holdings": [],
+                "total_holdings": 0,
+                "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS,
+                "last_updated": None,
+            }
         holdings_result = await session.execute(
             select(HoldingDaily)
             .join(Instrument)
@@ -179,8 +183,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session),
         symbols_held = set(holding_by_symbol.keys())
         currency_rates = await get_rates(session)
         total_portfolio_value = sum(
-            h.quantity * h.current_price * currency_rates.get(h.instrument.currency, 1.0)
-            for h in holdings_list
+            h.quantity * h.current_price * currency_rates.get(h.instrument.currency, 1.0) for h in holdings_list
         )
         items = []
         for inst in instruments:
@@ -194,20 +197,27 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session),
                 price = (info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")) or 0
                 if not isinstance(price, (int, float)):
                     price = 0
-                items.append(SimpleNamespace(
-                    instrument=inst,
-                    quantity=0,
-                    avg_price=None,
-                    current_price=float(price) if price else 0,
-                    ppl=None,
-                    fx_ppl=None,
-                    date=latest_date or datetime.now(TIMEZONE).date(),
-                ))
+                items.append(
+                    SimpleNamespace(
+                        instrument=inst,
+                        quantity=0,
+                        avg_price=None,
+                        current_price=float(price) if price else 0,
+                        ppl=None,
+                        fx_ppl=None,
+                        date=latest_date or datetime.now(TIMEZONE).date(),
+                    )
+                )
         symbols_for_technical = [i.yahoo_symbol for i in instruments if i.yahoo_symbol]
         instruments_for_dcf = instruments
     else:
         if not latest_date:
-            return {"holdings": [], "total_holdings": 0, "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS, "last_updated": None}
+            return {
+                "holdings": [],
+                "total_holdings": 0,
+                "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS,
+                "last_updated": None,
+            }
         # Query holdings with instrument data in the same session
         holdings_result = await session.execute(
             select(HoldingDaily)
@@ -262,7 +272,9 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session),
                 "quantity": holding.quantity,
                 "avg_price": holding.avg_price,
                 "current_price": holding.current_price,
-                "analyst_price_targets": holding.instrument.yahoo.analyst_price_targets if holding.instrument.yahoo else None,
+                "analyst_price_targets": holding.instrument.yahoo.analyst_price_targets
+                if holding.instrument.yahoo
+                else None,
                 "dcf_price": dcf_price,
                 "dcf_diff": (dcf_price / holding.current_price - 1) if (dcf_price and holding.current_price) else None,
                 "ppl": holding.ppl,
@@ -304,9 +316,7 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session),
                 "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100
                 if (info.get("freeCashflow") and info.get("marketCap", 0) > 0)
                 else None,
-                "quickRatio": info.get("quickRatio")
-                if info.get("sector") != "Financial Services"
-                else None,
+                "quickRatio": info.get("quickRatio") if info.get("sector") != "Financial Services" else None,
                 "debtToEquity": info.get("debtToEquity"),
                 "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
                 "recommendation_key": info.get("recommendationKey"),
@@ -344,12 +354,15 @@ async def get_current_portfolio(session: AsyncSession = Depends(get_db_session),
                 "screener_score": 0,  # will be populated below
                 "form13f_score": form13f.get(holding.instrument.id, {}).get("score"),
                 "form13f_holders": form13f.get(holding.instrument.id, {}).get("holders", []),
-                **(earnings_signals.get(holding.instrument.id) or {
-                    "earnings_signal": None,
-                    "earnings_conviction": None,
-                    "since_earnings_pct": None,
-                    "earnings_announcement_date": None,
-                }),
+                **(
+                    earnings_signals.get(holding.instrument.id)
+                    or {
+                        "earnings_signal": None,
+                        "earnings_conviction": None,
+                        "since_earnings_pct": None,
+                        "earnings_announcement_date": None,
+                    }
+                ),
             }
         )
 
@@ -554,9 +567,7 @@ async def get_portfolio_indicators_history(
             "value": row.value,
             "profit": row.unrealised_profit,
             "return_pct": (
-                round((row.unrealised_profit + row.realised_profit) / row.invested * 100, 4)
-                if row.invested
-                else None
+                round((row.unrealised_profit + row.realised_profit) / row.invested * 100, 4) if row.invested else None
             ),
             "sortino_ratio": row.sortino_ratio,
             "beta": row.beta,
