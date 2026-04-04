@@ -155,7 +155,7 @@ def get_latest_filing_metadata(cik: str, form_types: tuple[str, ...] = ("10-Q", 
     """
 
     url = SEC_SUBMISSIONS_URL.format(cik=cik)
-    response = requests.get(url, headers={"User-Agent": USER_AGENT})
+    response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
     response.raise_for_status()
     data = response.json()
 
@@ -205,13 +205,13 @@ def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
 
     # 2. Check Cache
     if file_path.exists():
-        logger.debug(f"Loading cached filing from {file_path}")
+        logger.debug("Loading cached filing from %s", file_path)
         return file_path.read_text(encoding="utf-8")
 
     # 3. Download if missing
     url = SEC_ARCHIVES_URL.format(cik=cik, accession=accession, primary_document=primary_doc)
 
-    response = requests.get(url, headers=HEADERS)
+    response = requests.get(url, headers=HEADERS, timeout=30)
     response.raise_for_status()
     html_content = response.content.decode("utf-8", errors="replace")
 
@@ -260,7 +260,7 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
     Extracts structured metrics and generates summary from earnings report.
     Returns dict with structured metrics and summary text, or None on error.
     """
-    logger.info(f"Analyzing {form} for {ticker} ({len(text)} characters)")
+    logger.info("Analyzing %s for %s (%d characters)", form, ticker, len(text))
 
     if not GEMINI_API_KEY:
         logger.error("GEMINI_API_KEY is not set in config.py or environment variables")
@@ -272,7 +272,7 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
         # Truncate text if it's too long
         max_chars = 500000
         if len(text) > max_chars:
-            logger.info(f"Truncating text from {len(text)} to {max_chars} characters")
+            logger.info("Truncating text from %d to %d characters", len(text), max_chars)
             text = text[:max_chars]
 
         prompt = f"""
@@ -363,7 +363,7 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
         return result
 
     except Exception as e:
-        logger.error(f"Error calling Gemini API: {e}", exc_info=True)
+        logger.error("Error calling Gemini API: %s", e, exc_info=True)
         return None
 
 
@@ -497,7 +497,7 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
         max_earnings_date_expr = (
             select(func.max(sql_text("date")))
             .select_from(func.jsonb_object_keys(InstrumentYahoo.earnings).alias("date"))
-            .where(text("date < :today_iso").bindparams(today_iso=today_iso))
+            .where(sql_text("date < :today_iso").bindparams(today_iso=today_iso))
             .correlate(InstrumentYahoo)
             .scalar_subquery()
         )

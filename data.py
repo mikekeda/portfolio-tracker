@@ -1,3 +1,5 @@
+"""Static lookup tables and symbol normalization data used across the project."""
+
 # ─── Exchange‑suffix + alias tables ───────────────────────────────────────────
 STOCKS_SUFFIX: dict[str, str] = {
     "US": "",  # NYSE / Nasdaq

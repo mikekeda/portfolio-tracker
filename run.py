@@ -1,3 +1,5 @@
+"""Run the FastAPI app in debug or UDS production mode."""
+
 import grp
 import os
 import socket
@@ -16,7 +18,7 @@ if __name__ == "__main__":
         try:
             os.unlink(config.SOCKET_FILE)
         except FileNotFoundError as e:
-            config.logger.info(f"No old socket file found: {e}")
+            config.logger.info("No old socket file found: %s", e)
 
         # Create socket and run app.
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:

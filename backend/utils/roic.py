@@ -1,7 +1,10 @@
+"""ROIC helper utilities."""
+
 from typing import Any, Optional
 
 
 def get_roic(info: dict[str, Any]) -> Optional[float]:
+    """Estimate ROIC from Yahoo-style company info payload."""
     roic = None
     try:
         # 1. Get components from yfinance info
