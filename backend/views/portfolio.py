@@ -25,7 +25,7 @@ from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 from backend.views._shared import PRICE_COLUMN, calculate_historical_trends, get_rates
-from config import BENCHES, PRICE_FIELD, TIMEZONE, VIX
+from config import BENCHES, TIMEZONE, VIX
 from data import QUICK_RATIO_THRESHOLDS
 from models import (
     EarningsReport,

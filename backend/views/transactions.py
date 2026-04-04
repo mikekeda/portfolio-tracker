@@ -1,7 +1,7 @@
 """Transaction history and income summary endpoint."""
 
 from collections import defaultdict
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
