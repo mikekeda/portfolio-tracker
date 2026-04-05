@@ -32,8 +32,8 @@ The application uses Celery for periodic background data updates. Tasks are auto
   - Fetches fresh data from Trading212 API and Yahoo Finance
 
 - **`calculate_portfolio_returns_task`**: Calculates Money-Weighted Rate of Return (MWRR) and Time-Weighted Rate of Return (TWRR)
-  - Runs every 8 hours
-  - Reconstructs historical portfolio values from transaction history
+  - Runs every 4 hours on weekdays and every 8 hours on weekends (staggered 5 minutes after `update_data_task`)
+  - Uses incremental `update_returns(rebuild=False)` for fast daily updates
 
 ### Running Celery
 
@@ -86,12 +86,16 @@ PYTHONPATH=/home/debian/sites/portfolio_tracker python scripts/update_data.py
 **Available Scripts:**
 
 - **`backfill_portfolio_daily.py`**: Backfill and calculate MWRR/TWRR metrics for historical dates
+- **`update_returns.py`**: Fast incremental MWRR/TWRR updates (`--rebuild` for full historical recalculation)
 - **`update_data.py`**: Update all database tables with fresh API data
 - **`backfill_currency_rates.py`**: Backfill historical currency exchange rates
 - **`update_history_from_csv.py`**: Import Trading212 CSV transaction exports
 - **`update_pies.py`**: Update Trading212 Pies data
 - **`scrape_macrotrends_pe.py`**: Scrape PE ratios from Macrotrends
 - **`scrape_wisesheets_pe.py`**: Scrape PE ratios from Wisesheets
+- **`populate_cik.py`**: Populate missing instrument CIK values from SEC ticker map
+- **`scrape_13f.py`**: Scrape SEC 13F institutional holdings data
+- **`get_earnings_reports.py`**: Fetch SEC filings and generate structured LLM summaries
 
 ## Code Quality
 

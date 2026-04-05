@@ -31,7 +31,6 @@ config = context.config
 # This creates a syntactical error if `fileConfig` is not imported.
 # I must ensure the resulting file is syntactically correct.
 # I will add `from logging.config import fileConfig` back to the imports to resolve this.
-from logging.config import fileConfig
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

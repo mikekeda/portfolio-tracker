@@ -832,7 +832,6 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     # For risk-adjusted return metrics we need daily granularity on the portfolio side.
     portfolio_daily = portfolio_df.reindex(benchmark_df.index, method="ffill")
     aligned_portfolio = portfolio_daily["value"].pct_change().dropna()
-    aligned_benchmark_daily = benchmark_df["price"].pct_change().dropna()
 
     if aligned_portfolio.empty or len(aligned_portfolio) < 2:
         return {"sharpe": None, "sortino": None, "beta": None}
