@@ -45,6 +45,9 @@ REQUEST_DELAY = 0.12
 # Request timeout (seconds) to avoid hanging
 REQUEST_TIMEOUT = 30
 
+# Max unmatched CUSIPs to log (sorted by aggregate 13F $); remainder only counted
+UNMATCHED_LOG_LIMIT = 20
+
 # From 2023-01-01, SEC 13F values are in dollars (nearest dollar).
 # Before this date, values were reported in thousands.
 FORM13F_VALUE_IN_DOLLARS_FROM = date(2023, 1, 1)
@@ -403,7 +406,8 @@ def _save_to_db(session: Session, results: list[ScrapedFiling]) -> None:
     """Saves scraped 13F data to database."""
     cusip_to_instrument = _build_cusip_to_instrument_map(session)
     matched_count = 0
-    unmatched: list[tuple[str, str]] = []  # (cusip, issuer)
+    # Per CUSIP: [issuer from largest line, sum of 13F value this run, max single-line value]
+    unmatched_agg: dict[str, list] = {}
 
     for r in results:
         cik = _normalize_cik(r["cik"])
@@ -456,7 +460,16 @@ def _save_to_db(session: Session, results: list[ScrapedFiling]) -> None:
             if instrument_id:
                 matched_count += 1
             else:
-                unmatched.append((cusip, issuer))
+                key = cusip.upper()
+                row = unmatched_agg.get(key)
+                v = h["value"]
+                if row is None:
+                    unmatched_agg[key] = [issuer, v, v]
+                else:
+                    row[1] += v
+                    if v > row[2]:
+                        row[2] = v
+                        row[0] = issuer
             holding = Form13FHolding(
                 filing_id=filing.id,
                 instrument_id=instrument_id,
@@ -469,15 +482,20 @@ def _save_to_db(session: Session, results: list[ScrapedFiling]) -> None:
             session.add(holding)
 
     logger.info("Matched %d holdings to instruments via CUSIP", matched_count)
-    if unmatched:
-        # Deduplicate by (cusip, issuer) and sort by issuer for readability
-        unique_unmatched = sorted(set(unmatched), key=lambda x: (x[1].lower(), x[0]))
+    if unmatched_agg:
+        n_unmatched = len(unmatched_agg)
+        keys_by_value = sorted(unmatched_agg, key=lambda k: unmatched_agg[k][1], reverse=True)
         logger.warning(
-            "%d unique securities not matched to instruments (no instrument with matching US ISIN):",
-            len(unique_unmatched),
+            "%d unique securities not matched to instruments (no instrument with matching US ISIN); "
+            "top %d by aggregate 13F $ this run:",
+            n_unmatched,
+            min(UNMATCHED_LOG_LIMIT, n_unmatched),
         )
-        for cusip, issuer in unique_unmatched:
-            logger.warning("  - %s (CUSIP: %s)", issuer, cusip)
+        for cusip_key in keys_by_value[:UNMATCHED_LOG_LIMIT]:
+            issuer, total_val, _ = unmatched_agg[cusip_key]
+            logger.warning("  - %s (CUSIP: %s) aggregate_13f_value=$%s", issuer, cusip_key, f"{total_val:,}")
+        if n_unmatched > UNMATCHED_LOG_LIMIT:
+            logger.warning("  (%d more unmatched not listed)", n_unmatched - UNMATCHED_LOG_LIMIT)
 
 
 def main(limit: Optional[int] = None, default_quarters: int = 4) -> None:
