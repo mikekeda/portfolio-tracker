@@ -74,6 +74,9 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "BE0003816331": "04016X101",  # argenx SE (Belgium)
     "NL0010832176": "04016X101",  # argenx SE (Euronext NL line)
     "GB00BZ09BD16": "049468101",  # Atlassian Corp Plc
+    "IE00B4BNMY34": "G1151C101",  # Accenture plc (Dublin ordinary vs NYSE CUSIP)
+    "NL0010545661": "N20944109",  # CNH Industrial N.V. (Euronext line vs NYSE CUSIP)
+    "CH1430134226": "H2927K103",  # Amrize Ltd (Swiss ordinary vs NYSE CUSIP)
     # 2026-04-08 — $1B+ 13F names (Irish/CH/MX lines vs SEC CUSIP)
     "IE00BWT6H894": "G3643J108",  # Flutter Entertainment plc
     "CH0114405324": "H2906T109",  # Garmin Ltd (SIX vs NYSE CUSIP)
