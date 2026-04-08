@@ -48,6 +48,34 @@ REQUEST_TIMEOUT = 30
 # Max unmatched CUSIPs to log (sorted by aggregate 13F $); remainder only counted
 UNMATCHED_LOG_LIMIT = 20
 
+# Some instruments' ISINs in our DB (typically issuer-country ISINs from Trading212)
+# do not embed the SEC 9-char CUSIP used in 13F info tables. For those, override the
+# CUSIP used for matching Form13FHolding rows to Instrument rows.
+ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
+    # Already observed mismatches
+    "CH0044328745": "H1467J104",  # Chubb Limited
+    "LU1778762911": "L8681T102",  # Spotify Technology SA
+    "US81141R1005": "81141R100",  # Sea Ltd ADR
+    # High-value unmatched examples from logs
+    "IE00BY7QL619": "G51502105",  # Johnson Controls International plc
+    "IE00BDB6Q211": "G96629103",  # Willis Towers Watson plc
+    "IE00BLP1HW54": "G0403H108",  # Aon plc
+    "IE000IVNQZ81": "G87052109",  # TE Connectivity plc
+    "US37733W2044": "37733W204",  # GSK plc ADR
+    "US80105N1054": "80105N105",  # Sanofi ADR
+    "CA8672241079": "867224107",  # Suncor Energy Inc
+    "US8299331004": "829933100",  # Sirius XM Holdings Inc
+    "US40415F1012": "40415F101",  # HDFC Bank ADR
+    "US45104G1040": "45104G104",  # ICICI Bank ADR
+    "US18915M1071": "18915M107",  # Cloudflare Inc
+    "US02005N1000": "02005N100",  # Ally Financial Inc
+    "US31946M1036": "31946M103",  # First Citizens BancShares Inc
+    "US7710491033": "771049103",  # Roblox Corp
+    "US50212V1008": "50212V100",  # LPL Financial Holdings Inc
+    "US7223041028": "722304102",  # PDD Holdings Inc ADR
+    # Note: Enbridge (CA29250N1050) and many US names should match without overrides.
+}
+
 # From 2023-01-01, SEC 13F values are in dollars (nearest dollar).
 # Before this date, values were reported in thousands.
 FORM13F_VALUE_IN_DOLLARS_FROM = date(2023, 1, 1)
@@ -397,7 +425,7 @@ def _build_cusip_to_instrument_map(session: Session) -> dict[str, int]:
         isin = (row.isin or "").strip().upper()
         if len(isin) < 11:
             continue
-        cusip = isin[2:11]
+        cusip = ISIN_TO_CUSIP_OVERRIDES.get(isin, isin[2:11])
         mapping[cusip.upper()] = row.id
     return mapping
 
