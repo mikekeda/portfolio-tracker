@@ -51,33 +51,20 @@ UNMATCHED_LOG_LIMIT = 20
 # Some instruments' ISINs in our DB (typically issuer-country ISINs from Trading212)
 # do not embed the SEC 9-char CUSIP used in 13F info tables. For those, override the
 # CUSIP used for matching Form13FHolding rows to Instrument rows.
+# Omit entries where isin[2:11] already equals the SEC CUSIP (typical US*/CA* lines).
 ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     # Already observed mismatches
     "CH0044328745": "H1467J104",  # Chubb Limited
     "LU1778762911": "L8681T102",  # Spotify Technology SA
-    "US81141R1005": "81141R100",  # Sea Ltd ADR
     # High-value unmatched examples from logs
     "IE00BY7QL619": "G51502105",  # Johnson Controls International plc
     "IE00BDB6Q211": "G96629103",  # Willis Towers Watson plc
     "IE00BLP1HW54": "G0403H108",  # Aon plc
     "IE000IVNQZ81": "G87052109",  # TE Connectivity plc
-    "US37733W2044": "37733W204",  # GSK plc ADR
-    "US80105N1054": "80105N105",  # Sanofi ADR
-    "CA8672241079": "867224107",  # Suncor Energy Inc
-    "US8299331004": "829933100",  # Sirius XM Holdings Inc
-    "US40415F1012": "40415F101",  # HDFC Bank ADR
-    "US45104G1040": "45104G104",  # ICICI Bank ADR
-    "US18915M1071": "18915M107",  # Cloudflare Inc
-    "US02005N1000": "02005N100",  # Ally Financial Inc
-    "US31946M1036": "31946M103",  # First Citizens BancShares Inc
-    "US7710491033": "771049103",  # Roblox Corp
-    "US50212V1008": "50212V100",  # LPL Financial Holdings Inc
-    "US7223041028": "722304102",  # PDD Holdings Inc ADR
     # 2026-04-08 run — top unmatched by 13F $ (issuer ISIN vs SEC CUSIP)
     "BE0974293251": "03524A108",  # Anheuser-Busch InBev SA/NV (vs US ADR ISIN)
     "IE00B8KQN827": "G29183103",  # Eaton Corp plc
     "BRPETRACNOR9": "71654V408",  # Petróleo Brasileiro Petrobras (ordinary vs ADR line in 13F)
-    "BMG2519Y1084": "G2519Y108",  # Credicorp Ltd
     "IE0005711209": "G4705A100",  # ICON plc
     "CH0012005267": "66987V109",  # Novartis AG (Swiss line vs NYSE ADR CUSIP)
     "GB0002875804": "110448107",  # British American Tobacco plc (UK vs ADR CUSIP)
@@ -87,7 +74,12 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "BE0003816331": "04016X101",  # argenx SE (Belgium)
     "NL0010832176": "04016X101",  # argenx SE (Euronext NL line)
     "GB00BZ09BD16": "049468101",  # Atlassian Corp Plc
+    # 2026-04-08 — $1B+ 13F names (Irish/CH/MX lines vs SEC CUSIP)
+    "IE00BWT6H894": "G3643J108",  # Flutter Entertainment plc
+    "CH0114405324": "H2906T109",  # Garmin Ltd (SIX vs NYSE CUSIP)
+    "IE00BYTBXV33": "783513203",  # Ryanair Holdings plc (Dublin vs ADR CUSIP)
     # Note: Enbridge (CA29250N1050) and many US names should match without overrides.
+    # Medline Inc (58507V107): private / not a normal listed equity — skip for 13F↔app matching.
 }
 
 # From 2023-01-01, SEC 13F values are in dollars (nearest dollar).

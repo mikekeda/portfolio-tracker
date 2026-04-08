@@ -897,6 +897,9 @@ def update_data():
     update_currency_rates(CURRENCIES)
 
     # 2. Update instruments
+    # _isins_to_add: (isin, currencyCode) must match Trading 212 equity metadata exactly
+    # (see update_instruments: same ISIN can list twice with different currencies).
+    # LSE stocks quoted in pence (UI shows "p…") use currencyCode "GBX", not "GBP".
     _isins_to_add: set[tuple[str, str]] = set()
     update_instruments(_isins_to_add)
 
