@@ -13,6 +13,7 @@ STOCKS_SUFFIX: dict[str, str] = {
     "CA": ".TO",  # Toronto
     "ST": ".ST",  # Stockholm
     "BR": ".BR",  # Brussels
+    "BE": ".BR",  # Euronext Brussels (Trading212 uses BE_, e.g. ABI_BE_EQ)
     "AS": ".AS",  # Amsterdam
     "MI": ".MI",  # Milan
     "SW": ".SW",  # Zurich

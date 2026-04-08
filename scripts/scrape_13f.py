@@ -73,6 +73,20 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "US7710491033": "771049103",  # Roblox Corp
     "US50212V1008": "50212V100",  # LPL Financial Holdings Inc
     "US7223041028": "722304102",  # PDD Holdings Inc ADR
+    # 2026-04-08 run — top unmatched by 13F $ (issuer ISIN vs SEC CUSIP)
+    "BE0974293251": "03524A108",  # Anheuser-Busch InBev SA/NV (vs US ADR ISIN)
+    "IE00B8KQN827": "G29183103",  # Eaton Corp plc
+    "BRPETRACNOR9": "71654V408",  # Petróleo Brasileiro Petrobras (ordinary vs ADR line in 13F)
+    "BMG2519Y1084": "G2519Y108",  # Credicorp Ltd
+    "IE0005711209": "G4705A100",  # ICON plc
+    "CH0012005267": "66987V109",  # Novartis AG (Swiss line vs NYSE ADR CUSIP)
+    "GB0002875804": "110448107",  # British American Tobacco plc (UK vs ADR CUSIP)
+    "CH0244767585": "H42097107",  # UBS Group AG
+    "GB00BMX86B70": "405552100",  # Haleon plc
+    "NL0011585146": "N3167Y103",  # Ferrari N.V. (Euronext vs NYSE CUSIP)
+    "BE0003816331": "04016X101",  # argenx SE (Belgium)
+    "NL0010832176": "04016X101",  # argenx SE (Euronext NL line)
+    "GB00BZ09BD16": "049468101",  # Atlassian Corp Plc
     # Note: Enbridge (CA29250N1050) and many US names should match without overrides.
 }
 
