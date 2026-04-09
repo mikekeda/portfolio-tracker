@@ -281,6 +281,7 @@ async def get_current_portfolio(
                 "fx_ppl": holding.fx_ppl,
                 "market_cap": info.get("marketCap"),
                 "pe_ratio": info.get("trailingPE"),
+                "forward_pe_ratio": info.get("forwardPE"),
                 "ps_ratio": info.get("priceToSalesTrailing12Months"),
                 "avg_pe": getattr(holding.instrument.yahoo, "avg_pe_5y", None) if holding.instrument.yahoo else None,
                 "beta": info.get("beta"),

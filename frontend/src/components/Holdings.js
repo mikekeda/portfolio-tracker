@@ -240,7 +240,6 @@ const SIGNAL_TOOLTIP = {
 };
 
 // This component will only re-render if its own props change
-// eslint-disable-next-line no-unused-vars
 const HoldingRow = React.memo(({ row, isSelected, hideAmounts: _hideAmounts }) => {
   return (
     <tr className={isSelected ? 'selected-row' : undefined}>
@@ -660,7 +659,7 @@ const Holdings = () => {
         size: 60,
       }),
       columnHelper.accessor('pe_ratio', {
-        header: 'PE',
+        header: () => <span title="Trailing P/E (TTM)">PE</span>,
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="pe"></span>;
@@ -676,6 +675,34 @@ const Holdings = () => {
         enableSorting: true,
         enableGlobalFilter: false,
         size: 50,
+      }),
+      columnHelper.accessor('forward_pe_ratio', {
+        header: () => <span title="Forward P/E (next 12m analyst estimates)">Fwd PE</span>,
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="pe"></span>;
+          const trailing = info.row?.original?.pe_ratio;
+          let className = '';
+          if (trailing != null && trailing > 0) {
+            if (value < trailing) className = 'positive';
+            else if (value > trailing) className = 'negative';
+          } else if (value > 0) {
+            if (value < 20) className = 'positive';
+            else if (value > 35) className = 'negative';
+          }
+          const title =
+            trailing != null && trailing > 0
+              ? `Forward P/E vs trailing ${Math.round(trailing)}`
+              : 'Forward P/E (estimates)';
+          return (
+            <span className={`pe ${className}`} title={title}>
+              {Math.round(value)}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 44,
       }),
       columnHelper.accessor('ps_ratio', {
         header: 'PS',
@@ -1383,6 +1410,7 @@ const Holdings = () => {
       'market_cap': 'Mkt Cap',
       'peg_ratio': 'PEG',
       'pe_ratio': 'PE',
+      'forward_pe_ratio': 'Fwd PE',
       'ps_ratio': 'PS',
       'beta': 'Beta',
       'profit_margins': 'Margins',
