@@ -437,7 +437,7 @@ const Stock = () => {
     setSelectedReport({ symbol, reportDate });
     setLoadingReport(true);
     setReportHtml(null);
-    
+
     try {
       const response = await portfolioAPI.getEarningsReportHtml(symbol, reportDate);
       setReportHtml(response);
@@ -1746,7 +1746,7 @@ const Stock = () => {
               {loadingReport ? (
                 <div className="loading">Loading report...</div>
               ) : reportHtml ? (
-                <iframe 
+                <iframe
                   srcDoc={reportHtml}
                   className="earnings-report-iframe"
                   title="Earnings Report"

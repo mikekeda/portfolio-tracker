@@ -95,6 +95,7 @@ function buildMgrSection(label, mgrs, direction) {
             <th>Manager</th>
             <th>Change</th>
             {hasValChg && <th>Value Δ</th>}
+            {hasValChg && <th>% Fund</th>}
           </tr>
         </thead>
         <tbody>
@@ -108,9 +109,14 @@ function buildMgrSection(label, mgrs, direction) {
                 <td className="hi-tip-name">{m.name}</td>
                 <td className={`hi-tip-change ${chgCls}`}>{m.change || '—'}</td>
                 {hasValChg && (
-                  <td className={`hi-tip-change ${valCls}`}>
-                    {m.value_change != null && m.value_change !== 0 ? formatValueChange(m.value_change) : '—'}
-                  </td>
+                  <>
+                    <td className={`hi-tip-change ${valCls}`}>
+                      {m.value_change != null && m.value_change !== 0 ? formatValueChange(m.value_change) : '—'}
+                    </td>
+                    <td className={`hi-tip-change ${valCls}`}>
+                      {m.pct_impact ? `${m.pct_impact > 0 ? '+' : ''}${m.pct_impact.toFixed(2)}%` : '—'}
+                    </td>
+                  </>
                 )}
               </tr>
             );
@@ -123,6 +129,7 @@ function buildMgrSection(label, mgrs, direction) {
               <td className={`hi-tip-change ${total > 0 ? 'positive' : 'negative'}`}>
                 {formatValueChange(total)}
               </td>
+              <td></td>
             </tr>
           </tfoot>
         )}
@@ -248,11 +255,8 @@ function useHiTooltip() {
 // ── Highlight item ────────────────────────────────────────────────────────────
 
 const HighlightItem = React.memo(function HighlightItem({ item, mode, onTipRich, onTipHide }) {
-  // Mixed signals has equal buyers and sellers — showing one side's capital is misleading.
-  const value = mode === 'sell'  ? item.total_value_removed
-    : mode === 'held'            ? item.total_value
-    : mode === 'mixed'           ? null
-    :                              item.total_value_added;
+  const netValue = (item.total_value_added || 0) - (item.total_value_removed || 0);
+  const value = mode === 'held' ? item.total_value : null;
 
   const heldTrend = mode === 'held' && item.buy_count != null
     ? item.buy_count > item.sell_count ? 'accumulating'
@@ -300,7 +304,11 @@ const HighlightItem = React.memo(function HighlightItem({ item, mode, onTipRich,
             </span>
           </span>
         )}
-        {value > 0 && <span className="hi-value">{formatAUM(value)}</span>}
+        {(mode === 'buy' || mode === 'sell' || mode === 'mixed') ? (
+          netValue !== 0 && <span className={`hi-value ${netValue > 0 ? 'positive' : 'negative'}`}>{formatValueChange(netValue)}</span>
+        ) : (
+          value > 0 && <span className="hi-value">{formatAUM(value)}</span>
+        )}
       </div>
     </div>
   );
@@ -308,21 +316,81 @@ const HighlightItem = React.memo(function HighlightItem({ item, mode, onTipRich,
 
 // ── Isolated panel component — React.memo ensures it only re-renders when its
 // own items change (not when sibling panels' tooltips update).
+
+const PANEL_SORTS = [
+  { key: 'conviction', label: 'Conviction' },
+  { key: 'capital',    label: 'Capital'    },
+];
+
 const HighlightPanel = React.memo(function HighlightPanel({ className, title, count, subtitle, items, mode }) {
+  const [panelSort, setPanelSort] = useState('conviction');
   const { tip, showRich, hide } = useHiTooltip();
+
+  const sortedItems = useMemo(() => {
+    if (mode !== 'buy' && mode !== 'sell' && mode !== 'mixed') return items;
+
+    const r = [...items];
+    r.sort((a, b) => {
+      if (mode === 'buy') {
+        if (panelSort === 'conviction') {
+          return (b.net_managers - a.net_managers) ||
+                 (b.new_count - a.new_count) ||
+                 ((b.total_conviction_added - b.total_conviction_removed) - (a.total_conviction_added - a.total_conviction_removed));
+        } else {
+          return ((b.total_value_added - b.total_value_removed) - (a.total_value_added - a.total_value_removed));
+        }
+      } else if (mode === 'sell') {
+        if (panelSort === 'conviction') {
+          return (a.net_managers - b.net_managers) ||
+                 (b.closed_count - a.closed_count) ||
+                 ((b.total_conviction_removed - b.total_conviction_added) - (a.total_conviction_removed - a.total_conviction_added));
+        } else {
+          return ((b.total_value_removed - b.total_value_added) - (a.total_value_removed - a.total_value_added));
+        }
+      } else if (mode === 'mixed') {
+        if (panelSort === 'conviction') {
+          return ((b.buy_count + b.sell_count) - (a.buy_count + a.sell_count)) ||
+                 ((b.total_conviction_added + b.total_conviction_removed) - (a.total_conviction_added + a.total_conviction_removed));
+        } else {
+          const aNet = (a.total_value_added || 0) - (a.total_value_removed || 0);
+          const bNet = (b.total_value_added || 0) - (b.total_value_removed || 0);
+          return bNet - aNet;
+        }
+      }
+      return 0;
+    });
+    return r.slice(0, 20);
+  }, [items, panelSort, mode]);
+
   return (
     <div className={`highlight-panel ${className}`}>
       <div className="hi-panel-title">
         {title}
         <span className="hi-panel-count">{count}</span>
+        {(mode === 'buy' || mode === 'sell' || mode === 'mixed') && (
+          <div className="hi-panel-sort">
+            {PANEL_SORTS.map(s => (
+              <button
+                key={s.key}
+                className={`hi-sort-pill ${panelSort === s.key ? 'active' : ''}`}
+                onClick={e => { e.stopPropagation(); setPanelSort(s.key); }}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {subtitle && <div className="hi-panel-subtitle">{subtitle}</div>}
-      {items.length === 0
-        ? <div className="hi-empty">No data</div>
-        : items.map(item => (
+      {sortedItems.length === 0 ? (
+        <div className="hi-empty">No data</div>
+      ) : (
+        <div className="hi-items-scroll">
+          {sortedItems.map((item) => (
             <HighlightItem key={item.cusip} item={item} mode={mode} onTipRich={showRich} onTipHide={hide} />
-          ))
-      }
+          ))}
+        </div>
+      )}
       <HiTooltip {...tip} />
     </div>
   );
@@ -397,16 +465,12 @@ const RadarPanel = React.memo(function RadarPanel({ radar }) {
               <span className="hi-name" title={item.name}>{item.name}</span>
             </div>
             <div className="hi-item-right">
-              {item.buy_count > 0 && (
-                <span className="hi-trend hi-trend-accumulating">
-                  ▲{item.buy_count}
-                </span>
-              )}
-              {item.sell_count > 0 && (
-                <span className="hi-trend hi-trend-distributing">
-                  ▼{item.sell_count}
-                </span>
-              )}
+              <span className={`hi-trend ${item.buy_count > 0 ? 'hi-trend-accumulating' : 'hi-trend-stable'}`}>
+                ▲{item.buy_count}
+              </span>
+              <span className={`hi-trend ${item.sell_count > 0 ? 'hi-trend-distributing' : 'hi-trend-stable'}`}>
+                ▼{item.sell_count}
+              </span>
               <span
                 className="hi-count-badge hi-badge-held"
                 onMouseEnter={e => showRich(e, buildRadarContent(item))}

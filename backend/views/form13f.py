@@ -220,6 +220,7 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
 
     for mid, mf in filings_by_manager.items():
         manager_name = manager_by_id[mid].name
+        latest_filing_total = mf[0].total_value or 0
         latest_by_cusip = _aggregate_holdings_by_cusip(holdings_by_filing.get(latest_ids[mid], []))
         prev_by_cusip = (
             _aggregate_holdings_by_cusip(holdings_by_filing.get(prev_ids[mid], [])) if mid in prev_ids else {}
@@ -256,7 +257,9 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
             # prev_by_cusip is non-empty here (guarded above), so None → new position
             shares_prev = prev["shares"] if prev is not None else 0
             value_prev_buy = prev["value"] if prev is not None else 0
-            score = _compute_form13f_signal_score(item["shares"], shares_prev, item["value"], value_prev=value_prev_buy)
+            score = _compute_form13f_signal_score(
+                item["shares"], shares_prev, item["value"], value_prev=value_prev_buy, filing_total_value=latest_filing_total
+            )
             if score <= 0:
                 continue
             # Skip positions with no reported dollar value (options, warrants, or missing data).
@@ -271,6 +274,8 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
             price_now = item["value"] / item["shares"] if item["shares"] else 0
             shares_added = item["shares"] - shares_prev
             transaction_value = round(shares_added * price_now)  # always positive for buys
+            pct_impact = (transaction_value / latest_filing_total * 100) if latest_filing_total else 0.0
+
             instr = instruments.get(item["instrument_id"])
             if cusip not in buying:
                 buying[cusip] = {
@@ -281,12 +286,14 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                     "count": 0,
                     "managers": [],
                     "total_value_added": 0,
+                    "total_conviction_added": 0.0,
                 }
             buying[cusip]["count"] += 1
             buying[cusip]["managers"].append(
-                {"name": manager_name, "change": change, "value_change": transaction_value}
+                {"name": manager_name, "change": change, "value_change": transaction_value, "pct_impact": pct_impact}
             )
             buying[cusip]["total_value_added"] += transaction_value
+            buying[cusip]["total_conviction_added"] += pct_impact
 
         # Selling signals: closed or significantly trimmed positions
         for cusip, prev_item in prev_by_cusip.items():
@@ -306,6 +313,7 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                     prev_item["shares"],
                     latest_item["value"],
                     value_prev=prev_item["value"],
+                    filing_total_value=latest_filing_total,
                 )
                 if score >= 0:
                     continue
@@ -324,6 +332,7 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                 transaction_value = -round(shares_sold * price_now)  # negative = extracted
 
             instr = instruments.get(instr_id)
+            pct_impact = (abs(transaction_value) / latest_filing_total * 100) if latest_filing_total else 0.0
             if cusip not in selling:
                 selling[cusip] = {
                     "cusip": cusip,
@@ -333,12 +342,14 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                     "count": 0,
                     "managers": [],
                     "total_value_removed": 0,
+                    "total_conviction_removed": 0.0,
                 }
             selling[cusip]["count"] += 1
             selling[cusip]["managers"].append(
-                {"name": manager_name, "change": change, "value_change": transaction_value}
+                {"name": manager_name, "change": change, "value_change": transaction_value, "pct_impact": -pct_impact}
             )
             selling[cusip]["total_value_removed"] += abs(transaction_value)
+            selling[cusip]["total_conviction_removed"] += pct_impact
 
     # Merge buy/sell counts per CUSIP and compute net signal
     # Propagate buy/sell trend counts + full manager objects (with change + value_change) into held items
@@ -362,6 +373,11 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
         sell_count = sell["count"] if sell else 0
         net = buy_count - sell_count
 
+        buy_managers = buy["managers"] if buy else []
+        sell_managers = sell["managers"] if sell else []
+        new_count = sum(1 for m in buy_managers if m.get("change") == "New")
+        closed_count = sum(1 for m in sell_managers if m.get("change") == "Closed")
+
         base = buy if buy else sell
         item: dict = {
             "cusip": cusip,
@@ -373,8 +389,12 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
             "net_managers": net,
             "total_value_added": buy["total_value_added"] if buy else 0,
             "total_value_removed": sell["total_value_removed"] if sell else 0,
-            "buy_managers": buy["managers"] if buy else [],
-            "sell_managers": sell["managers"] if sell else [],
+            "total_conviction_added": buy["total_conviction_added"] if buy else 0.0,
+            "total_conviction_removed": sell["total_conviction_removed"] if sell else 0.0,
+            "buy_managers": buy_managers,
+            "sell_managers": sell_managers,
+            "new_count": new_count,
+            "closed_count": closed_count,
         }
 
         if buy_count > 0 and sell_count > 0 and net == 0:
@@ -393,23 +413,22 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
         elif net < 0:
             consensus_sells.append(item)
 
-    top_n = 8
     most_bought = sorted(
         consensus_buys,
-        key=lambda x: (x["net_managers"], x["buy_count"], x["total_value_added"]),
+        key=lambda x: (x["net_managers"], x["new_count"], x["total_conviction_added"] - x["total_conviction_removed"]),
         reverse=True,
-    )[:top_n]
+    )
     most_sold = sorted(
         consensus_sells,
-        key=lambda x: (-x["net_managers"], x["sell_count"], x["total_value_removed"]),
+        key=lambda x: (-x["net_managers"], x["closed_count"], x["total_conviction_removed"] - x["total_conviction_added"]),
         reverse=True,
-    )[:top_n]
-    most_held = sorted(held.values(), key=lambda x: (x["count"], x["total_value"]), reverse=True)[:top_n]
+    )
+    most_held = sorted(held.values(), key=lambda x: (x["count"], x["total_value"]), reverse=True)[:20]
     top_disputed = sorted(
         disputed,
         key=lambda x: (x["buy_count"] + x["sell_count"]),
         reverse=True,
-    )[:5]
+    )[:20]
 
     return {
         "most_bought": most_bought,

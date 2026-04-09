@@ -85,10 +85,6 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     # Medline Inc (58507V107): private / not a normal listed equity — skip for 13F↔app matching.
 }
 
-# From 2023-01-01, SEC 13F values are in dollars (nearest dollar).
-# Before this date, values were reported in thousands.
-FORM13F_VALUE_IN_DOLLARS_FROM = date(2023, 1, 1)
-
 
 class FilingMetadata(TypedDict):
     """SEC filing metadata from submissions API."""
@@ -390,11 +386,16 @@ def scrape_investor(
             filing_date = date.fromisoformat(report_date)
         except ValueError:
             filing_date = datetime.now().date()
-        if filing_date < FORM13F_VALUE_IN_DOLLARS_FROM:
-            holdings = [{**h, "value": h["value"] * 1000} for h in holdings]
-            logger.warning("  Pre-2023 filing for %s (%s): scaled values ×1000", name, report_date)
 
         total_value = sum(h["value"] for h in holdings)
+
+        # Scale by 1000 if date < 2023 OR if total_value < $100M.
+        # $100M is the minimum AUM required to file a 13F. If the raw sum is < 100M,
+        # the manager definitely mistakenly filled out the form in thousands.
+        if 0 < total_value < 100_000_000:
+            holdings = [{**h, "value": h["value"] * 1000} for h in holdings]
+            total_value *= 1000
+            logger.warning("  Non-compliant 2024+ filing for %s (%s): raw AUM %s < 100M. Scaled ×1000", name, report_date, f"${total_value/1000:,}")
 
         results.append(
             {

@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models import Form13FFiling, Form13FHolding, Form13FManager
 
 # Thresholds (USD for value, % for change)
-FORM13F_MIN_VALUE_NEW = 50_000  # Ignore "New" positions below this (pilot/noise)
+FORM13F_MIN_AUM_PCT_NEW = 0.1  # 0.1% of AUM minimum for new position signal
+FORM13F_MIN_AUM_PCT_INCREASE = 0.05  # 0.05% of AUM minimum for increased position signal
 FORM13F_INCREASE_EFFECTIVE_NEW = 1000  # +1000%+ = effectively new position
 FORM13F_TRIM_EFFECTIVE_LIQUIDATION = -90  # -90%+ = effectively liquidated
 
@@ -100,6 +101,7 @@ def _compute_form13f_signal_score(
     shares_prev: int | None,
     value: int = 0,
     value_prev: int | None = None,
+    filing_total_value: int | None = None,
 ) -> int:
     """
     Compute per-holder 13F signal score (-2 to +2).
@@ -108,40 +110,46 @@ def _compute_form13f_signal_score(
     (split-adjusted). Falls back to share-based % on DB unit inconsistency.
 
     Score rules (contiguous, no gaps):
-      +2: New (value >= MIN); or increase ≥1000% with value >= MIN
-      +1: Increase 10% to 999%; or increase ≥1000% with value < MIN
-       0: Stable (-30% to +10%); no prior data; or tiny New (value < MIN)
+      +2: New (pct AUM >= 0.1%); or increase ≥1000% with pct AUM >= 0.1%
+      +1: Increase 10% to 999% and pct AUM >= 0.05%; or increase ≥1000% with pct AUM < 0.1% but >= 0.05%
+       0: Stable (-30% to +10%); no prior data; or tiny New/Increase (pct AUM < floor)
       -1: Trimmed (-90% to -30%)
       -2: Closed; or effective liquidation (≤-90%)
     """
     value = value or 0
+    pct_aum = (value / filing_total_value * 100) if (filing_total_value and filing_total_value > 0) else 0.0
+
     if shares_prev is None:
         return 0
     if shares == 0:
         return -2
     if shares_prev == 0:
-        return 2 if value >= FORM13F_MIN_VALUE_NEW else 0
+        return 2 if pct_aum >= FORM13F_MIN_AUM_PCT_NEW else 0
     pct = _safe_pct(value, value_prev, shares, shares_prev)
     if pct >= FORM13F_INCREASE_EFFECTIVE_NEW:
-        return 2 if value >= FORM13F_MIN_VALUE_NEW else 1
+        return 2 if pct_aum >= FORM13F_MIN_AUM_PCT_NEW else (1 if pct_aum >= FORM13F_MIN_AUM_PCT_INCREASE else 0)
     if pct <= FORM13F_TRIM_EFFECTIVE_LIQUIDATION:
         return -2
     if pct >= 10:
-        return 1
+        return 1 if pct_aum >= FORM13F_MIN_AUM_PCT_INCREASE else 0
     if pct < -30:
         return -1
     return 0
 
 
-def _score_reason(score: int, change: str, value: int) -> str | None:
+def _score_reason(score: int, change: str, value: int, filing_total_value: int | None = None) -> str | None:
     """Human-readable explanation for why a holder has score=0 (shown in tooltip)."""
     if score != 0:
         return None  # contributing to score — no explanation needed
     if change == "—":
         return "no prior quarter for comparison"
-    if change == "New" and value < FORM13F_MIN_VALUE_NEW:
-        return f"new position but value below ${FORM13F_MIN_VALUE_NEW:,} minimum"
+
+    pct_aum = (value / filing_total_value * 100) if (filing_total_value and filing_total_value > 0) else 0.0
+    if change == "New" and pct_aum < FORM13F_MIN_AUM_PCT_NEW:
+        return f"new position but conviction ({pct_aum:.2f}%) below {FORM13F_MIN_AUM_PCT_NEW}% threshold"
     if change not in ("New", "Closed"):
+        if pct_aum < FORM13F_MIN_AUM_PCT_INCREASE and "+" in change:
+            return f"increased position but conviction ({pct_aum:.2f}%) below {FORM13F_MIN_AUM_PCT_INCREASE}% threshold"
         return "change within stable range (−30% to +10%)"
     return None
 
@@ -236,9 +244,9 @@ async def _get_form13f_for_instruments(
             value_prev = None
 
         shares = latest["shares"]
-        change = _compute_form13f_change(shares, shares_prev, value=latest["value"], value_prev=value_prev)
-        score = _compute_form13f_signal_score(shares, shares_prev, value=latest["value"], value_prev=value_prev)
         filing_total = latest["filing_total_value"] or 0
+        change = _compute_form13f_change(shares, shares_prev, value=latest["value"], value_prev=value_prev)
+        score = _compute_form13f_signal_score(shares, shares_prev, value=latest["value"], value_prev=value_prev, filing_total_value=filing_total)
         conviction = latest["value"] / filing_total if filing_total > 0 else 0.0
         by_instrument[iid].append(
             {
@@ -248,6 +256,7 @@ async def _get_form13f_for_instruments(
                 "score": score,
                 "value": latest["value"],
                 "conviction": conviction,
+                "filing_total_value": filing_total,
                 "report_date": latest["report_date"].isoformat() if latest.get("report_date") else None,
                 "shares": latest["shares"],
                 "shares_prev": shares_prev,
@@ -285,7 +294,7 @@ async def _get_form13f_for_instruments(
                     "shares_prev": h.get("shares_prev"),
                     "value": h.get("value"),
                     "scored": id(h) in scoring_set,
-                    "score_reason": _score_reason(h["score"], h["change"], h.get("value") or 0),
+                    "score_reason": _score_reason(h["score"], h["change"], h.get("value") or 0, h.get("filing_total_value")),
                 }
                 for h in holders
             ],

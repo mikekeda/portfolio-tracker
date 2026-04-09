@@ -260,16 +260,16 @@
   border-bottom: none;
 }
 
-/* Scrollable item list for panels with many entries (e.g. On Their Radar) */
+/* Scrollable item list for panels with many entries (e.g. On Their Radar/Consensus) */
 .hi-items-scroll {
-  max-height: 232px;   /* ~8 items */
+  max-height: 300px;   /* ~10 items */
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: var(--c-radar-border) transparent;
+  scrollbar-color: #dee2e6 transparent;
 }
 .hi-items-scroll::-webkit-scrollbar { width: 4px; }
 .hi-items-scroll::-webkit-scrollbar-track { background: transparent; }
-.hi-items-scroll::-webkit-scrollbar-thumb { background: var(--c-radar-border); border-radius: 2px; }
+.hi-items-scroll::-webkit-scrollbar-thumb { background: #dee2e6; border-radius: 2px; }
 
 /* ─── Custom styled tooltips ─────────────────────────────────────────────── */
 /* Used on hi-item (Consensus panels) and activity pills (manager cards).    */
@@ -1159,15 +1159,20 @@
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 10px;
-  border: 1px solid var(--c-radar-border);
+  border: 1px solid #ced4da;
   background: transparent;
-  color: var(--c-radar-active);
+  color: #6c757d;
   cursor: pointer;
   line-height: 1.4;
-  transition: background 0.1s, color 0.1s;
+  transition: all 0.1s;
 }
-.hi-sort-pill:hover  { background: #ede9fe; }
-.hi-sort-pill.active { background: var(--c-radar-active); color: #fff; border-color: var(--c-radar-active); }
+.hi-sort-pill:hover  { background: #e9ecef; }
+.hi-sort-pill.active { background: #6c757d; color: #fff; border-color: #6c757d; }
+
+.hl-buys .hi-sort-pill.active     { background: var(--c-buy); border-color: var(--c-buy); }
+.hl-sells .hi-sort-pill.active    { background: var(--c-sell); border-color: var(--c-sell); }
+.hl-disputed .hi-sort-pill.active { background: var(--c-mixed); color: #fff; border-color: var(--c-mixed); }
+.hl-radar .hi-sort-pill.active    { background: var(--c-radar-active); border-color: var(--c-radar-active); }
 
 /* ─── Responsive ────────────────────────────────────────────────────────────── */
 
