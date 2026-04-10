@@ -322,11 +322,22 @@ const PANEL_SORTS = [
   { key: 'capital',    label: 'Capital'    },
 ];
 
+const HELD_SORTS = [
+  { key: 'mgrs',  label: 'Mgrs'  },
+  { key: 'value', label: 'Value' },
+];
+
 const HighlightPanel = React.memo(function HighlightPanel({ className, title, count, subtitle, items, mode }) {
-  const [panelSort, setPanelSort] = useState('conviction');
+  const [panelSort, setPanelSort] = useState(() => mode === 'held' ? 'mgrs' : 'conviction');
   const { tip, showRich, hide } = useHiTooltip();
 
   const sortedItems = useMemo(() => {
+    if (mode === 'held') {
+      const r = [...items];
+      if (panelSort === 'value') r.sort((a, b) => (b.total_value || 0) - (a.total_value || 0));
+      else r.sort((a, b) => (b.count || 0) - (a.count || 0) || (b.total_value || 0) - (a.total_value || 0));
+      return r.slice(0, 20);
+    }
     if (mode !== 'buy' && mode !== 'sell' && mode !== 'mixed') return items;
 
     const r = [...items];
@@ -367,9 +378,9 @@ const HighlightPanel = React.memo(function HighlightPanel({ className, title, co
       <div className="hi-panel-title">
         {title}
         <span className="hi-panel-count">{count}</span>
-        {(mode === 'buy' || mode === 'sell' || mode === 'mixed') && (
+        {(mode === 'buy' || mode === 'sell' || mode === 'mixed' || mode === 'held') && (
           <div className="hi-panel-sort">
-            {PANEL_SORTS.map(s => (
+            {(mode === 'held' ? HELD_SORTS : PANEL_SORTS).map(s => (
               <button
                 key={s.key}
                 className={`hi-sort-pill ${panelSort === s.key ? 'active' : ''}`}
