@@ -81,8 +81,7 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "IE00BWT6H894": "G3643J108",  # Flutter Entertainment plc
     "CH0114405324": "H2906T109",  # Garmin Ltd (SIX vs NYSE CUSIP)
     "IE00BYTBXV33": "783513203",  # Ryanair Holdings plc (Dublin vs ADR CUSIP)
-    # Note: Enbridge (CA29250N1050) and many US names should match without overrides.
-    # Medline Inc (58507V107): private / not a normal listed equity — skip for 13F↔app matching.
+    "GB00BVZK7T90": "904767803",
 }
 
 
