@@ -241,7 +241,7 @@ function computeComposite(h) {
 // Keys whose numeric values should be serialised with 2 decimal places in CSV
 const CSV_PERCENT_KEYS = new Set([
   'portfolio_pct', 'return_pct', 'dividend_yield', 'prediction',
-  'institutional_ownership', 'profit_margins', 'revenue_growth',
+  'profit_margins', 'revenue_growth',
   'roic', 'free_cashflow_yield', 'fifty_two_week_high_distance',
   'short_percent_of_float', 'dcf_diff',
 ]);
@@ -319,7 +319,6 @@ const Holdings = () => {
     return {
       portfolioPct: calculateMinMax(holdings, 'portfolio_pct'),
       marketValue: calculateMinMax(holdings, 'market_value'),
-      institutional: calculateMinMax(holdings, 'institutional_ownership'),
       short: calculateMinMax(holdings, 'short_percent_of_float'),
       weekHighChange: calculateMinMax(holdings, 'fifty_two_week_high_distance')
     };
@@ -464,7 +463,7 @@ const Holdings = () => {
         },
         enableSorting: true,
         enableGlobalFilter: true,
-        size: 200,
+        size: 140,
       }),
       columnHelper.accessor(row => computeComposite(row), {
         id: 'composite_score',
@@ -637,32 +636,6 @@ const Holdings = () => {
         enableSorting: true,
         enableGlobalFilter: false,
         size: 80,
-      }),
-      columnHelper.accessor('institutional_ownership', {
-        header: 'Instit',
-        cell: (info) => {
-          const value = info.getValue();
-          if (value === null || value === undefined) return <span className="institutional"></span>;
-
-          const barWidth = calculateBarWidth(value, barRanges.institutional?.min || 0, barRanges.institutional?.max || 100);
-          const colorScheme = getBarColorScheme('institutional', value);
-          const isNegative = shouldBeNegativeBar('institutional', value);
-          const barStyle = getBarStyle(barWidth, colorScheme);
-
-          // Apply original text color logic
-          const isPositive = value > 80;
-          const isNegativeText = value < 40;
-          const textClassName = isPositive ? 'positive' : isNegativeText ? 'negative' : '';
-
-          return (
-            <span className={`bar-column ${isNegative ? 'negative' : ''}`} style={barStyle}>
-              <span className={`institutional ${textClassName}`}>{Math.round(value)}%</span>
-            </span>
-          );
-        },
-        enableSorting: true,
-        enableGlobalFilter: false,
-        size: 40,
       }),
       columnHelper.accessor('market_cap', {
         header: 'Mkt Cap',
@@ -1380,7 +1353,7 @@ const Holdings = () => {
         size: 90,
       }),
       columnHelper.accessor('currency', {
-        header: 'Currency',
+        header: 'Ccy',
         cell: (info) => (
           <span>{info.getValue()}</span>
         ),
@@ -1502,7 +1475,6 @@ const Holdings = () => {
       'return_pct': 'Return',
       'dividend_yield': 'Div',
       'prediction': 'Pred',
-      'institutional_ownership': 'Instit',
       'market_cap': 'Mkt Cap',
       'peg_ratio': 'PEG',
       'pe_ratio': 'PE',
@@ -1528,7 +1500,7 @@ const Holdings = () => {
       'since_earnings_pct': 'Since Earn.',
       'country': 'Country',
       'sector': 'Sector',
-      'currency': 'Currency',
+      'currency': 'Ccy',
       'dcf_diff': 'DCF Diff',
       'current_price': 'Price',
       'composite_score': 'Score',

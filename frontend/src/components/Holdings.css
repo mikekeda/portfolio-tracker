@@ -858,7 +858,7 @@
 }
 
 .holdings-table .name {
-  max-width: 115px;
+  max-width: 130px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -917,7 +917,6 @@
 
 /* Conditional coloring for financial metrics */
 .holdings-table .prediction.positive,
-.holdings-table .institutional.positive,
 .holdings-table .peg.positive,
 .holdings-table .pe.positive,
 .holdings-table .beta.positive,
@@ -934,7 +933,6 @@
 }
 
 .holdings-table .prediction.negative,
-.holdings-table .institutional.negative,
 .holdings-table .peg.negative,
 .holdings-table .pe.negative,
 .holdings-table .beta.negative,
@@ -968,7 +966,6 @@
 }
 
 .holdings-table .prediction,
-.holdings-table .institutional,
 .holdings-table .market-cap,
 .holdings-table .peg,
 .holdings-table .pe,
@@ -988,16 +985,18 @@
 }
 
 
+/* Sector + Country: wrap at spaces only, never mid-word */
 .holdings-table .sector,
 .holdings-table .country {
   max-width: 90px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: #5a6c7d;  /* Medium gray for secondary info */
   font-weight: 700;
   display: flex;
   align-items: center;
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: normal;
+  line-height: 1.3;
 }
 
 /* Country flag styling */
