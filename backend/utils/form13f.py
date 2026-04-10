@@ -29,6 +29,7 @@ class Form13FHolder(TypedDict):
     shares: int | None
     shares_prev: int | None
     value: int | None
+    value_prev: int | None
     scored: bool
     score_reason: str | None
 
@@ -255,6 +256,7 @@ async def _get_form13f_for_instruments(
                 "change": change,
                 "score": score,
                 "value": latest["value"],
+                "value_prev": value_prev,
                 "conviction": conviction,
                 "filing_total_value": filing_total,
                 "report_date": latest["report_date"].isoformat() if latest.get("report_date") else None,
@@ -293,6 +295,7 @@ async def _get_form13f_for_instruments(
                     "shares": h.get("shares"),
                     "shares_prev": h.get("shares_prev"),
                     "value": h.get("value"),
+                    "value_prev": h.get("value_prev"),
                     "scored": id(h) in scoring_set,
                     "score_reason": _score_reason(h["score"], h["change"], h.get("value") or 0, h.get("filing_total_value")),
                 }

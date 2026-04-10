@@ -70,12 +70,36 @@ function formatHolderValue(val) {
   return `$${Math.round(n)}`;
 }
 
+// Formats a signed dollar flow value: +$1.2B, −$340M, etc.
+function formatNetFlow(val) {
+  if (val == null) return null;
+  const n = Number(val);
+  const abs = Math.abs(n);
+  const sign = n >= 0 ? '+' : '−';
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(0)}M`;
+  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
+  return `${sign}$${Math.round(abs)}`;
+}
+
 function formatHolderShares(val) {
   if (val == null) return null;
   const n = Number(val);
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)}M`;
   if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
   return n.toLocaleString();
+}
+
+/**
+ * Net flow for a single holder: (shares_change × price_at_report).
+ * Matches the highlights endpoint formula exactly — measures trading activity
+ * only, not price appreciation. value_prev is intentionally NOT used here.
+ * Returns null when shares or shares_prev are unknown.
+ */
+function holderFlow(h) {
+  if (h.shares == null || h.value == null || h.shares_prev == null) return null;
+  const priceNow = h.shares > 0 ? h.value / h.shares : 0;
+  return (h.shares - h.shares_prev) * priceNow;
 }
 
 function buildHolderTooltip(h) {
@@ -91,6 +115,8 @@ function buildHolderTooltip(h) {
     const reason = h.scored === false && h.score_reason ? ` — not scored (${h.score_reason})` : '';
     lines.push(`Value: ${valueStr}${reason}`);
   }
+  const flow = holderFlow(h);
+  if (flow != null && flow !== 0) lines.push(`Flow: ${formatNetFlow(flow)}`);
   return lines.join('\n');
 }
 
@@ -130,9 +156,15 @@ function signalScore(row) {
   return SIGNAL_CONVICTION_SCORE[key] ?? 99;
 }
 
-// Net institutional momentum: sum of change scores across all 13F holders.
+// Net institutional momentum: sum of change scores, counting only holders that
+// meet conviction thresholds (scored=true). Noise holders are excluded so a
+// stock with many tiny "New" positions doesn't rank above one with a single
+// large genuine buy.
 function netHolderScore(holders) {
-  return (holders || []).reduce((sum, h) => sum + scoreFromChange(h.change), 0);
+  return (holders || []).reduce(
+    (sum, h) => sum + (h.scored !== false ? scoreFromChange(h.change) : 0),
+    0,
+  );
 }
 
 function getHolderCategory(change) {
@@ -1186,7 +1218,11 @@ const Holdings = () => {
         size: 80,
       }),
       columnHelper.accessor('form13f_score', {
-        header: '13F Score',
+        header: () => (
+          <span title={'Conviction-weighted institutional signal (−2 to +2).\n+2 = strong buy signal, −2 = strong sell signal.\nOnly positions above conviction thresholds (≥0.05–0.1% of manager\'s AUM) contribute.\nWeighted by each manager\'s commitment relative to their portfolio size.'}>
+            13F Score
+          </span>
+        ),
         cell: (info) => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="form13f-score"></span>;
@@ -1208,6 +1244,59 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 60,
       }),
+      columnHelper.accessor(
+        row => {
+          const holders = row.form13f_holders;
+          if (!holders || holders.length === 0) return null;
+          // Sum (shares_change × price_now) per manager — matches the highlights
+          // endpoint. Skips holders where shares or shares_prev are unknown.
+          let total = 0;
+          let hasData = false;
+          for (const h of holders) {
+            const f = holderFlow(h);
+            if (f != null) {
+              total += f;
+              hasData = true;
+            }
+          }
+          return hasData ? total : null;
+        },
+        {
+          id: 'form13f_net_flow',
+          header: () => (
+            <span title={'Net change in institutional holdings vs prior quarter.\n∑ (shares_change × price at report date) across all tracked managers.\nPositive = net institutional buying; negative = net selling.'}>
+              Net Flow
+            </span>
+          ),
+          cell: (info) => {
+            const flow = info.getValue();
+            if (flow == null) return <span className="form13f-net-flow"></span>;
+            const formatted = formatNetFlow(flow);
+            if (!formatted) return <span className="form13f-net-flow"></span>;
+
+            // Build per-manager tooltip
+            const holders = info.row.original.form13f_holders || [];
+            const lines = holders
+              .map(h => ({ h, f: holderFlow(h) }))
+              .filter(({ f }) => f != null)
+              .sort((a, b) => Math.abs(b.f) - Math.abs(a.f))
+              .map(({ h, f }) => `${formatNetFlow(f)}  ${trimHolderName(h.name)}`);
+            const tip = lines.length ? lines.join('\n') : undefined;
+
+            return (
+              <span
+                className={`form13f-net-flow ${flow > 0 ? 'positive' : 'negative'}`}
+                title={tip}
+              >
+                {formatted}
+              </span>
+            );
+          },
+          enableSorting: true,
+          enableGlobalFilter: false,
+          size: 80,
+        },
+      ),
       columnHelper.accessor('form13f_holders', {
         header: '13F Holders',
         cell: (info) => {
@@ -1216,7 +1305,14 @@ const Holdings = () => {
             return <span className="no-form13f-holders"></span>;
           }
 
-          const sortedHolders = [...holders].sort((a, b) => scoreFromChange(b.change) - scoreFromChange(a.change));
+          // Scored (conviction-meeting) holders first, then noise; within each
+          // group sort by signal strength so the strongest signal is leftmost.
+          const sortedHolders = [...holders].sort((a, b) => {
+            const aScored = a.scored !== false ? 1 : 0;
+            const bScored = b.scored !== false ? 1 : 0;
+            if (bScored !== aScored) return bScored - aScored;
+            return scoreFromChange(b.change) - scoreFromChange(a.change);
+          });
 
           return (
             <div className="form13f-holder-badges">
