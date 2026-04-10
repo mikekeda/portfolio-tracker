@@ -1009,42 +1009,105 @@ const Stock = () => {
               <span className="form13f-as-of"> — as of {formatDateShort(data.form13f_as_of)}</span>
             )}
           </h3>
-          {data.form13f_holdings && data.form13f_holdings.length > 0 ? (
-            <div className="form13f-list">
-              {data.form13f_holdings.map((h, idx) => {
-                const changeIsPositive = h.change === 'New' || (typeof h.change === 'string' && h.change.startsWith('+'));
-                const changeIsNegative = h.change === 'Closed' || (typeof h.change === 'string' && h.change.startsWith('-'));
-                const tooltipParts = [
-                  `Report date: ${h.report_date}`,
-                  `Shares: ${h.shares?.toLocaleString() ?? '-'}`,
-                ];
-                if (h.report_date_prev) tooltipParts.push(`Prev report: ${h.report_date_prev}`);
-                if (h.shares_prev != null) tooltipParts.push(`Prev shares: ${h.shares_prev.toLocaleString()}`);
-                if (h.change === '—') tooltipParts.push('No prior quarter data');
-                const valueDisplay = h.pct_of_portfolio != null
-                  ? `$${formatShort(h.value)} (${h.pct_of_portfolio}%)`
-                  : `$${formatShort(h.value)}`;
-                const nameContent = h.sec_filing_url ? (
-                  <a href={h.sec_filing_url} target="_blank" rel="noopener noreferrer" className="form13f-link">
-                    {h.manager_name}
-                  </a>
-                ) : (
-                  h.manager_name
-                );
-                return (
-                  <div key={idx} className="form13f-row" title={tooltipParts.join('\n')}>
-                    <span className="form13f-name">{nameContent}</span>
-                    <span className="form13f-value">{valueDisplay}</span>
-                    <span
-                      className={`form13f-change ${changeIsPositive ? 'positive' : ''} ${changeIsNegative ? 'negative' : ''}`}
-                    >
-                      {h.change}
+          {data.form13f_holdings && data.form13f_holdings.length > 0 ? (() => {
+            const holdings = data.form13f_holdings;
+
+            // Summary counts + net flow
+            const buyCount  = holdings.filter(h => h.scored && (h.change === 'New' || (h.change !== 'Closed' && h.change !== '—' && parseFloat(h.change) > 0))).length;
+            const sellCount = holdings.filter(h => h.scored && (h.change === 'Closed' || (h.change !== 'New' && h.change !== '—' && parseFloat(h.change) < 0))).length;
+            const netFlow   = holdings.reduce((sum, h) => {
+              if (h.shares == null || h.value == null || h.shares_prev == null) return sum;
+              const price = h.shares > 0 ? h.value / h.shares : 0;
+              return sum + (h.shares - h.shares_prev) * price;
+            }, 0);
+            const formatFlow = (n) => {
+              const abs = Math.abs(n);
+              const sign = n >= 0 ? '+' : '−';
+              if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(1)}B`;
+              if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(0)}M`;
+              if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(0)}K`;
+              return `${sign}$${Math.round(abs)}`;
+            };
+            const getChangeClass = (change) => {
+              if (change === 'New') return 'form13f-change--new';
+              if (change === 'Closed') return 'form13f-change--closed';
+              if (change === '—') return 'form13f-change--stable';
+              const pct = parseFloat(change);
+              if (pct >= 10)  return 'form13f-change--increase';
+              if (pct <= -30) return 'form13f-change--trimmed';
+              return 'form13f-change--stable';
+            };
+
+            return (
+              <>
+                <div className="form13f-summary">
+                  {buyCount > 0  && <span className="form13f-summary-buy">{buyCount} buying</span>}
+                  {sellCount > 0 && <span className="form13f-summary-sell">{sellCount} selling</span>}
+                  <span className="form13f-summary-hold">{holdings.length - buyCount - sellCount} unchanged</span>
+                  {netFlow !== 0 && (
+                    <span className={`form13f-summary-flow ${netFlow > 0 ? 'positive' : 'negative'}`}>
+                      {formatFlow(netFlow)} net flow
                     </span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
+                  )}
+                </div>
+                <div className="form13f-list">
+                  {holdings.map((h, idx) => {
+                    const scored = h.scored !== false;
+                    // Detect boundary: first noise row that follows at least one scored row
+                    const isFirstNoise = !scored && idx > 0 && holdings[idx - 1]?.scored !== false;
+                    const flow = (h.shares != null && h.value != null && h.shares_prev != null)
+                      ? (h.shares - h.shares_prev) * (h.shares > 0 ? h.value / h.shares : 0)
+                      : null;
+                    const tooltipParts = [`Report date: ${h.report_date}`];
+                    if (h.shares_prev != null)
+                      tooltipParts.push(`Shares: ${h.shares_prev.toLocaleString()} → ${h.shares?.toLocaleString() ?? '-'}`);
+                    else
+                      tooltipParts.push(`Shares: ${h.shares?.toLocaleString() ?? '-'}`);
+                    if (h.report_date_prev) tooltipParts.push(`Prev report: ${h.report_date_prev}`);
+                    if (!scored && h.score_reason) tooltipParts.push(`Not scored: ${h.score_reason}`);
+                    if (flow != null && flow !== 0) tooltipParts.push(`Flow: ${formatFlow(flow)}`);
+
+                    const valueDisplay = h.pct_of_portfolio != null
+                      ? `$${formatShort(h.value)} (${h.pct_of_portfolio}%)`
+                      : `$${formatShort(h.value)}`;
+
+                    // Link internally to manager page
+                    const nameContent = h.manager_id ? (
+                      <Link to={`/13f/${h.manager_id}`} className="form13f-link">{h.manager_name}</Link>
+                    ) : h.manager_name;
+
+                    const changeClass = getChangeClass(h.change);
+                    const rowSignal = scored
+                      ? (changeClass === 'form13f-change--new' || changeClass === 'form13f-change--increase'
+                          ? ' form13f-row--buy'
+                          : changeClass === 'form13f-change--closed' || changeClass === 'form13f-change--trimmed'
+                            ? ' form13f-row--sell'
+                            : '')
+                      : ' form13f-row--noise';
+
+                    return (
+                      <React.Fragment key={idx}>
+                        {isFirstNoise && (
+                          <div className="form13f-noise-divider">Other holders</div>
+                        )}
+                        <div className={`form13f-row${rowSignal}`}
+                             title={tooltipParts.join('\n')}>
+                          <span className="form13f-name">{nameContent}</span>
+                          <span className="form13f-value">{valueDisplay}</span>
+                          {flow != null && flow !== 0 && (
+                            <span className={`form13f-flow ${flow > 0 ? 'positive' : 'negative'}`}>
+                              {formatFlow(flow)}
+                            </span>
+                          )}
+                          <span className={`form13f-change ${changeClass}`}>{h.change}</span>
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              </>
+            );
+          })() : (
             <p className="form13f-empty">No institutional holders found for this stock.</p>
           )}
         </div>

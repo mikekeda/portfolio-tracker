@@ -330,14 +330,32 @@
   font-size: 0.9em;
 }
 
+.form13f-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+}
+
+.form13f-summary-buy  { color: #155724; font-weight: 600; }
+.form13f-summary-sell { color: #721c24; font-weight: 600; }
+.form13f-summary-hold { color: #6c757d; }
+.form13f-summary-flow {
+  margin-left: auto;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.form13f-summary-flow.positive { color: #155724; }
+.form13f-summary-flow.negative { color: #721c24; }
+
 .form13f-link {
   color: #0d6efd;
   text-decoration: none;
 }
+.form13f-link:hover { text-decoration: underline; }
 
-.form13f-link:hover {
-  text-decoration: underline;
-}
 
 .form13f-list {
   display: flex;
@@ -356,6 +374,31 @@
   cursor: default;
 }
 
+.form13f-row--buy {
+  background: var(--c-buy-bg-panel, #f1f8f1);
+  border-color: var(--c-buy-border-panel, #c8e6c9);
+  border-left: 3px solid var(--c-buy-border, #a5d6a7);
+}
+
+.form13f-row--sell {
+  background: var(--c-sell-bg-panel, #fff5f5);
+  border-color: var(--c-sell-border, #ffcdd2);
+  border-left: 3px solid var(--c-sell, #c62828);
+}
+
+.form13f-row--noise {
+  opacity: 0.5;
+}
+
+.form13f-noise-divider {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #adb5bd;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 6px 2px 2px;
+}
+
 .form13f-name {
   flex: 1;
   font-weight: 500;
@@ -366,6 +409,14 @@
   color: #212529;
 }
 
+.form13f-flow {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.form13f-flow.positive { color: #155724; }
+.form13f-flow.negative { color: #721c24; }
+
+/* Change badge — category colours matching Holdings page */
 .form13f-change {
   font-size: 0.85rem;
   padding: 2px 6px;
@@ -373,16 +424,11 @@
   background: #e9ecef;
   color: #6c757d;
 }
-
-.form13f-change.positive {
-  background: #d4edda;
-  color: #155724;
-}
-
-.form13f-change.negative {
-  background: #f8d7da;
-  color: #721c24;
-}
+.form13f-change--new      { background: #d4edda; color: #155724; }
+.form13f-change--increase { background: #cce5ff; color: #004085; }
+.form13f-change--trimmed  { background: #fff3cd; color: #856404; }
+.form13f-change--closed   { background: #f8d7da; color: #721c24; }
+.form13f-change--stable   { background: #e9ecef; color: #6c757d; }
 
 .form13f-empty {
   color: #6c757d;
