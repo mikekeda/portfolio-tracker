@@ -27,11 +27,13 @@ STOCKS_SUFFIX: dict[str, str] = {
 # Maps the *core* symbol from Trading212 (before _US_EQ / exchange tag) → Yahoo ticker.
 # Applied in convert_ticker() after stripping the T212 suffix, e.g. JEC_US_EQ → sym JEC → "J".
 STOCKS_ALIASES: dict[str, str] = {
+    "3LBA1": "3LBA",
     "AAXN": "AXON",
     "ABC": "COR",
     "AHAC": "HUMA",
     "AI1": "AI",
     "ANTM": "ELV",
+    "ARNC": "HWM",
     "BHI": "BKR",
     "BRK/A": "BRK-A",
     "BRK_B": "BRK-B",
@@ -41,10 +43,13 @@ STOCKS_ALIASES: dict[str, str] = {
     "CCIV": "LCID",
     "CHKK": "EXE",
     "CNHI": "CNH",
+    "DAI": "MBG",
     "DMYI": "IONQ",
     "DPS": "KDP",
     "EJFA": "PGY",
     "FB": "META",
+    "FI": "XPRO",
+    "FLT": "CPAY",
     "FP": "TTE",
     "GARENA": "SE",
     "GNPK": "RDW",
@@ -62,6 +67,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "PCLN": "BKNG",
     "PKI": "RVTY",
     "RBS": "NWG",
+    "RE": "EG",
     "RTP": "JOBY",
     "SL": "ABDN",
     "SNE": "SONY",
@@ -85,7 +91,6 @@ STOCKS_ALIASES: dict[str, str] = {
 # Prefer STOCKS_ALIASES for simple renames so new syncs get a live Yahoo symbol; use this for
 # halted shells, SPACs that no longer trade under the old symbol, or bad T212 lines to hide.
 STOCKS_DELISTED: set[str] = {
-    "3LBA1.L",
     "8GC.DE",
     "AGR.L",
     "HYUDl_EQ",
