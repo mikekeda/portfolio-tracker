@@ -104,10 +104,10 @@ class ScreenerConfig:
             "qarp": ScreenerDefinition(
                 id="qarp",
                 name="Quality at Reasonable Price",
-                description="ROE >= 10% & PEG <= 2.0 & FCF Yield >= 4%",
+                description="ROIC >= 8% & PEG <= 2.0 & FCF Yield >= 4%",
                 category=ScreenerCategory.FUNDAMENTALS,
                 criteria=[
-                    ScreenerCriteria("return_on_equity", ">=", 10, "Return on Equity >= 10%"),
+                    ScreenerCriteria("roic", ">=", 8, "Return on Invested Capital >= 8%"),
                     ScreenerCriteria("peg_ratio", "<=", 2.0, "PEG Ratio <= 2.0"),
                     ScreenerCriteria("peg_ratio", ">", 0.0, "PEG Ratio > 0.0"),
                     ScreenerCriteria("free_cashflow_yield", ">=", 4, "Free Cash Flow Yield >= 4%"),
@@ -250,7 +250,7 @@ class ScreenerConfig:
                 criteria=[
                     ScreenerCriteria("bb_width_20", "<=", FieldRef("bb_width_20_p30_6m"), "Tight vs 6m history"),
                     ScreenerCriteria("vol20_lt_vol60", "==", True, "Volume contraction"),
-                    ScreenerCriteria("rs_6m_vs_spy", ">=", 0, "Not lagging the market"),
+                    ScreenerCriteria("rs_6m_vs_spy", ">=", 10, "Leading the market by >=10pp"),
                 ],
                 requires_historical_data=True,
                 requires_yahoo_data=True,
@@ -309,7 +309,7 @@ class ScreenerConfig:
                 description="Quality/profitability with controlled dip to 50DMA",
                 category=ScreenerCategory.QUALITY,
                 criteria=[
-                    ScreenerCriteria("return_on_equity", ">=", 15, "Quality ROE"),
+                    ScreenerCriteria("roic", ">=", 12, "Quality ROIC >= 12%"),
                     ScreenerCriteria("profit_margins", ">=", 10, "Profitability"),
                     ScreenerCriteria("current_price", "<=", FieldRef("sma_50"), "At/below 50DMA"),
                     ScreenerCriteria("current_price", ">=", FieldRef("sma_200"), "Primary uptrend"),
@@ -353,7 +353,7 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=8,
-                combine_with=["quality_growth_pullback", "golden_cross"],
+                combine_with=["quality_growth_pullback", "golden_cross", "r40_momentum", "momentum_pullback"],
             ),
             "pe_vs_history": ScreenerDefinition(
                 id="pe_vs_history",
@@ -362,7 +362,7 @@ class ScreenerConfig:
                 category=ScreenerCategory.VALUE,
                 criteria=[
                     ScreenerCriteria("pe_5y_avg_vs_current_pct", ">=", 10, "Current PE is at least 10% below 5Y avg"),
-                    ScreenerCriteria("return_on_equity", ">=", 10, "Business quality remains high"),
+                    ScreenerCriteria("roic", ">=", 8, "Business quality remains high (ROIC >= 8%)"),
                     ScreenerCriteria("pe_ratio", ">", 0, "Company is profitable"),
                 ],
                 requires_historical_data=True,  # Requires PE history
@@ -415,10 +415,11 @@ class ScreenerConfig:
             "red_flag_cash_burn": ScreenerDefinition(
                 id="red_flag_cash_burn",
                 name="Red Flag: Negative FCF",
-                description="""Company is burning cash (Negative Free Cash Flow).""",
+                description="""Mature company burning cash (Negative FCF, Revenue Growth < 30%). High-growth pre-profit companies are exempt.""",
                 category=ScreenerCategory.QUALITY,
                 criteria=[
                     ScreenerCriteria("free_cashflow_yield", "<", 0, "Company is burning cash"),
+                    ScreenerCriteria("revenue_growth", "<", 30, "Not high-growth (burn is not intentional investment)"),
                 ],
                 available=True,
                 weight=-5,  # This is a significant red flag
@@ -445,15 +446,15 @@ Check those criteria:
                     # We use a very strict Debt/Equity ratio.
                     ScreenerCriteria("debtToEquity", "<", 60, "Low Debt to Equity (< 60%)"),
                     # These are proxies for "Clear moat"
-                    ScreenerCriteria("return_on_equity", ">=", 10, "High ROE (Moat proxy) >= 10%"),
+                    ScreenerCriteria("roic", ">=", 10, "High ROIC (Moat proxy) >= 10%"),
                     ScreenerCriteria("profit_margins", ">=", 10, "High Profit Margins (Moat proxy) >= 10%"),
                 ],
                 requires_historical_data=False,  # We are using current/TTM data
                 requires_yahoo_data=True,
                 available=True,
                 weight=9,  # This is a very strong, high-quality signal
-                combine_with=["momentum_pullback", "oversold_uptrend", "pe_vs_history"],
-                # Combines well with entry points
+                combine_with=["momentum_pullback", "oversold_uptrend", "pe_vs_history", "r40_momentum", "quality_growth_pullback"],
+                # Combines well with entry points and other quality/growth validators
             ),
         }
 

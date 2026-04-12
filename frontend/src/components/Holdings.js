@@ -181,6 +181,59 @@ function getHolderCategory(change) {
   return 'form13f-stable';
 }
 
+const MS_PER_AVG_MONTH = 1000 * 60 * 60 * 24 * 30.44;
+
+/** @returns {number|null} months since announcement, or null if missing/invalid */
+function earningsReportAgeMonths(announcementDateStr) {
+  if (!announcementDateStr) return null;
+  const t = new Date(announcementDateStr).getTime();
+  if (!Number.isFinite(t)) return null;
+  return (Date.now() - t) / MS_PER_AVG_MONTH;
+}
+
+/**
+ * Composite earnings weight by age. Tooltip age copy. Invalid/missing age → full weight.
+ */
+function earningsAgeDecay(monthsOld) {
+  if (monthsOld == null || !Number.isFinite(monthsOld)) {
+    return { freshness: 1, ageLabel: null };
+  }
+  if (monthsOld >= 24) {
+    return {
+      freshness: 0,
+      ageLabel: `${Math.round(monthsOld)} months ago — excluded from score`,
+    };
+  }
+  if (monthsOld >= 12) {
+    return {
+      freshness: 0.6,
+      ageLabel: `${Math.round(monthsOld)} months ago — reduced weight in score`,
+    };
+  }
+  return {
+    freshness: 1,
+    ageLabel: `${Math.round(monthsOld)} months ago`,
+  };
+}
+
+const BADGE_CONV_BASE = { high: 1.0, medium: 0.88, low: 0.76 };
+const BADGE_CONV_DEFAULT = 0.88;
+const BADGE_OPACITY_MIN = 0.32;
+
+function signalBadgeAgeFactor(monthsOld) {
+  if (monthsOld == null || !Number.isFinite(monthsOld)) return 1.0;
+  if (monthsOld >= 24) return 0.52;
+  if (monthsOld >= 12) return 0.72;
+  return 1.0;
+}
+
+/** Opacity = conviction base × age factor, clamped (badge only; composite uses earningsAgeDecay.freshness). */
+function signalBadgeOpacity(conviction, monthsOld) {
+  const base = BADGE_CONV_BASE[conviction] ?? BADGE_CONV_DEFAULT;
+  const raw = base * signalBadgeAgeFactor(monthsOld);
+  return Math.min(1, Math.max(BADGE_OPACITY_MIN, raw));
+}
+
 /**
  * Composite score (–10 … 10):
  *   Screener quality score    50%  — screener_score / SCREENER_NORMALIZER (50).
@@ -207,6 +260,12 @@ function computeComposite(h) {
   let signalRaw = h.earnings_signal ? (SIGNAL_VALUES[h.earnings_signal] ?? null) : null;
   if (signalRaw != null && h.earnings_conviction) {
     signalRaw = Math.min(1, signalRaw * (CONV_MULT[h.earnings_conviction] ?? 1));
+  }
+  // Decay signal weight by age: full weight < 12 months, 60% for 12–24 months, zero after 24 months
+  if (signalRaw != null && h.earnings_announcement_date) {
+    const monthsOld = earningsReportAgeMonths(h.earnings_announcement_date);
+    const { freshness } = earningsAgeDecay(monthsOld);
+    signalRaw = signalRaw * freshness;
   }
 
   // recommendation_mean: 1=strong buy … 5=strong sell → normalise to [0, 1]
@@ -473,6 +532,7 @@ const Holdings = () => {
             'Base weights when all data is present:\n' +
             '  Screener quality    50%  — quality/growth screeners passed\n' +
             '  Earnings signal     25%  — AI-rated earnings quality (conviction-adjusted)\n' +
+            '                           Decays with age: 60% weight at 12–24 months, excluded after 24 months\n' +
             '  Analyst rec         10%  — consensus recommendation (1=strong buy … 5=sell)\n' +
             '  13F institutional   15%  — net institutional buying/selling\n\n' +
             'Screener component is normalised against a fixed benchmark (top-5 screener\n' +
@@ -1151,13 +1211,18 @@ const Holdings = () => {
           const annDate = info.row.original.earnings_announcement_date;
           if (!signal) return <span className="earnings-signal-cell" />;
           const label = signal.charAt(0).toUpperCase() + signal.slice(1);
+
+          const monthsOld = earningsReportAgeMonths(annDate);
+          const opacity = signalBadgeOpacity(conviction, monthsOld);
+          const { ageLabel } = earningsAgeDecay(monthsOld);
+
           const tip = [
             label,
             conviction ? `${conviction} conviction` : null,
-            annDate ? `Announced ${annDate}` : null,
+            annDate ? `Report: ${annDate}${ageLabel ? ` (${ageLabel})` : ''}` : null,
           ].filter(Boolean).join(' · ');
           return (
-            <span className={`earnings-signal-badge es-${signal}`} title={tip}>
+            <span className={`earnings-signal-badge es-${signal}`} title={tip} style={opacity < 1 ? { opacity } : undefined}>
               {label}
             </span>
           );

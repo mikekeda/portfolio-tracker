@@ -275,6 +275,8 @@ def _estimate_dcf_inputs(instrument: Instrument, risk_free_rate: float) -> DcfIn
     if earn_g is not None:
         earn_g = _clamp(earn_g, _SIG_LO, _SIG_HI)
 
+    if fcf_cagr is not None:
+        fcf_cagr = _clamp(fcf_cagr, _SIG_LO, _SIG_HI)
     candidates = [g for g in [rev_g, earn_g, fcf_cagr] if g is not None]
     if candidates:
         initial_growth = sum(candidates) / len(candidates)

@@ -104,7 +104,12 @@ class InvestmentAssessment(BaseModel):
         description="Overall recommendation: buy (attractive), hold (neutral), avoid (unattractive), consider (worth researching)",
     )
     conviction: Literal["high", "medium", "low"] = Field(
-        ..., description="Confidence in the recommendation based on clarity of data"
+        ..., description=(
+            "Strength of the investment signal, not just data clarity. "
+            "High = strong, consistent evidence supports the call (e.g. guidance raised, margins expanding, moat intact). "
+            "Medium = mixed signals or limited forward visibility. "
+            "Low = contradictory data, one-off items dominating, or unclear long-term trajectory."
+        )
     )
     rationale: str = Field(
         "",
@@ -121,7 +126,15 @@ class InvestmentAssessment(BaseModel):
     )
     quality_signals: Literal["strong", "adequate", "weak"] | None = Field(
         None,
-        description="Earnings quality: FCF vs net income, margin trends, capital allocation",
+        description=(
+            "Earnings quality for a long-term investor. "
+            "Strong = FCF >= reported net income, gross/operating margins stable or expanding, "
+            "and disciplined capital use (e.g. moat-building R&D or strategic CapEx aligned with "
+            "growth; prudent buybacks or debt paydown that does not starve investment—not financial engineering). "
+            "Adequate = FCF roughly tracks net income, margins flat, neutral capital allocation. "
+            "Weak = FCF significantly below net income (accruals concern), margin compression, "
+            "share dilution, or rising debt without clear return on that investment."
+        ),
     )
 
 
@@ -137,7 +150,7 @@ class EarningsReportMetrics(BaseModel):
     summary: str = Field(
         ...,
         description=(
-            "Markdown-formatted summary (300-500 words) with sections: Key Financial Results, "
+            "Markdown-formatted summary (350-500 words) with sections: Key Financial Results, "
             "Strategic Highlights, Risks & Headwinds, Future Outlook, Investment Thesis, Bottom Line. "
             "Use bold for key numbers, include specific percentages and comparisons."
         ),
@@ -276,9 +289,17 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
             text = text[:max_chars]
 
         prompt = f"""
-        You are a value-oriented financial analyst helping a retail investor decide whether
-        {ticker} is a good buy for their portfolio. Analyze this {form} earnings report and
-        extract structured metrics while generating a comprehensive summary.
+        You are a financial analyst helping a retail investor decide whether {ticker} is a
+        good long-term investment. This investor holds stocks in a tax-free ISA account with
+        a 10+ year horizon. They are growth and quality investors — they want businesses that
+        can compound capital over a decade, not short-term trades. Assess from a long-term
+        compounding perspective: a weak next quarter that doesn't damage the long-term thesis
+        is not a reason to avoid; deteriorating ROIC or returns on capital (only when stated
+        or clearly inferable from the filing), moat erosion, or management capital
+        misallocation IS a reason to avoid.
+
+        Analyze this {form} earnings report and extract structured metrics while generating
+        a comprehensive summary.
 
         **CRITICAL: EPS Guidance is the highest priority** - Stock price = EPS × PE ratio. If EPS guidance grows 10%, stock should theoretically grow 10% with same PE.
 
@@ -302,14 +323,15 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
 
         3. **Investment Assessment (REQUIRED - answer "is this a good buy?"):**
            - **recommendation**: "buy" (attractive), "hold" (neutral), "avoid" (unattractive), or "consider" (worth researching)
-           - **conviction**: "high", "medium", or "low" based on clarity of data and management credibility
+           - **conviction**: "high", "medium", or "low" — strength of the investment signal (consistent evidence vs mixed vs contradictory), not merely how clear the filing text is
            - **rationale**: 2-3 sentences explaining why (e.g., "Strong guidance raise and margin expansion support buy. Debt paydown reduces risk.")
            - **key_catalysts**: 2-4 positive drivers (e.g., "AI revenue accelerating", "Market share gains", "Buyback program")
            - **key_concerns**: 2-4 risks (e.g., "Macro headwinds", "Customer concentration", "Margin pressure")
-           - **quality_signals**: "strong" (FCF > net income, margins expanding), "adequate", or "weak" (FCF concerns, margin compression)
-           - Base assessment on: growth vs valuation, earnings quality, risk/reward, management credibility
+           - **quality_signals**: use the schema rubric (FCF vs net income, margins, capital allocation, dilution/debt)
+           - **capital_allocation** (add to rationale if relevant): Is the company reinvesting in moat-building (R&D, capacity)? Buying back shares or diluting? Taking on debt for growth or for financial engineering?
+           - Base assessment on: long-term compounding potential, earnings quality, moat durability, management capital allocation, risk/reward over 10 years — NOT short-term price momentum
 
-        **Generate Summary (Markdown, 350-550 words):**
+        **Generate Summary (Markdown, 350-500 words):**
 
         ### Key Financial Results
         - Lead with revenue, EPS, net income with YoY/QoQ comparisons
