@@ -45,9 +45,12 @@ def populate_ciks():
     with get_session() as session:
         instruments = session.scalars(select(Instrument)).all()
         updated_count = 0
+        no_yahoo_symbol = 0
+        no_sec_match = 0
 
         for inst in instruments:
             if not inst.yahoo_symbol:
+                no_yahoo_symbol += 1
                 continue
 
             # Yahoo format: "AAPL", "BRK-B" or "BRK.B"
@@ -59,11 +62,20 @@ def populate_ciks():
 
             found_cik = ticker_map.get(candidate) or ticker_map.get(candidate_normalized)
 
-            if found_cik and inst.cik != found_cik:
+            if not found_cik:
+                no_sec_match += 1
+                continue
+
+            if inst.cik != found_cik:
                 inst.cik = found_cik
                 updated_count += 1
 
-        logger.info("Total instruments updated with CIK: %s", updated_count)
+        logger.info(
+            "CIK populate: updated=%s, no SEC ticker match=%s, no yahoo_symbol=%s",
+            updated_count,
+            no_sec_match,
+            no_yahoo_symbol,
+        )
 
 
 if __name__ == "__main__":
