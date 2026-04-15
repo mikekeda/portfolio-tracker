@@ -322,16 +322,8 @@ function formatCSVValue(value, key) {
     : s;
 }
 
-// Still used for the Signal column badge tooltip (earnings-specific)
-const SIGNAL_TOOLTIP = {
-  buy:      'Buy — strong bullish earnings signal. The AI analysis of the latest report rates this stock as a clear buy.',
-  consider: 'Consider — mild bullish signal. Earnings quality improved but warrants further review before adding.',
-  hold:     'Hold — neutral signal. No clear direction from the earnings report; maintain current position.',
-  avoid:    'Avoid — bearish signal. Earnings report raised concerns; consider reducing or trimming the position.',
-};
-
 // This component will only re-render if its own props change
-const HoldingRow = React.memo(({ row, isSelected, hideAmounts: _hideAmounts }) => {
+const HoldingRow = React.memo(({ row, isSelected }) => {
   return (
     <tr className={isSelected ? 'selected-row' : undefined}>
       {row.getVisibleCells().map((cell) => (
@@ -1429,7 +1421,7 @@ const Holdings = () => {
     ];
     return showAll ? cols.filter(col => !POSITION_ONLY_COLUMN_IDS.includes(col.id)) : cols;
   },
-  [columnHelper, barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners, showAll, handleScreenerChange]
+  [barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners, showAll, handleScreenerChange]
   );
 
   useEffect(() => {

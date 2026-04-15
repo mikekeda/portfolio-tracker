@@ -1080,7 +1080,7 @@ const Form13FDetail = () => {
   );
   if (!data) return null;
 
-  const { manager, available_quarters, report_date, prev_report_date, total_value, num_positions, portfolio, moves } = data;
+  const { manager, available_quarters, total_value, num_positions, portfolio, moves } = data;
   const aumChange = prevTotal != null ? total_value - prevTotal : null;
 
   return (

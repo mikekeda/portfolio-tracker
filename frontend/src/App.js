@@ -37,7 +37,7 @@ function AppContent() {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [RELOAD_THRESHOLD_MS]);
+  }, []);
 
   return (
     <div className="App">

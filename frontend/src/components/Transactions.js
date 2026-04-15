@@ -343,7 +343,7 @@ const Transactions = () => {
           <h3>Dividend Income — {yearFilter || 'Last 24 Months'}</h3>
           {chartData.length > 0 ? (
             <div className="txn-chart-grow">
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
                   <XAxis
