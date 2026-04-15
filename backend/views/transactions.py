@@ -1,6 +1,7 @@
 """Transaction history and income summary endpoint."""
 
 from collections import defaultdict
+from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -11,6 +12,15 @@ from backend.app import get_db_session
 from models import Instrument, TransactionAction, TransactionHistory
 
 router = APIRouter()
+
+ISA_ANNUAL_ALLOWANCE = 20_000.0
+
+
+def _isa_tax_year_start(today: date) -> date:
+    """Return 6 April of the current UK tax year."""
+    if today.month > 4 or (today.month == 4 and today.day >= 6):
+        return date(today.year, 4, 6)
+    return date(today.year - 1, 4, 6)
 
 
 def _fees_gbp(fees: list | None, exchange_rate: float | None) -> float:
@@ -81,6 +91,10 @@ async def get_transactions(
     total_deposited = 0.0
     total_interest = 0.0
 
+    today = date.today()
+    isa_year_start = _isa_tax_year_start(today)
+    isa_deposited = 0.0
+
     dividends_by_month: dict[str, float] = defaultdict(float)
     dividends_by_ticker: dict[str, dict] = {}
     years_set: set[int] = set()
@@ -107,6 +121,8 @@ async def get_transactions(
 
         elif txn.action == TransactionAction.DEPOSIT:
             total_deposited += txn.total
+            if txn.timestamp.date() >= isa_year_start:
+                isa_deposited += txn.total
 
         elif txn.action == TransactionAction.INTEREST:
             total_interest += txn.total
@@ -151,6 +167,9 @@ async def get_transactions(
             }
         )
 
+    isa_year_end = date(isa_year_start.year + 1, 4, 5)
+    isa_tax_year_label = f"{isa_year_start.year}/{str(isa_year_end.year)[2:]}"
+
     return {
         "summary": {
             "total_dividends": round(total_dividends, 2),
@@ -158,6 +177,10 @@ async def get_transactions(
             "total_fees": round(total_fees, 2),
             "total_deposited": round(total_deposited, 2),
             "total_interest": round(total_interest, 2),
+            "isa_allowance_used": round(isa_deposited, 2),
+            "isa_allowance_total": ISA_ANNUAL_ALLOWANCE,
+            "isa_allowance_remaining": round(max(0.0, ISA_ANNUAL_ALLOWANCE - isa_deposited), 2),
+            "isa_tax_year": isa_tax_year_label,
         },
         "dividends_chart": dividends_chart,
         "top_dividend_payers": top_dividend_payers,

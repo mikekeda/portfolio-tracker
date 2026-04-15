@@ -67,6 +67,29 @@ const SummaryCard = ({ label, value, positive, negative, sub }) => (
   </div>
 );
 
+const ISACard = ({ used, total, remaining, taxYear, hide }) => {
+  const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+  const isNearLimit = pct >= 80;
+  const limitLabel = `£${(total / 1000).toFixed(0)}k`;
+  return (
+    <div className="txn-summary-card">
+      <div className="txn-summary-label">ISA Allowance {taxYear}</div>
+      <div className={`txn-summary-value${isNearLimit ? ' negative' : ''}`}>
+        {hide ? '****' : `£${remaining.toLocaleString('en-GB', { maximumFractionDigits: 0 })}`}
+        <span className="txn-summary-isa-sub"> left of {limitLabel}</span>
+      </div>
+      <div className="txn-summary-sub">
+        {hide
+          ? '**** of **** used'
+          : `£${used.toLocaleString('en-GB', { maximumFractionDigits: 0 })} of £${total.toLocaleString('en-GB', { maximumFractionDigits: 0 })} used`}
+      </div>
+      <div className="txn-isa-bar-wrap">
+        <div className={`txn-isa-bar-fill${isNearLimit ? ' near-limit' : ''}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+};
+
 const DividendTooltip = ({ active, payload, label, hide }) => {
   if (!active || !payload?.length) return null;
   return (
@@ -154,6 +177,39 @@ const Transactions = () => {
       total_fees: fees, total_interest: interest, total_deposited: deposited,
     };
   }, [data, yearFilter, dateFrom, dateTo]);
+
+  // ── ISA allowance for the relevant tax year ───────────────────────────────
+  // ISA tax year = 6 Apr Y → 5 Apr Y+1.
+  // Default view (no year selected) uses backend-computed current tax year values.
+  // When a calendar year is selected, we approximate by summing deposits inside that tax year window.
+  const isaData = useMemo(() => {
+    if (!data) return null;
+
+    // Default view: rely on backend-computed current tax year values.
+    if (!yearFilter) {
+      const total = data.summary.isa_allowance_total ?? 20000;
+      const used = data.summary.isa_allowance_used ?? 0;
+      const remaining = data.summary.isa_allowance_remaining ?? Math.max(0, total - used);
+      const taxYear = data.summary.isa_tax_year ?? '—';
+      return { used, total, remaining, taxYear };
+    }
+
+    const ISA_LIMIT = data.summary.isa_allowance_total ?? 20000;
+    const isaYear = parseInt(yearFilter, 10);
+    if (!Number.isFinite(isaYear)) return null;
+    const startStr = `${isaYear}-04-06`;
+    const endStr   = `${isaYear + 1}-04-05`;
+    const taxYear  = `${isaYear}/${String(isaYear + 1).slice(2)}`;
+    let used = 0;
+    for (const t of data.transactions) {
+      if (t.action === 'Deposit') {
+        const d = t.date.slice(0, 10);
+        if (d >= startStr && d <= endStr) used += t.total;
+      }
+    }
+    used = Math.round(used * 100) / 100;
+    return { used, total: ISA_LIMIT, remaining: Math.max(0, Math.round((ISA_LIMIT - used) * 100) / 100), taxYear };
+  }, [data, yearFilter]);
 
   // ── Dividend chart clipped to last 24 months (or selected year) ───────────
   const chartData = useMemo(() => {
@@ -268,6 +324,15 @@ const Transactions = () => {
           label="Total Deposited"
           value={fmtMoney(s.total_deposited, hideAmounts)}
         />
+        {isaData && (
+          <ISACard
+            used={isaData.used}
+            total={isaData.total}
+            remaining={isaData.remaining}
+            taxYear={isaData.taxYear}
+            hide={hideAmounts}
+          />
+        )}
       </div>
 
       {/* Charts row */}

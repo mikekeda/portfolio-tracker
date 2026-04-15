@@ -39,20 +39,25 @@
 /* ── Summary cards ───────────────────────────────────────────────────────── */
 .txn-summary-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 14px;
   margin-bottom: 22px;
 }
 
-@media (max-width: 1000px) { .txn-summary-row { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width:  640px) { .txn-summary-row { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1200px) {
+  .txn-summary-row { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .txn-summary-row { grid-template-columns: repeat(2, 1fr); }
+}
 
 .txn-summary-card {
   background: #fff;
   border: 1px solid #e9ecef;
   border-radius: 10px;
   padding: 16px 18px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
 }
 
 .txn-summary-label {
@@ -80,6 +85,33 @@
   color: #6c757d;
 }
 
+.txn-summary-isa-sub {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #6c757d;
+  margin-left: 2px;
+}
+
+/* ISA allowance progress bar */
+.txn-isa-bar-wrap {
+  margin-top: 8px;
+  height: 5px;
+  border-radius: 3px;
+  background: #e9ecef;
+  overflow: hidden;
+}
+
+.txn-isa-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: #28a745;
+  transition: width 0.4s ease;
+}
+
+.txn-isa-bar-fill.near-limit {
+  background: #dc3545;
+}
+
 /* ── Charts row ──────────────────────────────────────────────────────────── */
 .txn-charts-row {
   display: grid;
@@ -88,14 +120,16 @@
   margin-bottom: 22px;
 }
 
-@media (max-width: 820px) { .txn-charts-row { grid-template-columns: 1fr; } }
+@media (max-width: 820px) {
+  .txn-charts-row { grid-template-columns: 1fr; }
+}
 
 .txn-panel {
   background: #fff;
   border: 1px solid #e9ecef;
   border-radius: 10px;
   padding: 20px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
 }
 
 .txn-panel h3 {
@@ -122,14 +156,26 @@
   border: 1px solid #dee2e6;
   border-radius: 6px;
   padding: 8px 12px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 
-.txn-tooltip-label { font-size: 0.8rem; color: #6c757d; margin-bottom: 3px; }
-.txn-tooltip-value { font-size: 0.95rem; font-weight: 600; }
+.txn-tooltip-label {
+  font-size: 0.8rem;
+  color: #6c757d;
+  margin-bottom: 3px;
+}
+
+.txn-tooltip-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
 
 /* ── Top payers ──────────────────────────────────────────────────────────── */
-.txn-payers-list { display: flex; flex-direction: column; gap: 5px; }
+.txn-payers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
 
 .txn-payer-row {
   display: flex;
@@ -184,7 +230,7 @@
   border: 1px solid #e9ecef;
   border-radius: 10px;
   overflow: hidden;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
 }
 
 .txn-table-toolbar {
@@ -222,7 +268,10 @@
   outline: none;
 }
 
-.txn-search:focus { border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0,102,204,0.12); }
+.txn-search:focus {
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.12);
+}
 
 /* ── Date range picker ───────────────────────────────────────────────────── */
 .txn-date-range {
@@ -242,7 +291,10 @@
   cursor: pointer;
 }
 
-.txn-date-input:focus { border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0,102,204,0.12); }
+.txn-date-input:focus {
+  border-color: #0066cc;
+  box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.12);
+}
 
 .txn-date-sep { font-size: 0.8rem; color: #adb5bd; }
 
@@ -257,7 +309,11 @@
   line-height: 1;
 }
 
-.txn-date-clear:hover { background: #fee2e2; color: #dc3545; border-color: #dc3545; }
+.txn-date-clear:hover {
+  background: #fee2e2;
+  color: #dc3545;
+  border-color: #dc3545;
+}
 
 .txn-result-count { font-size: 0.78rem; color: #6c757d; margin-left: auto; }
 
@@ -374,9 +430,18 @@
 .negative { color: #dc3545; }
 
 /* ── Empty / state ───────────────────────────────────────────────────────── */
-.txn-empty { padding: 24px; text-align: center; color: #adb5bd; font-size: 0.875rem; }
+.txn-empty {
+  padding: 24px;
+  text-align: center;
+  color: #adb5bd;
+  font-size: 0.875rem;
+}
 
-.txn-empty-row { text-align: center; color: #adb5bd; padding: 40px 12px !important; }
+.txn-empty-row {
+  text-align: center;
+  color: #adb5bd;
+  padding: 40px 12px !important;
+}
 
 .txn-state {
   padding: 64px;
