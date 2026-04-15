@@ -59,6 +59,7 @@ DEBUG = get_env_var("DEBUG")
 SOCKET_FILE = get_env_var("SOCKET_FILE", "/temp/site.sock")
 
 # API Configuration
+TRADING212_API_BASE = "https://live.trading212.com"
 TRADING212_API_KEY = get_env_var("TRADING212_API_KEY")
 
 # Database Configuration

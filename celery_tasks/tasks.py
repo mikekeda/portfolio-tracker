@@ -7,6 +7,7 @@ from scripts.scrape_wisesheets_pe import update_pe_data
 from scripts.update_data import update_data
 from scripts.update_market_metrics import update_market_metrics
 from scripts.update_pies import update_pies
+from scripts.sync_transactions import sync_transactions
 
 
 @app.task
@@ -50,3 +51,17 @@ def scrape_13f_task():
     The script fetches only missing quarters, so this is a no-op when already up to date.
     """
     scrape_13f_main()
+
+
+@app.task
+def sync_transactions_task():
+    """Sync transaction and dividend history from Trading212 API.
+
+    Fetches paginated history from:
+      /api/v0/equity/history/orders
+      /api/v0/equity/history/transactions
+      /api/v0/equity/history/dividends
+    and upserts rows by reference ID / synthetic fill key.
+    Safe to re-run — existing records are skipped via csv_id dedup.
+    """
+    sync_transactions()

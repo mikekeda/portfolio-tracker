@@ -96,4 +96,12 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=1, day_of_week="mon"),
         "args": (),
     },
+    # Sync transaction + dividend history from Trading212 API: Daily at 5 AM UTC.
+    # Upserts by reference ID — idempotent, safe to re-run.
+    # Runs after other nightly tasks (PE at 2am, pies at 3am, earnings at 4am).
+    "sync_transactions_nightly": {
+        "task": "celery_tasks.tasks.sync_transactions_task",
+        "schedule": crontab(minute=0, hour=5),
+        "args": (),
+    },
 }
