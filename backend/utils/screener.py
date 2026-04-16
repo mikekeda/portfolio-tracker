@@ -68,23 +68,21 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
 
             holding_data["passedScreeners"] = passed_screeners
 
-            # --- SUGGESTION: Refined Combination Bonus Logic ---
-            # This bonus rewards stocks that pass screeners from different, complementary categories.
-            # For example, a stock with strong fundamentals (Quality) that is also in a technical
-            # uptrend (Momentum) is a more robust candidate.
+            # Combination bonus: reward stocks that pass mutually-endorsed screener pairs.
+            # Complementarity is fully delegated to `combine_with` (curated whitelist), so we
+            # no longer gate by category — two VALUE screeners endorsing each other are a
+            # legitimate double-confirmation. Diminishing returns (pairs ** 0.85) prevent a
+            # single stock with many passes from saturating the score while still giving
+            # exceptional stocks room to stand out.
             screener_pairs = {
                 tuple(sorted((a, b)))
                 for a, b in combinations(set(passed_screeners), 2)
-                if (
-                    (b in screener_config.screeners[a].combine_with or a in screener_config.screeners[b].combine_with)
-                    and screener_config.screeners[a].category != screener_config.screeners[b].category
-                )
+                if (b in screener_config.screeners[a].combine_with or a in screener_config.screeners[b].combine_with)
             }
 
-            # Increased the cap from 5 to 10 to give more weight to exceptional stocks
-            # that pass multiple combinations.
-            combination_bonus = 2 * len(screener_pairs)
-            holding_data["screener_score"] += min(10, combination_bonus)
+            if screener_pairs:
+                combination_bonus = round(2 * len(screener_pairs) ** 0.85)
+                holding_data["screener_score"] += combination_bonus
 
         # Log summary for debugging
         total_matches = sum(len(h.get("passedScreeners", [])) for h in portfolio_data)

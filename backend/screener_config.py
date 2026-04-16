@@ -123,18 +123,21 @@ class ScreenerConfig:
                     "oversold_uptrend",
                     "quality_growth_pullback",
                     "pe_vs_history",
+                    "improving_sentiment",
+                    "growth_at_reasonable_price",
+                    "top_quality_proxy",
                 ],
             ),
             # Value + Quality
             "value_quality": ScreenerDefinition(
                 id="value_quality",
                 name="Value + Quality",
-                description="PE <= 20 & ROA >= 5% & Revenue Growth > 0% & Profit Margins > 0",
+                description="PE <= 20 & ROIC >= 8% & Revenue Growth > 0% & Profit Margins > 0",
                 category=ScreenerCategory.VALUE,
                 criteria=[
                     ScreenerCriteria("pe_ratio", "<=", 20, "PE Ratio <= 20"),
                     ScreenerCriteria("pe_ratio", ">", 0, "PE Ratio > 0"),
-                    ScreenerCriteria("return_on_assets", ">=", 5, "Return on Assets >= 5%"),
+                    ScreenerCriteria("roic", ">=", 8, "Return on Invested Capital >= 8%"),
                     ScreenerCriteria("revenue_growth", ">", 0, "Revenue Growth > 0%"),
                     ScreenerCriteria("profit_margins", ">", 0, "Profitable"),
                 ],
@@ -142,7 +145,14 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=6,
-                combine_with=["golden_cross", "oversold_uptrend", "momentum_pullback", "pe_compression"],
+                combine_with=[
+                    "golden_cross",
+                    "oversold_uptrend",
+                    "momentum_pullback",
+                    "pe_compression",
+                    "pe_vs_history",
+                    "top_quality_proxy",
+                ],
             ),
             # Growth at Reasonable Price
             "growth_at_reasonable_price": ScreenerDefinition(
@@ -161,7 +171,15 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=7,
-                combine_with=["r40_momentum", "momentum_pullback", "breakout_quiet_base"],
+                combine_with=[
+                    "r40_momentum",
+                    "momentum_pullback",
+                    "breakout_quiet_base",
+                    "oversold_uptrend",
+                    "qarp",
+                    "pe_vs_history",
+                    "top_quality_proxy",
+                ],
             ),
             # Oversold in Uptrend
             "oversold_uptrend": ScreenerDefinition(
@@ -184,6 +202,8 @@ class ScreenerConfig:
                     "growth_at_reasonable_price",
                     "quality_growth_pullback",
                     "improving_sentiment",
+                    "value_quality",
+                    "top_quality_proxy",
                 ],
             ),
             # High Short Interest
@@ -221,7 +241,17 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=8,
-                combine_with=["r40_momentum", "qarp", "growth_at_reasonable_price", "improving_sentiment"],
+                combine_with=[
+                    "r40_momentum",
+                    "qarp",
+                    "growth_at_reasonable_price",
+                    "improving_sentiment",
+                    "value_quality",
+                    "high_short_interest",
+                    "top_quality_proxy",
+                    "pe_compression",
+                    "golden_cross",
+                ],
             ),
             # Golden Cross + First Pullback
             "golden_cross": ScreenerDefinition(
@@ -239,7 +269,14 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=6,
-                combine_with=["momentum_pullback", "r40_momentum", "quality_growth_pullback"],
+                combine_with=[
+                    "momentum_pullback",
+                    "r40_momentum",
+                    "quality_growth_pullback",
+                    "value_quality",
+                    "high_short_interest",
+                    "pe_compression",
+                ],
             ),
             # Volatility Contraction Pattern
             "volatility_contraction": ScreenerDefinition(
@@ -281,6 +318,10 @@ class ScreenerConfig:
                     "quality_growth_pullback",
                     "breakout_quiet_base",
                     "pe_vs_history",
+                    "volatility_contraction",
+                    "golden_cross",
+                    "pe_compression",
+                    "top_quality_proxy",
                 ],
             ),
             # 52-Week Breakout (Quiet Base + Volume)
@@ -300,7 +341,12 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=8,
-                combine_with=["volatility_contraction", "r40_momentum", "growth_at_reasonable_price"],
+                combine_with=[
+                    "volatility_contraction",
+                    "r40_momentum",
+                    "growth_at_reasonable_price",
+                    "high_short_interest",
+                ],
             ),
             # Quality Growth Pullback
             "quality_growth_pullback": ScreenerDefinition(
@@ -319,7 +365,14 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=8,
-                combine_with=["r40_momentum", "qarp", "golden_cross", "pe_compression"],
+                combine_with=[
+                    "r40_momentum",
+                    "qarp",
+                    "golden_cross",
+                    "pe_compression",
+                    "oversold_uptrend",
+                    "top_quality_proxy",
+                ],
             ),
             # Improving Analyst Sentiment
             "improving_sentiment": ScreenerDefinition(
@@ -336,7 +389,7 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=6,
-                combine_with=["qarp", "momentum_pullback"],
+                combine_with=["qarp", "momentum_pullback", "oversold_uptrend", "pe_vs_history"],
             ),
             # PE Compression
             "pe_compression": ScreenerDefinition(
@@ -353,7 +406,13 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=8,
-                combine_with=["quality_growth_pullback", "golden_cross", "r40_momentum", "momentum_pullback"],
+                combine_with=[
+                    "quality_growth_pullback",
+                    "golden_cross",
+                    "r40_momentum",
+                    "momentum_pullback",
+                    "value_quality",
+                ],
             ),
             "pe_vs_history": ScreenerDefinition(
                 id="pe_vs_history",
@@ -369,7 +428,14 @@ class ScreenerConfig:
                 requires_yahoo_data=True,
                 available=True,
                 weight=9,  # This is a very strong signal
-                combine_with=["r40_momentum", "qarp", "improving_sentiment"],
+                combine_with=[
+                    "r40_momentum",
+                    "qarp",
+                    "improving_sentiment",
+                    "top_quality_proxy",
+                    "growth_at_reasonable_price",
+                    "value_quality",
+                ],
             ),
             # Negative screeners
             "death_cross": ScreenerDefinition(
@@ -387,7 +453,7 @@ class ScreenerConfig:
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,  # Disabled by default
-                weight=-5,  # Negative weight to penalize stocks in a downtrend
+                weight=-3,  # Short-term technical signal, shouldn't dominate the composite
                 combine_with=[],
             ),
             "red_flag_low_roic": ScreenerDefinition(
@@ -453,7 +519,16 @@ Check those criteria:
                 requires_yahoo_data=True,
                 available=True,
                 weight=9,  # This is a very strong, high-quality signal
-                combine_with=["momentum_pullback", "oversold_uptrend", "pe_vs_history", "r40_momentum", "quality_growth_pullback"],
+                combine_with=[
+                    "momentum_pullback",
+                    "oversold_uptrend",
+                    "pe_vs_history",
+                    "r40_momentum",
+                    "quality_growth_pullback",
+                    "qarp",
+                    "value_quality",
+                    "growth_at_reasonable_price",
+                ],
                 # Combines well with entry points and other quality/growth validators
             ),
         }
