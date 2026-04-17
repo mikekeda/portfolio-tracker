@@ -1153,6 +1153,11 @@
   color: #F44336; /* Red for loss potential (DCF price below current price) */
 }
 
+/* Low-confidence DCF values (model over-sensitive or market outside implied-growth band) */
+.dcf-low-confidence {
+  opacity: 0.45;
+}
+
 /* Comparison Controls */
 .comparison-controls {
   background: #f8f9fa;

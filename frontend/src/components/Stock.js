@@ -722,6 +722,14 @@ const Stock = () => {
 
   const dcfDiff = data.dcf_diff;
   const dcfPrice = data.dcf_price;
+  const dcfLow = data.dcf_low;
+  const dcfHigh = data.dcf_high;
+  const dcfImplied = data.dcf_implied_growth;
+  // Low confidence: reverse-DCF couldn't solve (market outside model's growth
+  // band) OR sensitivity band spans >4x (inputs too fragile).
+  const dcfLowConfidence = dcfDiff != null && (
+    dcfImplied == null || (dcfLow && dcfHigh && dcfLow > 0 && dcfHigh / dcfLow > 4)
+  );
 
   const kpiTooltips = {
     'Market Cap': 'Total market value of all outstanding shares',
@@ -830,14 +838,20 @@ const Stock = () => {
       if (dcfDiff == null) return [];
       const pct = (dcfDiff * 100).toFixed(1);
       const direction = dcfDiff > 0 ? 'undervalued' : 'overvalued';
-      const priceStr = dcfPrice != null
-        ? ` · Fair value: ${Number(dcfPrice).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-        : '';
+      const fmt = (x) => Number(x).toLocaleString(undefined, { maximumFractionDigits: 2 });
+      const tooltipParts = ['2-stage DCF model'];
+      if (dcfPrice != null) tooltipParts.push(`Fair value: ${fmt(dcfPrice)}`);
+      if (dcfLow != null && dcfHigh != null) tooltipParts.push(`Range: ${fmt(dcfLow)} – ${fmt(dcfHigh)}`);
+      tooltipParts.push(`${direction} by ${Math.abs(Number(pct))}% vs current price`);
+      if (dcfImplied != null) tooltipParts.push(`Market-implied growth: ${(dcfImplied * 100).toFixed(1)}%`);
+      if (dcfLowConfidence) tooltipParts.push('Low confidence — model over-sensitive or disagrees with market');
+      tooltipParts.push('Green > +10%, Red < -10%');
       return [{
         label: 'DCF',
         value: `${Number(pct) >= 0 ? '+' : ''}${pct}%`,
         className: dcfDiff > 0.10 ? 'positive' : dcfDiff < -0.10 ? 'negative' : '',
-        tooltip: `2-stage DCF model${priceStr} · ${direction} by ${Math.abs(Number(pct))}% vs current price · Green > +10%, Red < -10%`,
+        itemClassName: dcfLowConfidence ? 'dcf-low-confidence' : '',
+        tooltip: tooltipParts.join(' · '),
       }];
     })(),
   ];
@@ -968,7 +982,7 @@ const Stock = () => {
         )}
         <div className="stock-kpis">
           {kpis.map(k => (
-            <div key={k.label} className="kpi" title={k.tooltip}>
+            <div key={k.label} className={`kpi${k.itemClassName ? ` ${k.itemClassName}` : ''}`} title={k.tooltip}>
               <div className="kpi-label">{k.label}</div>
               <div className={`kpi-value${k.className ? ` ${k.className}` : ''}`}>{k.value}</div>
             </div>

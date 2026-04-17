@@ -988,19 +988,32 @@ const Holdings = () => {
           const row = info.row.original;
           const dcfDiff = row.dcf_diff;
           const dcfPrice = row.dcf_price;
+          const dcfLow = row.dcf_low;
+          const dcfHigh = row.dcf_high;
+          const dcfImplied = row.dcf_implied_growth;
 
           if (dcfDiff === null || dcfDiff === undefined) {
             return <span className="dcf-diff"></span>;
           }
 
-          // Convert from decimal (1 = 100%) to percentage
           const potentialProfitPct = dcfDiff * 100;
-          const isProfit = potentialProfitPct > 0;
-          const isLoss = potentialProfitPct < 0;
-          const className = isProfit ? 'positive' : isLoss ? 'negative' : '';
+          const className = potentialProfitPct > 0 ? 'positive' : potentialProfitPct < 0 ? 'negative' : '';
+          // Low confidence: reverse-DCF couldn't solve (market outside model's
+          // growth band) OR sensitivity band spans >4x (inputs too fragile).
+          const lowConfidence = dcfImplied == null
+            || (dcfLow && dcfHigh && dcfLow > 0 && dcfHigh / dcfLow > 4);
+
+          const tooltipParts = [];
+          if (dcfPrice) tooltipParts.push(`Fair value: ${dcfPrice.toFixed(2)}`);
+          if (dcfLow && dcfHigh) tooltipParts.push(`Range: ${dcfLow.toFixed(2)} – ${dcfHigh.toFixed(2)}`);
+          if (dcfImplied != null) tooltipParts.push(`Market-implied growth: ${(dcfImplied * 100).toFixed(1)}%`);
+          if (lowConfidence) tooltipParts.push('Low confidence — model over-sensitive or disagrees with market');
 
           return (
-            <span className={`dcf-diff ${className}`} title={dcfPrice ? `DCF: ${dcfPrice.toFixed(2)}` : undefined}>
+            <span
+              className={`dcf-diff ${className}${lowConfidence ? ' dcf-low-confidence' : ''}`}
+              title={tooltipParts.length ? tooltipParts.join(' · ') : undefined}
+            >
               {potentialProfitPct >= 0 ? '+' : ''}{Math.round(potentialProfitPct)}%
             </span>
           );

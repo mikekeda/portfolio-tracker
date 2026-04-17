@@ -284,6 +284,11 @@
   color: #dc3545;
 }
 
+/* Low-confidence DCF (model over-sensitive or market outside implied-growth band) */
+.kpi.dcf-low-confidence {
+  opacity: 0.45;
+}
+
 .panel p.clamped {
   display: -webkit-box;
   -webkit-line-clamp: 4;

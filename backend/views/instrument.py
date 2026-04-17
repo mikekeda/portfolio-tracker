@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
-from backend.utils.dcf import get_dcf_prices
+from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.form13f import (
     Form13FFilingRow,
     _build_sec_13f_url,
@@ -257,7 +257,11 @@ async def get_instrument(
         filing_total = latest.get("filing_total_value") or 0
         pct_of_portfolio = (latest["value"] / filing_total * 100) if filing_total > 0 else None
         score = _compute_form13f_signal_score(
-            latest["shares"], shares_prev, value=latest["value"], value_prev=value_prev_h, filing_total_value=filing_total
+            latest["shares"],
+            shares_prev,
+            value=latest["value"],
+            value_prev=value_prev_h,
+            filing_total_value=filing_total,
         )
 
         form13f_holdings.append(
@@ -289,9 +293,7 @@ async def get_instrument(
         price = value / shares if shares > 0 else 0.0
         return abs((shares - shares_prev) * price)
 
-    form13f_holdings.sort(
-        key=lambda h: (0 if h.get("scored") else 1, -_abs_flow(h), -(h.get("value") or 0))
-    )
+    form13f_holdings.sort(key=lambda h: (0 if h.get("scored") else 1, -_abs_flow(h), -(h.get("value") or 0)))
 
     form13f_as_of = max((h["report_date"] for h in form13f_holdings), default=None)
 
@@ -337,8 +339,14 @@ async def get_instrument(
                 "return_pct": round(return_pct, 2),
             }
 
-    dcf_results = await get_dcf_prices([instrument])
-    dcf_price: float | None = dcf_results[0] if dcf_results else None
+    effective_betas = await get_effective_betas([instrument], session)
+    dcf_analyses = await get_dcf_analyses([instrument], effective_betas=effective_betas)
+    dcf_analysis = (
+        dcf_analyses[0] if dcf_analyses else {"price": None, "low": None, "high": None, "implied_growth": None}
+    )
+    dcf_price: float | None = dcf_analysis["price"]
+    dcf_low: float | None = dcf_analysis["low"]
+    dcf_high: float | None = dcf_analysis["high"]
     current_price = fundamentals.get("currentPrice")
     dcf_diff: float | None = (dcf_price / current_price - 1) if (dcf_price and current_price) else None
 
@@ -373,4 +381,7 @@ async def get_instrument(
         "analyst_price_targets": (yh.analyst_price_targets or {}) if yh else {},
         "dcf_price": dcf_price,
         "dcf_diff": dcf_diff,
+        "dcf_low": dcf_low,
+        "dcf_high": dcf_high,
+        "dcf_implied_growth": dcf_analysis["implied_growth"],
     }

@@ -1,6 +1,6 @@
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from io import StringIO
 from typing import Optional, Union
 
@@ -187,30 +187,52 @@ _RFR_FALLBACKS: dict[str, float] = {
     "CAD": 0.032,
 }
 
+# Process-local cache for risk-free rates. FRED publishes the monthly OECD
+# series (GBP/EUR/CAD) once per month and the daily USD series once per day,
+# so fetching them more than once per trading day is pure waste. The cache
+# is keyed on today's date; it warms up on the first request and is hit by
+# all subsequent requests for that day.
+_rfr_cache: Optional[tuple[date, dict[str, float]]] = None
+
 
 async def get_risk_free_rates(session: aiohttp.ClientSession) -> dict[str, float]:
     """
     Fetches 10-year government bond yields for USD, GBP, EUR, and CAD
     concurrently from FRED. Returns {currency: rate_as_decimal}.
 
+    Results are cached for the current trading day — subsequent calls reuse
+    the cached dict without hitting FRED.
+
     Discounting a company's cash flows at the local-currency risk-free rate
     avoids mixing currency environments (e.g., using US T-note yields to
     discount EUR cash flows over-penalises European companies).
     """
+    global _rfr_cache
+    today = datetime.now(TIMEZONE).date()
+    if _rfr_cache is not None and _rfr_cache[0] == today:
+        return _rfr_cache[1]
+
     currencies = list(_CURRENCY_FRED_SERIES.keys())
     results = await asyncio.gather(
         *[gen_fred_latest(session, _CURRENCY_FRED_SERIES[c], limit=1) for c in currencies],
         return_exceptions=True,
     )
     rates: dict[str, float] = {}
+    any_failure = False
     for currency, obs in zip(currencies, results):
         if isinstance(obs, Exception) or not obs:
             rates[currency] = _RFR_FALLBACKS[currency]
+            any_failure = True
             logger.warning(
                 "FRED risk-free rate fetch failed for %s, using fallback %.3f", currency, _RFR_FALLBACKS[currency]
             )
         else:
             rates[currency] = obs[0]["value"] / 100.0
+
+    # Only cache a fully successful fetch; otherwise retry on the next call so
+    # a transient FRED outage doesn't pin fallbacks for the rest of the day.
+    if not any_failure:
+        _rfr_cache = (today, rates)
     return rates
 
 

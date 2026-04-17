@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
-from backend.utils.dcf import get_dcf_prices
+from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.form13f import _get_form13f_for_instruments
 from backend.utils.market_data import (
     gen_buffett_indicator,
@@ -240,8 +240,9 @@ async def get_current_portfolio(
 
     # Calculate technical indicators using centralized function
     rsi_data, technical_data = await calculate_technical_indicators_for_symbols(symbols_for_technical, session)
-    dcf_prices = await get_dcf_prices(instruments_for_dcf)
-    dcf_prices_dict = dict(zip(symbols_for_technical, dcf_prices))
+    effective_betas = await get_effective_betas(instruments_for_dcf, session)
+    dcf_analyses = await get_dcf_analyses(instruments_for_dcf, effective_betas=effective_betas)
+    dcf_analyses_dict = dict(zip(symbols_for_technical, dcf_analyses))
 
     instrument_ids = [h.instrument.id for h in items]
     form13f = await _get_form13f_for_instruments(session, instrument_ids)
@@ -252,7 +253,15 @@ async def get_current_portfolio(
         market_value_native = holding.quantity * holding.current_price
         market_value_gbp = market_value_native * currency_rates.get(holding.instrument.currency, 1.0)
         portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
-        dcf_price = dcf_prices_dict.get(holding.instrument.yahoo_symbol)
+        dcf_analysis = dcf_analyses_dict.get(holding.instrument.yahoo_symbol) or {
+            "price": None,
+            "low": None,
+            "high": None,
+            "implied_growth": None,
+        }
+        dcf_price = dcf_analysis["price"]
+        dcf_low = dcf_analysis["low"]
+        dcf_high = dcf_analysis["high"]
 
         # Yahoo Finance info for this instrument
         info = (holding.instrument.yahoo.info or {}) if holding.instrument.yahoo else {}
@@ -277,6 +286,9 @@ async def get_current_portfolio(
                 else None,
                 "dcf_price": dcf_price,
                 "dcf_diff": (dcf_price / holding.current_price - 1) if (dcf_price and holding.current_price) else None,
+                "dcf_low": dcf_low,
+                "dcf_high": dcf_high,
+                "dcf_implied_growth": dcf_analysis["implied_growth"],
                 "ppl": holding.ppl,
                 "fx_ppl": holding.fx_ppl,
                 "market_cap": info.get("marketCap"),

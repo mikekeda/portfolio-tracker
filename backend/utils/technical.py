@@ -4,6 +4,7 @@ Technical Analysis Utilities
 Helper functions for technical analysis calculations.
 """
 
+import math
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -12,6 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import PRICE_FIELD, SPY, TIMEZONE, logger
 from models import PricesDaily
+
+TRADING_DAYS_PER_YEAR = 252
+MIN_RETURNS_FOR_VOLATILITY = 60  # ~3 months — below this the estimate is too noisy
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
 
@@ -45,6 +49,37 @@ def calculate_rsi(prices: list[float], period: int = 14) -> float:
     rsi = 100 - (100 / (1 + rs))
 
     return rsi
+
+
+def calculate_annualized_volatility(
+    prices: list[float],
+    window_days: int = TRADING_DAYS_PER_YEAR,
+) -> Optional[float]:
+    """Annualised stdev of daily log returns, expressed as a decimal.
+
+    A result of 0.25 means 25% annualised volatility. Returns None when there
+    is not enough clean data to produce a meaningful estimate.
+    """
+    if not prices or len(prices) < MIN_RETURNS_FOR_VOLATILITY + 1:
+        return None
+
+    recent = prices[-(window_days + 1) :] if len(prices) > window_days + 1 else prices
+
+    returns: list[float] = []
+    for i in range(1, len(recent)):
+        prev, curr = recent[i - 1], recent[i]
+        if prev is None or curr is None or prev <= 0 or curr <= 0:
+            continue
+        returns.append(math.log(curr / prev))
+
+    if len(returns) < MIN_RETURNS_FOR_VOLATILITY:
+        return None
+
+    mean = sum(returns) / len(returns)
+    var = sum((r - mean) ** 2 for r in returns) / (len(returns) - 1)
+    if var <= 0:
+        return None
+    return math.sqrt(var) * math.sqrt(TRADING_DAYS_PER_YEAR)
 
 
 def calculate_sma(prices: list[float], period: int) -> Optional[float]:
