@@ -195,6 +195,37 @@ const getTwrrTooltip = (twrr) => {
   return `Time-Weighted Return: ${twrr.toFixed(2)}% (${level})\n\n${recommendation}\n\nThis measures the pure performance of your investment strategy, ignoring when you added/withdrew money.`;
 };
 
+// Helper function to get Max Drawdown color.
+// Thresholds match typical equity-portfolio expectations for a growth-tilted,
+// 10y-horizon investor: up to -15% is normal noise, -15% to -25% is a
+// meaningful correction, and deeper than -25% warrants review.
+const getMaxDdColor = (pct) => {
+  if (pct <= -25) return 'negative';
+  if (pct <= -15) return 'warn';
+  return '';
+};
+
+// Helper function to generate Max Drawdown tooltip
+const getMaxDdTooltip = (pct, days) => {
+  let level;
+  let recommendation;
+  if (pct >= -10) {
+    level = 'Mild';
+    recommendation = 'Portfolio has held up well. Normal market noise — no action needed.';
+  } else if (pct >= -20) {
+    level = 'Moderate';
+    recommendation = 'Typical correction for a growth-tilted portfolio. Consider whether the drawdown came from market-wide risk-off or from specific holdings — if a single name dragged the portfolio disproportionately, check the thesis.';
+  } else if (pct >= -30) {
+    level = 'Deep';
+    recommendation = 'Significant drawdown. Compare against VUAG.L / XNAS.L in the underwater chart: if your drawdown is worse than NASDAQ, review whether individual holdings have broken their thesis (deteriorating ROIC, moat erosion) rather than just trading on sentiment.';
+  } else {
+    level = 'Severe';
+    recommendation = 'Severe drawdown. Worth a full thesis review on the largest losers — distinguish short-term noise (market-wide sell-off, weak guidance) from long-term damage (ROIC decline, moat erosion, bad capital allocation).';
+  }
+  const duration = days ? ` over ${days} days` : '';
+  return `Max Drawdown: ${pct.toFixed(1)}%${duration} (${level})\n\n${recommendation}\n\nThis is the worst peak-to-trough decline since your account started. Compare against benchmarks in the underwater chart below the Portfolio Summary.`;
+};
+
 // Helper function to get Yield Spread color
 const getYieldSpreadColor = (yieldSpread) => {
   if (yieldSpread < 0) return 'negative'; // Inverted yield curve
@@ -842,6 +873,17 @@ const Dashboard = () => {
               <h3>Beta</h3>
               <p className={`value ${getBetaColor(summary.beta)}`}>
                 {summary.beta.toFixed(2)}
+              </p>
+            </div>
+          )}
+          {summary.max_drawdown_pct != null && (
+            <div className="card" title={getMaxDdTooltip(summary.max_drawdown_pct, summary.drawdown_duration_days)}>
+              <h3>Max DD</h3>
+              <p className={`value ${getMaxDdColor(summary.max_drawdown_pct)}`}>
+                {summary.max_drawdown_pct.toFixed(1)}%
+                {summary.drawdown_duration_days > 0 && (
+                  <span className="dd-duration">({summary.drawdown_duration_days}d)</span>
+                )}
               </p>
             </div>
           )}

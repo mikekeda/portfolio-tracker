@@ -164,6 +164,26 @@ export const portfolioAPI = {
     return response.data;
   },
 
+  // Get underwater (drawdown-from-peak) series for portfolio + benchmarks
+  getUnderwater: async (days = null) => {
+    let url = '/api/portfolio/underwater';
+    if (days !== null) {
+      url += `?days=${days}`;
+    }
+    const response = await apiClient.get(url);
+    return response.data;
+  },
+
+  // Get deposit events (for overlaying as markers on charts)
+  getDeposits: async (days = null) => {
+    let url = '/api/portfolio/deposits';
+    if (days !== null) {
+      url += `?days=${days}`;
+    }
+    const response = await apiClient.get(url);
+    return response.data;
+  },
+
   // Get inputs for the portfolio projection page (TWRR, vol, UK CPI, benchmarks)
   getProjectionInputs: async () => {
     const response = await apiClient.get('/api/projection/inputs');

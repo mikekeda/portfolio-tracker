@@ -134,6 +134,17 @@
   color: #dc3545;
 }
 
+.card .value.warn {
+  color: #d97706;
+}
+
+.dd-duration {
+  font-size: 0.55em;
+  color: #6c757d;
+  font-weight: 500;
+  margin-left: 6px;
+}
+
 /* Fear & Greed Index colors - Contrarian view for long-term investors */
 .card .value.extreme-fear {
   color: #28a745; /* Green - buying opportunity */

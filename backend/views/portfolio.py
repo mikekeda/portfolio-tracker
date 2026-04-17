@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
+from backend.utils.drawdown import compute_max_drawdown, underwater_series
 from backend.utils.form13f import _get_form13f_for_instruments
 from backend.utils.market_data import (
     gen_buffett_indicator,
@@ -33,9 +34,52 @@ from models import (
     Instrument,
     PortfolioDaily,
     PricesDaily,
+    TransactionAction,
+    TransactionHistory,
 )
 
 router = APIRouter()
+
+# Deposits below this amount are treated as admin/residual entries (e.g.
+# "interest on cash" miscategorised upstream) and hidden from chart overlays.
+_MIN_DEPOSIT_AMOUNT_GBP = 50.0
+
+
+def _twrr_wealth_index(
+    rows: list[tuple[date, Optional[float]]],
+) -> list[Optional[float]]:
+    """
+    Convert stored annualised TWRR percentages into a cumulative wealth index.
+
+    ``PortfolioDaily.twrr`` is the *annualised* time-weighted return computed
+    over calendar days since the first portfolio snapshot (see
+    ``scripts/update_returns.py``). Inverting that annualisation recovers the
+    cumulative growth factor on each day:
+
+        wealth_index[t] = (1 + twrr[t] / 100) ** (days_since_first / 365.25)
+
+    This index is anchored at 1.0 on the first row and is unaffected by
+    deposits or withdrawals — the correct series for drawdown analysis.
+    Callers must pass the full history so the anchor is inception.
+    """
+    if not rows:
+        return []
+    first_date = rows[0][0]
+    out: list[Optional[float]] = []
+    for d, twrr in rows:
+        if twrr is None:
+            out.append(None)
+            continue
+        days = (d - first_date).days
+        if days <= 0:
+            out.append(1.0)
+            continue
+        factor = 1.0 + twrr / 100.0
+        if factor <= 0:
+            out.append(None)
+            continue
+        out.append(factor ** (days / 365.25))
+    return out
 
 
 async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int, dict]:
@@ -401,6 +445,12 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
     if not latest_snapshot:
         return {"error": "No portfolio data available"}
 
+    # Max drawdown computed on a TWRR-derived wealth index so deposits and
+    # withdrawals don't artificially shrink (or deepen) drawdowns.
+    pf_twrr_res = await session.execute(select(PortfolioDaily.date, PortfolioDaily.twrr).order_by(PortfolioDaily.date))
+    pf_wealth = _twrr_wealth_index([(d, t) for d, t in pf_twrr_res.all()])
+    dd = compute_max_drawdown(pf_wealth)
+
     # Get holdings for the same date to calculate win rate
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
@@ -456,6 +506,8 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
         "sharpe_ratio": latest_snapshot.sharpe_ratio,
         "mwrr": latest_snapshot.mwrr,
         "twrr": latest_snapshot.twrr,
+        "max_drawdown_pct": dd["max_drawdown_pct"],
+        "drawdown_duration_days": dd["drawdown_duration_days"],
         "market_breadth_indicator": market_breadth_indicator,
         "sp500_above_sma200": sp500_above_sma200,
         "last_updated": latest_snapshot.updated_at.isoformat(),
@@ -515,13 +567,16 @@ async def get_portfolio_history(
         daily_bench[bench_row.symbol][bench_row.date] = bench_row.price
         bench_prices[bench_row.symbol].append(bench_row.price)
     benches_base_price = {symbol: bench_price[0] for symbol, bench_price in bench_prices.items()}
-    bench_start = snapshots[0].return_pct
-    bench = [bench_start for _bench_symbol in BENCHES]
+
+    # Zero-index every line at the window start so the chart answers
+    # "return within this time window" for portfolio and benchmarks alike.
+    portfolio_start_return = snapshots[0].return_pct or 0.0
+    bench = [0.0 for _bench_symbol in BENCHES]
 
     history_data = []
     for snapshot in snapshots:
         bench = [
-            bench_start + (daily_bench[bench_symbol][snapshot.date] / benches_base_price[bench_symbol] - 1) * 100
+            (daily_bench[bench_symbol][snapshot.date] / benches_base_price[bench_symbol] - 1) * 100
             if daily_bench[bench_symbol].get(snapshot.date)
             else bench[i]
             for i, bench_symbol in enumerate(BENCHES)
@@ -531,7 +586,7 @@ async def get_portfolio_history(
                 "date": snapshot.date.isoformat(),
                 "total_value": snapshot.value,
                 "total_profit": snapshot.unrealised_profit,
-                "total_return_pct": snapshot.return_pct,
+                "total_return_pct": (snapshot.return_pct or 0.0) - portfolio_start_return,
                 "country_allocation": snapshot.country_allocation,
                 "sector_allocation": snapshot.sector_allocation,
                 "currency_allocation": snapshot.currency_allocation,
@@ -541,6 +596,120 @@ async def get_portfolio_history(
         )
 
     return {"history": history_data, "days": days, "benchmark": BENCHES}
+
+
+@router.get("/api/portfolio/underwater")
+async def get_portfolio_underwater(
+    days: Optional[int] = None, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
+    """
+    Underwater (drawdown from running peak) series for the portfolio and
+    benchmark indices. Every value is <= 0; 0 means at a new all-time high
+    within the window.
+
+    The portfolio series uses a TWRR-derived wealth index so deposits and
+    withdrawals do not distort the curve (an inflow would otherwise push the
+    line back toward 0). Benchmarks use their own price series — they have no
+    cash flows by construction.
+
+    days=None returns the full history.
+    """
+    # Always query full TWRR history so the wealth index is anchored at
+    # inception; otherwise the annualisation inversion would reset each window
+    # to 1.0 and lose the true starting drawdown state.
+    snap_res = await session.execute(select(PortfolioDaily.date, PortfolioDaily.twrr).order_by(PortfolioDaily.date))
+    snap_rows = snap_res.all()
+    if not snap_rows:
+        return {"history": [], "days": days, "benchmark": list(BENCHES)}
+
+    full_wealth = _twrr_wealth_index([(r.date, r.twrr) for r in snap_rows])
+
+    if days is not None:
+        cutoff_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
+        sliced = [(r.date, w) for r, w in zip(snap_rows, full_wealth) if r.date >= cutoff_date]
+    else:
+        sliced = [(r.date, w) for r, w in zip(snap_rows, full_wealth)]
+
+    if not sliced:
+        return {"history": [], "days": days, "benchmark": list(BENCHES)}
+
+    portfolio_dates = [d for d, _ in sliced]
+    portfolio_uw = underwater_series([w for _, w in sliced])
+
+    # Benchmark underwater is computed over each benchmark's own trading-day
+    # series (so weekends don't falsely reset the peak), then aligned to
+    # portfolio dates via forward-fill.
+    bench_res = await session.execute(
+        select(PricesDaily.date, PRICE_COLUMN, PricesDaily.symbol)
+        .where(
+            PricesDaily.symbol.in_(BENCHES),
+            PricesDaily.date >= portfolio_dates[0],
+            PricesDaily.date <= portfolio_dates[-1],
+        )
+        .order_by(PricesDaily.date)
+    )
+    bench_by_symbol: dict[str, list[tuple[date, float]]] = defaultdict(list)
+    for row in bench_res.all():
+        bench_by_symbol[row.symbol].append((row.date, row.price))
+
+    bench_uw_by_date: dict[str, dict[date, float]] = {}
+    for symbol in BENCHES:
+        rows = bench_by_symbol.get(symbol, [])
+        if not rows:
+            bench_uw_by_date[symbol] = {}
+            continue
+        prices = [p for _, p in rows]
+        uw = underwater_series(prices)
+        bench_uw_by_date[symbol] = {d: uw_val for (d, _), uw_val in zip(rows, uw) if uw_val is not None}
+
+    last_bench_uw = {symbol: 0.0 for symbol in BENCHES}
+    history: list[dict[str, Any]] = []
+    for i, pdate in enumerate(portfolio_dates):
+        for symbol in BENCHES:
+            v = bench_uw_by_date[symbol].get(pdate)
+            if v is not None:
+                last_bench_uw[symbol] = v
+        history.append(
+            {
+                "date": pdate.isoformat(),
+                "portfolio_dd_pct": portfolio_uw[i],
+                "benchmark_dd_pct": [last_bench_uw[sym] for sym in BENCHES],
+            }
+        )
+
+    return {"history": history, "days": days, "benchmark": list(BENCHES)}
+
+
+@router.get("/api/portfolio/deposits")
+async def get_portfolio_deposits(
+    days: Optional[int] = None, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
+    """
+    DEPOSIT cash flows within the requested window, aggregated by calendar date.
+
+    Used to overlay deposit events on the Total Return chart. Withdrawals are
+    not included (this portfolio doesn't produce any meaningful ones), and
+    same-day totals below ``_MIN_DEPOSIT_AMOUNT_GBP`` are dropped as admin /
+    residual noise.
+    """
+    q = select(
+        func.date(TransactionHistory.timestamp).label("day"),
+        func.sum(TransactionHistory.total).label("amount"),
+    ).where(TransactionHistory.action == TransactionAction.DEPOSIT)
+
+    if days is not None:
+        cutoff = datetime.now(TIMEZONE).date() - timedelta(days=days)
+        q = q.where(func.date(TransactionHistory.timestamp) >= cutoff)
+
+    q = q.group_by(func.date(TransactionHistory.timestamp)).order_by(func.date(TransactionHistory.timestamp))
+
+    rows = (await session.execute(q)).all()
+    deposits = [
+        {"date": r.day.isoformat(), "amount": float(r.amount)}
+        for r in rows
+        if float(r.amount) >= _MIN_DEPOSIT_AMOUNT_GBP
+    ]
+    return {"deposits": deposits, "days": days}
 
 
 @router.get("/api/portfolio/indicators/history")

@@ -86,6 +86,55 @@
   min-height: 350px;
 }
 
+.underwater-panel {
+  min-height: 200px;
+  margin-bottom: 30px;
+}
+
+.underwater-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.underwater-header h3 {
+  margin: 0;
+  text-align: left;
+}
+
+.underwater-legend {
+  display: flex;
+  gap: 18px;
+  font-size: 12px;
+  color: #495057;
+}
+
+.uw-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.uw-legend-swatch {
+  width: 18px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.uw-swatch-portfolio {
+  background: #ffc658;
+}
+
+.uw-swatch-vuag {
+  background: #2563eb;
+}
+
+.uw-swatch-xnas {
+  background: #dc2626;
+}
+
 /* Recharts customization */
 .recharts-cartesian-grid-horizontal line,
 .recharts-cartesian-grid-vertical line {

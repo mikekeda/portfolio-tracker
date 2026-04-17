@@ -11,12 +11,31 @@ import {
   ResponsiveContainer,
   Area,
   AreaChart,
+  Label,
+  ReferenceLine,
   Treemap
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import './PortfolioChart.css';
 import SharedTooltip from './SharedTooltip';
+import UnderwaterChart from './UnderwaterChart';
+
+// Shared date format used by the history data and any overlays (deposit
+// markers) so <ReferenceLine x=...> snaps to the same XAxis category.
+const formatChartDate = (iso) =>
+  new Date(iso).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: '2-digit',
+  });
+
+// Deposit markers want compact labels. Sub-£1k shows exact pounds (so small
+// top-ups don't collapse to "£0k"); above that, round to the nearest £1k.
+const formatDepositAmount = (amount) => {
+  if (amount < 1000) return `£${Math.round(amount)}`;
+  return `£${Math.round(amount / 1000)}k`;
+};
 
 // Custom tooltip for combined Total Value + Profit/Loss chart
 const CombinedTooltip = ({ active, payload, label, hideAmounts }) => {
@@ -234,6 +253,7 @@ const PortfolioChart = ({ selectedPeriod }) => {
   const [error, setError] = useState(null);
   const [timeRange, setTimeRange] = useState('30'); // days
   const [benchmarkNames, setBenchmarkNames] = useState(['S&P 500', 'NASDAQ']);
+  const [deposits, setDeposits] = useState([]);
   const [assetAllocation, setAssetAllocation] = useState(null);
   const [allocationLoading, setAllocationLoading] = useState(true);
 
@@ -251,7 +271,10 @@ const PortfolioChart = ({ selectedPeriod }) => {
       setLoading(true);
       setError(null);
       const days = timeRange === 'all' ? 365 : parseInt(timeRange);
-      const historyData = await portfolioAPI.getHistory(days);
+      const [historyData, depositsData] = await Promise.all([
+        portfolioAPI.getHistory(days),
+        portfolioAPI.getDeposits(days),
+      ]);
 
       let newBenchmarkNames = ['S&P 500', 'NASDAQ'];
       if (historyData.benchmark && Array.isArray(historyData.benchmark)) {
@@ -266,11 +289,7 @@ const PortfolioChart = ({ selectedPeriod }) => {
       if (historyData.history && historyData.history.length > 0) {
         const processedData = historyData.history.map(item => {
           const processedItem = {
-            date: new Date(item.date).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              year: '2-digit',
-            }),
+            date: formatChartDate(item.date),
             fullDate: item.date,
             totalValue: item.total_value || 0,
             totalProfit: item.total_profit || 0,
@@ -293,8 +312,18 @@ const PortfolioChart = ({ selectedPeriod }) => {
         newChartData = processedData.sort((a, b) => new Date(a.fullDate) - new Date(b.fullDate));
       }
 
-      // Update all state at once to minimize re-renders
+      // Deposit markers — date labels must match the XAxis category strings
+      // produced above so <ReferenceLine x=...> lines up on a tick.
+      const newDeposits = Array.isArray(depositsData?.deposits)
+        ? depositsData.deposits.map((d) => ({
+            date: d.date,
+            dateLabel: formatChartDate(d.date),
+            amount: Number(d.amount) || 0,
+          }))
+        : [];
+
       setBenchmarkNames(newBenchmarkNames);
+      setDeposits(newDeposits);
       if (newChartData) {
         setChartData(newChartData);
       }
@@ -402,7 +431,7 @@ const PortfolioChart = ({ selectedPeriod }) => {
             <LineChart data={chartData || []} isAnimationActive={false}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="date" />
-              <YAxis domain={['auto', 'auto']} />
+              <YAxis tickFormatter={(v) => `${v}%`} domain={['auto', 'auto']} />
               <Tooltip
                 content={<SharedTooltip
                   valueFormatter={(v) => `${Number(v).toFixed(2)}%`}
@@ -411,8 +440,28 @@ const PortfolioChart = ({ selectedPeriod }) => {
                     spyReturn: benchmarkNames[0],
                     nasdaqReturn: benchmarkNames[1]
                   }}
+                  sortOrder={['totalReturn', 'spyReturn', 'nasdaqReturn']}
                 />}
               />
+              <ReferenceLine y={0} stroke="#6c757d" strokeDasharray="3 3" />
+              {deposits.map((d) => (
+                <ReferenceLine
+                  key={`dep-${d.date}`}
+                  x={d.dateLabel}
+                  stroke="#16a34a"
+                  strokeDasharray="3 3"
+                  strokeWidth={1}
+                  opacity={0.65}
+                  ifOverflow="hidden"
+                >
+                  <Label
+                    value={hideAmounts ? MASK : formatDepositAmount(d.amount)}
+                    position="insideBottomLeft"
+                    fontSize={10}
+                    fill="#16a34a"
+                  />
+                </ReferenceLine>
+              ))}
               <Line
                 type="monotone"
                 dataKey="totalReturn"
@@ -444,6 +493,8 @@ const PortfolioChart = ({ selectedPeriod }) => {
           </ResponsiveContainer>
         </div>
       </div>
+
+      <UnderwaterChart timeRange={timeRange} />
 
       {/* Asset Allocation */}
       <div className={`asset-allocation-section ${allocationLoading ? 'loading' : ''}`}>
