@@ -83,8 +83,9 @@ async def get_projection_inputs(
     starting_value: Optional[float] = None
     if earliest_row and latest_row:
         track_record_years = (latest_row.date - earliest_row.date).days / 365.25
-        # TWRR on PortfolioDaily is stored as a decimal (annualised) already.
-        twrr = latest_row.twrr
+        # PortfolioDaily.twrr is stored as a percentage (16.17 = 16.17% annualised,
+        # see scripts/update_returns.py). The frontend expects a decimal.
+        twrr = latest_row.twrr / 100.0 if latest_row.twrr is not None else None
         starting_value = latest_row.value
 
     # CPI from FRED (best-effort — failure is non-fatal, frontend uses the benchmark default).
