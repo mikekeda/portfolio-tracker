@@ -1,8 +1,9 @@
 /* ─── Container & header ──────────────────────────────────────────────────── */
 
+/* Page width + padding come from .page-full in App.css.
+   Extra bottom padding for breathing room at the end of the calendar. */
 .ec-container {
-  padding: 0 0 40px;
-  width: 100%;
+  padding-bottom: 40px;
 }
 
 .ec-page-header {

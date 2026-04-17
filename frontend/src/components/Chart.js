@@ -319,7 +319,7 @@ const Chart = () => {
   };
 
   return (
-    <div className="chart-container">
+    <div className="page-fixed chart-container">
       {/* Header */}
       <div className="chart-header">
         <h1>Stock {getMetricDisplayName(selectedMetric)} Chart</h1>

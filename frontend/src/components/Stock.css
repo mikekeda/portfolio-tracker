@@ -1,10 +1,4 @@
-.stock-container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 16px;
-  width: 100%;
-  box-sizing: border-box;
-}
+/* Page width + padding come from .page-fixed in App.css. */
 
 .stock-breadcrumb {
   display: flex;
@@ -706,12 +700,8 @@
   font-weight: 600;
 }
 
-/* Mobile responsive styles */
+/* Mobile responsive styles (page padding handled by .page-fixed in App.css) */
 @media (max-width: 768px) {
-  .stock-container {
-    padding: 12px;
-  }
-
   .panel {
     padding: 10px 12px;
   }
@@ -763,10 +753,6 @@
 }
 
 @media (max-width: 480px) {
-  .stock-container {
-    padding: 10px;
-  }
-
   .panel {
     padding: 10px;
   }

@@ -549,7 +549,7 @@ const Pies = () => {
 
   if (loading) {
     return (
-      <div className="pies-container">
+      <div className="page-fixed pies-container">
         <div className="loading">Loading pies...</div>
       </div>
     );
@@ -557,14 +557,14 @@ const Pies = () => {
 
   if (error) {
     return (
-      <div className="pies-container">
+      <div className="page-fixed pies-container">
         <div className="error">{error}</div>
       </div>
     );
   }
 
   return (
-    <div className="pies-container">
+    <div className="page-fixed pies-container">
       <h2>Investment Pies</h2>
 
       {pies.length === 0 ? (

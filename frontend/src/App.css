@@ -7,6 +7,36 @@
   padding-top: 20px;
 }
 
+/* Shared page layouts. Every route should tag its outer container with one of
+   these. Keep page-specific CSS focused on internals, not width/padding. */
+.page-fixed {
+  box-sizing: border-box;
+  max-width: 1400px;
+  padding: 20px;
+  margin: 0 auto;
+}
+
+.page-full {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 20px;
+}
+
+/* Mobile padding matches .nav-container so the header stays flush with page content. */
+@media (width <= 768px) {
+  .page-fixed,
+  .page-full {
+    padding: 15px;
+  }
+}
+
+@media (width <= 480px) {
+  .page-fixed,
+  .page-full {
+    padding: 10px;
+  }
+}
+
 /* Global styles for loading and error states */
 .loading,
 .error {

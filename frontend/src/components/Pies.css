@@ -1,9 +1,5 @@
 /* Pies Page Styles */
-.pies-container {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
-}
+/* Page width + padding come from .page-fixed in App.css. */
 
 .pies-container h2 {
   margin-bottom: 30px;
@@ -372,12 +368,8 @@
   color: #28a745;
 }
 
-/* Responsive Design */
+/* Responsive Design (page padding handled by .page-fixed in App.css) */
 @media (max-width: 768px) {
-  .pies-container {
-    padding: 16px;
-  }
-
   .pie-header {
     flex-direction: column;
     align-items: flex-start;

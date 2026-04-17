@@ -1,8 +1,4 @@
-.holdings-container {
-  padding: 0;
-  width: 100%;
-  margin: 0 auto;
-}
+/* Page width + padding come from .page-full in App.css. */
 
 .holdings-container h2 {
   color: #333;

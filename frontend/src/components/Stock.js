@@ -703,8 +703,8 @@ const Stock = () => {
     return values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null;
   }, [peData]);
 
-  if (loading) return <div className="stock-container">Loading...</div>;
-  if (error) return <div className="stock-container error">{error}</div>;
+  if (loading) return <div className="page-fixed stock-container">Loading...</div>;
+  if (error) return <div className="page-fixed stock-container error">{error}</div>;
   if (!data) return null;
 
   const i = data.instrument;
@@ -943,7 +943,7 @@ const Stock = () => {
   ];
 
   return (
-    <div className="stock-container">
+    <div className="page-fixed stock-container">
       <nav className="stock-breadcrumb">
         <Link to="/holdings">Holdings</Link>
         <span className="breadcrumb-sep">›</span>

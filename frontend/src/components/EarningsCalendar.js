@@ -534,7 +534,7 @@ const EarningsCalendar = () => {
   const missCount = withSurprise.filter((e) => e.surprise_pct < 0).length;
 
   return (
-    <div className="ec-container">
+    <div className="page-full ec-container">
       <div className="ec-page-header">
         <h2>Earnings Calendar</h2>
         <p className="ec-page-subtitle">

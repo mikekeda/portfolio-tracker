@@ -677,7 +677,7 @@ const Dashboard = () => {
 
   if (loading) {
     return (
-      <div className="dashboard-container">
+      <div className="page-fixed dashboard-container">
         <div className="loading">Loading portfolio data...</div>
       </div>
     );
@@ -685,7 +685,7 @@ const Dashboard = () => {
 
   if (error) {
     return (
-      <div className="dashboard-container">
+      <div className="page-fixed dashboard-container">
         <div className="error">{error}</div>
       </div>
     );
@@ -693,14 +693,14 @@ const Dashboard = () => {
 
   if (!summary) {
     return (
-      <div className="dashboard-container">
+      <div className="page-fixed dashboard-container">
         <div className="error">No portfolio data available</div>
       </div>
     );
   }
 
   return (
-    <div className="dashboard-container">
+    <div className="page-fixed dashboard-container">
       <div className="dashboard-header">
         <h1>Portfolio Summary</h1>
         {summary.last_updated && (

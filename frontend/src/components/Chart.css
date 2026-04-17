@@ -1,8 +1,4 @@
-.chart-container {
-  padding: 20px;
-  max-width: 1200px;
-  margin: 0 auto;
-}
+/* Page width + padding come from .page-fixed in App.css. */
 
 .chart-container h1 {
   margin-bottom: 30px;
@@ -347,12 +343,8 @@
   font-style: italic;
 }
 
-/* Responsive Design */
+/* Responsive Design (page padding handled by .page-fixed in App.css) */
 @media (max-width: 768px) {
-  .chart-container {
-    padding: 15px;
-  }
-
   .chart-controls-row {
     flex-direction: column;
     gap: 15px;

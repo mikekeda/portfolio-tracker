@@ -270,15 +270,15 @@ const Transactions = () => {
   const setFilter = (setter) => (val) => { setter(val); setPage(1); };
 
   // ── Render ─────────────────────────────────────────────────────────────────
-  if (loading) return <div className="txn-container"><div className="txn-state">Loading…</div></div>;
-  if (error)   return <div className="txn-container"><div className="txn-state txn-error">{error}</div></div>;
+  if (loading) return <div className="page-fixed txn-container"><div className="txn-state">Loading…</div></div>;
+  if (error)   return <div className="page-fixed txn-container"><div className="txn-state txn-error">{error}</div></div>;
   if (!data)   return null;
 
   const s = summary;
   const totalTxns = data.transactions.length;
 
   return (
-    <div className="txn-container">
+    <div className="page-fixed txn-container">
 
       {/* Header */}
       <div className="txn-header">

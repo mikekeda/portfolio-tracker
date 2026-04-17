@@ -386,9 +386,9 @@ const Allocations = () => {
 
   // ── Guard states ────────────────────────────────────────────────────────────
 
-  if (loading) return <div className="allocations-container"><div className="loading">Loading…</div></div>;
-  if (error)   return <div className="allocations-container"><div className="error">{error}</div></div>;
-  if (!allocations) return <div className="allocations-container"><div className="error">No allocation data available</div></div>;
+  if (loading) return <div className="page-fixed allocations-container"><div className="loading">Loading…</div></div>;
+  if (error)   return <div className="page-fixed allocations-container"><div className="error">{error}</div></div>;
+  if (!allocations) return <div className="page-fixed allocations-container"><div className="error">No allocation data available</div></div>;
 
   const maxSectorAlloc  = Math.max(...sectorRows.map(r => r.allocPct),  1);
   const maxCountryAlloc = Math.max(...countryRows.map(r => r.allocPct), 1);
@@ -402,7 +402,7 @@ const Allocations = () => {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="allocations-container">
+    <div className="page-fixed allocations-container">
       <h2 className="alloc-page-title">Portfolio Allocations</h2>
 
       {/* ── Summary cards ──────────────────────────────────────────────────── */}

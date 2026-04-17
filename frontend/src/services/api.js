@@ -163,6 +163,12 @@ export const portfolioAPI = {
     const response = await apiClient.get(`/api/portfolio/indicators/history?days=${days}`);
     return response.data;
   },
+
+  // Get inputs for the portfolio projection page (TWRR, vol, UK CPI, benchmarks)
+  getProjectionInputs: async () => {
+    const response = await apiClient.get('/api/projection/inputs');
+    return response.data;
+  },
 };
 
 // Export the apiClient for use in other modules

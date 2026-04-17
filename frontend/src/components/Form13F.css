@@ -35,9 +35,10 @@
 
 /* ─── Container & layout ───────────────────────────────────────────────────── */
 
+/* Page width + padding come from .page-full in App.css.
+   Extra bottom padding for breathing room at the end of long 13F tables. */
 .f13f-container {
-  padding: 0 0 40px;
-  width: 100%;
+  padding-bottom: 40px;
 }
 
 .f13f-page-header {

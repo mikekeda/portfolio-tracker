@@ -761,7 +761,7 @@ const Form13FOverview = () => {
   if (error) return <div className="f13f-error">{error}</div>;
 
   return (
-    <div className="f13f-container">
+    <div className="page-full f13f-container">
       <div className="f13f-page-header">
         <h2>13F Institutional Holdings</h2>
         <p className="f13f-page-subtitle">
@@ -1073,7 +1073,7 @@ const Form13FDetail = () => {
   // visible and only replace the tab content with a loading indicator.
   if (loading && !data) return <div className="f13f-loading">Loading portfolio…</div>;
   if (error) return (
-    <div className="f13f-container">
+    <div className="page-full f13f-container">
       <Link to="/13f" className="f13f-back">← Back to all managers</Link>
       <div className="f13f-error">{error}</div>
     </div>
@@ -1084,7 +1084,7 @@ const Form13FDetail = () => {
   const aumChange = prevTotal != null ? total_value - prevTotal : null;
 
   return (
-    <div className="f13f-container">
+    <div className="page-full f13f-container">
       <Link to="/13f" className="f13f-back">← All managers</Link>
 
       <div className="f13f-detail-header">

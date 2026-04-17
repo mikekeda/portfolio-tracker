@@ -1,0 +1,401 @@
+/* Page width + padding come from .page-fixed in App.css. */
+
+.projection-header {
+  margin-bottom: 24px;
+}
+
+.projection-header h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  color: #111827;
+}
+
+.projection-subtitle {
+  margin: 0;
+  font-size: 14px;
+  color: #6b7280;
+}
+
+.projection-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (width <= 900px) {
+  .projection-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.projection-assumptions {
+  position: sticky;
+  top: 24px;
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #e6e9ef;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+
+.projection-assumptions h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+  color: #111827;
+}
+
+.assumption {
+  margin-bottom: 16px;
+}
+
+.assumption > label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.assumption input[type="number"],
+.assumption select {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #111827;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.assumption input[type="range"] {
+  width: 100%;
+}
+
+/* `label.` bumps specificity so this beats `.assumption > label`
+   (same specificity as .assumption > label but later in source order). */
+label.assumption-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  margin-bottom: 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: #4b5563;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+label.assumption-inline input[type="checkbox"] {
+  margin: 0;
+}
+
+.assumption-readout {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.segmented {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.segmented-btn {
+  flex: 1;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #4b5563;
+  cursor: pointer;
+  background: #fff;
+  border: none;
+  border-right: 1px solid #d1d5db;
+}
+
+.segmented-btn:last-child {
+  border-right: none;
+}
+
+.segmented-btn.active {
+  color: #fff;
+  background: #1d4ed8;
+}
+
+.custom-return-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.custom-return-label {
+  margin: 0;
+  font-size: 11px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.assumption-summary {
+  padding-top: 16px;
+  margin-top: 20px;
+  font-size: 13px;
+  color: #4b5563;
+  border-top: 1px solid #e6e9ef;
+}
+
+.assumption-summary > div {
+  margin-bottom: 6px;
+}
+
+.assumption-summary strong {
+  color: #111827;
+}
+
+.assumption-summary .muted {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.warning-note {
+  padding: 8px 10px;
+  margin-top: 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+  border-radius: 6px;
+}
+
+.projection-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card {
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #e6e9ef;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: #111827;
+}
+
+.chart-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.chart-header h2 {
+  margin: 0;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.legend-item {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.swatch-fan-wide {
+  background: #93c5fd;
+  opacity: 60%;
+}
+
+.swatch-fan-narrow {
+  background: #60a5fa;
+  opacity: 80%;
+}
+
+.swatch-median {
+  height: 3px;
+  background: #1d4ed8;
+}
+
+.swatch-det {
+  height: 3px;
+  background: #ef4444;
+  border-top: 1px dashed #ef4444;
+}
+
+.swatch-invested {
+  height: 2px;
+  background: #6b7280;
+}
+
+.summary-table {
+  width: 100%;
+  font-size: 14px;
+  border-collapse: collapse;
+}
+
+.summary-table th,
+.summary-table td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.summary-table th {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.summary-table td.num,
+.summary-table th.num {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.summary-table td.strong {
+  font-weight: 600;
+  color: #1d4ed8;
+}
+
+.goal-inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.goal-inputs label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.goal-inputs input {
+  padding: 8px 10px;
+  font-size: 14px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.goal-outputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.goal-output {
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.goal-label {
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.goal-value {
+  margin-bottom: 4px;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #111827;
+}
+
+.goal-note {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.fan-tooltip {
+  min-width: 220px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #4b5563;
+  background: #fff;
+  border: 1px solid #e6e9ef;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 8%);
+}
+
+.fan-tooltip-header {
+  padding-bottom: 6px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.fan-tooltip-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.fan-tooltip-row.strong {
+  font-weight: 600;
+  color: #111827;
+}
+
+.fan-tooltip-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.fan-tooltip-value {
+  text-align: right;
+}
+
+.loading,
+.error {
+  padding: 40px;
+  font-size: 14px;
+  color: #6b7280;
+  text-align: center;
+}
+
+.error {
+  color: #b91c1c;
+}

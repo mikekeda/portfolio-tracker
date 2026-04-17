@@ -1624,7 +1624,7 @@ const Holdings = () => {
   }, [table]);
 
   return (
-    <div className="holdings-container">
+    <div className="page-full holdings-container">
       <h2>{showAll ? 'All instruments' : 'Current Holdings'}</h2>
 
       {error && (
