@@ -50,21 +50,19 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
             len(portfolio_data),
         )
 
+        # Local references shave attribute lookups in the hot loop (important when
+        # "Show all" mode feeds ~700 monitored stocks through here).
+        passes_screener = screener_config.passes_screener
+        screeners_map = screener_config.screeners
+
         for holding_data in portfolio_data:
-            passed_screeners = []
-            # Initialize screener_score if it doesn't exist
-            holding_data["screener_score"] = holding_data.get("screener_score", 0)
+            passed_screeners: list[str] = []
+            score = 0
 
-            # Check each available screener
             for screener_def in available_screeners:
-                if not screener_def.available:
-                    continue
-
-                # Check if holding passes this screener's criteria using the evaluation engine
-                result = screener_config.eval_screener(holding_data, screener_def)
-                if result["passed"]:
+                if passes_screener(holding_data, screener_def):
                     passed_screeners.append(screener_def.id)
-                    holding_data["screener_score"] += screener_def.weight
+                    score += screener_def.weight
 
             holding_data["passedScreeners"] = passed_screeners
 
@@ -74,15 +72,15 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
             # legitimate double-confirmation. Diminishing returns (pairs ** 0.85) prevent a
             # single stock with many passes from saturating the score while still giving
             # exceptional stocks room to stand out.
-            screener_pairs = {
-                tuple(sorted((a, b)))
-                for a, b in combinations(set(passed_screeners), 2)
-                if (b in screener_config.screeners[a].combine_with or a in screener_config.screeners[b].combine_with)
-            }
+            if len(passed_screeners) >= 2:
+                pair_count = 0
+                for a, b in combinations(passed_screeners, 2):
+                    if b in screeners_map[a].combine_with_set or a in screeners_map[b].combine_with_set:
+                        pair_count += 1
+                if pair_count:
+                    score += round(2 * pair_count**0.85)
 
-            if screener_pairs:
-                combination_bonus = round(2 * len(screener_pairs) ** 0.85)
-                holding_data["screener_score"] += combination_bonus
+            holding_data["screener_score"] = score
 
         # Log summary for debugging
         total_matches = sum(len(h.get("passedScreeners", [])) for h in portfolio_data)

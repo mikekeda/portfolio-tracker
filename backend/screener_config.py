@@ -87,6 +87,11 @@ class ScreenerDefinition:
     available: bool = True
     weight: int = 5  # 0..10, usefulness for LT growth/high-risk
     combine_with: list[str] = field(default_factory=list)  # list of screener IDs
+    # Derived at __post_init__ time for O(1) lookup in the combination-bonus hot path.
+    combine_with_set: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self.combine_with_set = frozenset(self.combine_with)
 
 
 class ScreenerConfig:
@@ -596,43 +601,30 @@ Check those criteria:
                         raise ValueError(f"Screener '{screener_id}': Unknown field reference '{criteria.value.name}'")
 
     def eval_criterion(self, fields: dict[str, Any], criteria: ScreenerCriteria) -> tuple[bool, str]:
-        """Evaluate a single criterion."""
-        if criteria.operator not in OP_FUNCS:
-            raise ValueError(f"unknown operator {criteria.operator}")
-
-        if criteria.field not in fields:
-            raise ValueError(f"missing field {criteria.field}")
-
-        lhs = fields[criteria.field]
-        rhs = fields[criteria.value.name] if isinstance(criteria.value, FieldRef) else criteria.value
-
-        # Handle None and NaN values gracefully
-        if lhs is None or not _is_finite_value(lhs):
+        """Evaluate a single criterion. Operators and field names are assumed valid;
+        `validate()` enforces that at startup so the hot path stays check-free."""
+        lhs = fields.get(criteria.field)
+        if not _is_finite_value(lhs):
             return False, f"field {criteria.field} is None or non-finite"
 
-        # Also check RHS if it's a field reference
         if isinstance(criteria.value, FieldRef):
-            if criteria.value.name not in fields:
-                raise ValueError(f"missing field reference {criteria.value.name}")
-            rhs_val = fields[criteria.value.name]
-            if rhs_val is None or not _is_finite_value(rhs_val):
+            rhs = fields.get(criteria.value.name)
+            if not _is_finite_value(rhs):
                 return False, f"field {criteria.value.name} is None or non-finite"
-            rhs = rhs_val
+        else:
+            rhs = criteria.value
 
         ok = OP_FUNCS[criteria.operator](lhs, rhs)
-
         return ok, (criteria.description or f"{criteria.field} {criteria.operator} {criteria.value}")
 
-    def eval_screener(self, fields: dict[str, Any], screener_def: ScreenerDefinition) -> dict:
-        """Evaluate a screener against field data."""
-        results = []
-        all_ok = True
+    def passes_screener(self, fields: dict[str, Any], screener_def: ScreenerDefinition) -> bool:
+        """Short-circuiting boolean check used by the screener hot loop. Returns False
+        as soon as any criterion fails, without allocating a details list."""
         for criteria in screener_def.criteria:
-            ok, reason = self.eval_criterion(fields, criteria)
-            results.append({"ok": bool(ok), "reason": reason})
-            all_ok = all_ok and ok
-
-        return {"screener_id": screener_def.id, "passed": bool(all_ok), "details": results}
+            ok, _ = self.eval_criterion(fields, criteria)
+            if not ok:
+                return False
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         """Convert only available screeners to dictionary format for API responses."""
