@@ -19,7 +19,7 @@ import pandas as pd
 import requests
 import yfinance as yf  # type: ignore[import-untyped]
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import create_engine, select
+from sqlalchemy import case, create_engine, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert  # Added for bulk upsert
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 from sqlalchemy.sql import func
@@ -49,6 +49,8 @@ from models import (
     InstrumentYahoo,
     PortfolioDaily,
     PricesDaily,
+    TransactionAction,
+    TransactionHistory,
 )
 
 # yfinance can emit very noisy per-symbol error logs on known delisted/legacy tickers.
@@ -275,28 +277,40 @@ def update_holdings() -> list[HoldingDaily]:
         instruments_dict = {i.t212_code: i for i in instruments}  # convert to dict t212_code: instrument
 
         # Prioritize instruments that have NO InstrumentYahoo (backfill) - these cause 500s on portfolio page.
-        # Then include recently-updated ones for refresh. Cap at YAHOO_UPDATE_LIMIT.
-        instruments_without_yahoo_ids = set(
-            row[0]
-            for row in session.execute(
+        # Then include instruments whose InstrumentYahoo row is older than the refresh cutoff.
+        # Cap at YAHOO_UPDATE_LIMIT.
+        instruments_without_yahoo_ids: set[int] = set(
+            session.execute(
                 select(Instrument.id)
                 .outerjoin(InstrumentYahoo, Instrument.id == InstrumentYahoo.instrument_id)
                 .where(InstrumentYahoo.instrument_id.is_(None))
                 .where(Instrument.yahoo_symbol.isnot(None))
-            ).all()
+            )
+            .scalars()
+            .all()
         )
         cutoff = datetime.now(TIMEZONE) - timedelta(days=YAHOO_UPDATE_INTERVAL_DAYS)
-        symbols_to_fetch: list[str] = [i.yahoo_symbol for i in instruments if i.id in instruments_without_yahoo_ids][
-            :YAHOO_UPDATE_LIMIT
-        ]
-        for i in instruments:
+        stale_yahoo_ids: list[int] = list(
+            session.execute(
+                select(InstrumentYahoo.instrument_id)
+                .where(InstrumentYahoo.updated_at < cutoff)
+                .order_by(InstrumentYahoo.updated_at)
+            )
+            .scalars()
+            .all()
+        )
+
+        id_to_yahoo_symbol: dict[int, str] = {i.id: i.yahoo_symbol for i in instruments if i.yahoo_symbol}
+        symbols_to_fetch: list[str] = []
+        symbols_seen: set[str] = set()
+        for inst_id in list(instruments_without_yahoo_ids) + stale_yahoo_ids:
             if len(symbols_to_fetch) >= YAHOO_UPDATE_LIMIT:
                 break
-            if i.yahoo_symbol in symbols_to_fetch:
-                continue
-            inst_updated = i.updated_at.replace(tzinfo=TIMEZONE) if i.updated_at.tzinfo is None else i.updated_at
-            if inst_updated > cutoff:
-                symbols_to_fetch.append(i.yahoo_symbol)
+            sym = id_to_yahoo_symbol.get(inst_id)
+            if sym and sym not in symbols_seen:
+                symbols_to_fetch.append(sym)
+                symbols_seen.add(sym)
+
         if instruments_without_yahoo_ids:
             logger.info(
                 "Backfilling InstrumentYahoo for %d instruments missing Yahoo data",
@@ -562,7 +576,9 @@ def update_prices(tickers_to_add: set[str]) -> None:
             .all()
         )
 
-        # Get prices for existing tickers
+        # Get prices for existing tickers. Commit per batch so a later batch
+        # failing (and triggering the rollback in _update_prices) doesn't
+        # discard prices already upserted in earlier batches.
         for i in range(0, len(existing_prices), BATCH_SIZE_YF):
             sub = existing_prices[i : i + BATCH_SIZE_YF]
             start = min([row.max_date for row in sub]) + timedelta(days=1)
@@ -570,11 +586,13 @@ def update_prices(tickers_to_add: set[str]) -> None:
                 break
             existing_tickers: list[str] = [row.symbol for row in sub]
             _update_prices(session, existing_tickers, start)
+            session.commit()
 
         # Get prices for new tickers
         new_tickers = list(tickers_to_add | tickers - set(row.symbol for row in existing_prices))
         start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
         _update_prices(session, new_tickers, start)  # all new tickers at once
+        session.commit()
 
 
 def scrub_for_json(obj):
@@ -794,97 +812,113 @@ def update_portfolio():
 
 
 def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> dict[str, Optional[float]]:
-    """Calculates Sharpe, Sortino, and Beta for the portfolio."""
+    """
+    Sharpe, Sortino and Beta on a cash-flow-neutral daily return series.
 
-    # Look back up to 1 year for calculations
+    Raw ``PortfolioDaily.value.pct_change()`` treats a deposit as a daily
+    return (a £10k top-up on a £70k book shows as +14%). Those spikes inflate
+    ``excess_returns.mean()`` but never enter downside deviation (they're
+    positive), which makes Sharpe and Sortino meaningless.
+
+    Instead, daily factors are computed the same way TWRR does in
+    ``scripts/update_returns.py``::
+
+        factor_t = value_t / (value_{t-1} + net_cash_flow_t)
+
+    so deposits/withdrawals pass through cleanly. The resulting series is the
+    same wealth-index concept used for Max DD and the Underwater chart.
+    """
     start_date = snapshot_date - timedelta(days=365)
 
-    # 1. Get historical portfolio values (equity only — exclude cash so beta reflects
-    #    actual equity risk, not a cash-diluted whole-account figure)
+    # 1. Portfolio total value, calendar-daily (PortfolioDaily has a row per day).
     portfolio_history = (
-        session.query(PortfolioDaily.date, (PortfolioDaily.value - PortfolioDaily.cash).label("equity_value"))
+        session.query(PortfolioDaily.date, PortfolioDaily.value)
         .filter(PortfolioDaily.date >= start_date, PortfolioDaily.date <= snapshot_date)
         .order_by(PortfolioDaily.date)
         .all()
     )
-
     if len(portfolio_history) < 2:
         return {"sharpe": None, "sortino": None, "beta": None}
 
-    # 2. Get historical benchmark prices (e.g., S&P 500) — use adj_close to match PRICE_FIELD
-    benchmark_symbol = SPY
-    benchmark_prices = (
-        session.query(PricesDaily.date, PricesDaily.adj_close_price)
-        .filter(
-            PricesDaily.symbol == benchmark_symbol, PricesDaily.date >= start_date, PricesDaily.date <= snapshot_date
+    # 2. Net daily cash flows (deposit +, withdrawal -) over the same window.
+    cash_flow_rows = (
+        session.query(
+            func.date(TransactionHistory.timestamp).label("day"),
+            func.sum(
+                case(
+                    (TransactionHistory.action == TransactionAction.DEPOSIT, TransactionHistory.total),
+                    else_=-TransactionHistory.total,
+                )
+            ).label("net_flow"),
         )
-        .order_by(PricesDaily.date)
+        .filter(
+            TransactionHistory.action.in_([TransactionAction.DEPOSIT, TransactionAction.WITHDRAWAL]),
+            func.date(TransactionHistory.timestamp) >= start_date,
+            func.date(TransactionHistory.timestamp) <= snapshot_date,
+        )
+        .group_by(func.date(TransactionHistory.timestamp))
         .all()
     )
+    cash_flows: dict[date, float] = {r.day: float(r.net_flow) for r in cash_flow_rows}
 
-    if len(benchmark_prices) < 2:
+    # 3. Cash-flow-neutral daily returns. Convention matches update_returns.py:
+    #    the flow is applied at the start of the day, so it enters the denominator.
+    portfolio_returns: list[float] = []
+    portfolio_dates: list[date] = []
+    for (_, prev_v), (curr_d, curr_v) in zip(portfolio_history, portfolio_history[1:]):
+        denominator = prev_v + cash_flows.get(curr_d, 0.0)
+        if denominator > 0 and curr_v > 0:
+            portfolio_returns.append(curr_v / denominator - 1.0)
+            portfolio_dates.append(curr_d)
+
+    if len(portfolio_returns) < 2:
         return {"sharpe": None, "sortino": None, "beta": None}
 
-    benchmark_df = pd.DataFrame(benchmark_prices, columns=["date", "price"]).set_index("date")
-    portfolio_df = pd.DataFrame(portfolio_history, columns=["date", "value"]).set_index("date")
+    returns_s = pd.Series(portfolio_returns, index=pd.Index(portfolio_dates))
 
-    # --- SHARPE / SORTINO: use the full benchmark trading-day grid with ffill ---
-    # For risk-adjusted return metrics we need daily granularity on the portfolio side.
-    portfolio_daily = portfolio_df.reindex(benchmark_df.index, method="ffill")
-    aligned_portfolio = portfolio_daily["value"].pct_change().dropna()
+    # 4. Sharpe / Sortino. Annualise over calendar days (matches TWRR's 365.25
+    #    convention) since the series covers every day, not just trading days.
+    calendar_days_per_year = 365.25
+    annualization_factor = np.sqrt(calendar_days_per_year) if len(returns_s) > 60 else 1.0
 
-    if aligned_portfolio.empty or len(aligned_portfolio) < 2:
-        return {"sharpe": None, "sortino": None, "beta": None}
+    risk_free_rate_annual = 0.04  # UK 1y gilt neighbourhood; same as before
+    risk_free_rate_daily = (1 + risk_free_rate_annual) ** (1 / calendar_days_per_year) - 1
+    excess_returns = returns_s - risk_free_rate_daily
 
-    # --- DYNAMIC ANNUALIZATION FACTOR ---
-    trading_days_per_year = 252
-    num_days = len(aligned_portfolio)
-    annualization_factor = np.sqrt(trading_days_per_year) if num_days > 60 else 1.0
-
-    # Assume a risk-free rate (e.g., 4% annually for UK)
-    risk_free_rate_annual = 0.04
-    risk_free_rate_daily = (1 + risk_free_rate_annual) ** (1 / trading_days_per_year) - 1
-
-    excess_returns = aligned_portfolio - risk_free_rate_daily
-
-    # Sharpe Ratio
-    sharpe_ratio = (
+    sharpe_ratio: Optional[float] = (
         float((excess_returns.mean() / excess_returns.std()) * annualization_factor)
         if excess_returns.std() != 0
         else None
     )
 
-    # Sortino Ratio
     downside_returns = excess_returns[excess_returns < 0]
     downside_std = downside_returns.std()
-    sortino_ratio = (
+    sortino_ratio: Optional[float] = (
         float((excess_returns.mean() / downside_std) * annualization_factor)
         if downside_std != 0 and downside_std is not np.nan
         else None
     )
 
-    # --- BETA: only use dates with an ACTUAL portfolio snapshot ---
-    # Using ffill creates spurious 0% portfolio returns on days when the snapshot was
-    # missing (server downtime, etc.) while the benchmark moved — this drags covariance
-    # (and therefore beta) sharply downward.
-    #
-    # Fix: inner-join portfolio and benchmark on their shared dates, then compute
-    # "holding-period" returns over each actual snapshot interval. Both series then
-    # cover identical time spans regardless of gaps.
-    beta_combined = pd.concat(
-        [portfolio_df["value"], benchmark_df["price"].reindex(portfolio_df.index, method="ffill")],
-        axis=1,
-        keys=["portfolio", "benchmark"],
-    ).dropna()
-
+    # 5. Beta: benchmark (SPY) daily returns aligned to the portfolio dates.
+    #    Benchmark trades on weekdays only, so ffill from benchmark onto the
+    #    portfolio's calendar-day index and inner-join on shared dates.
+    benchmark_prices = (
+        session.query(PricesDaily.date, PricesDaily.adj_close_price)
+        .filter(PricesDaily.symbol == SPY, PricesDaily.date >= start_date, PricesDaily.date <= snapshot_date)
+        .order_by(PricesDaily.date)
+        .all()
+    )
     beta: Optional[float] = None
-    if len(beta_combined) >= 20:
-        beta_portfolio_returns = beta_combined["portfolio"].pct_change().dropna()
-        beta_benchmark_returns = beta_combined["benchmark"].pct_change().dropna()
-        covariance = beta_portfolio_returns.cov(beta_benchmark_returns)
-        variance = cast(float, beta_benchmark_returns.var())
-        if variance != 0:
-            beta = float(covariance / variance)
+    if len(benchmark_prices) >= 2:
+        benchmark_df = pd.DataFrame(benchmark_prices, columns=["date", "price"]).set_index("date")
+        bench_aligned = benchmark_df["price"].reindex(pd.Index(portfolio_dates), method="ffill")
+        bench_returns = bench_aligned.pct_change().dropna()
+        joined = pd.concat([returns_s.rename("p"), bench_returns.rename("b")], axis=1).dropna()
+        if len(joined) >= 20:
+            covariance = joined["p"].cov(joined["b"])
+            variance = cast(float, joined["b"].var())
+            if variance != 0:
+                beta = float(covariance / variance)
 
     return {"sharpe": sharpe_ratio, "sortino": sortino_ratio, "beta": beta}
 
