@@ -29,14 +29,27 @@
   }
 }
 
+@media (width <= 600px) {
+  .goal-outputs {
+    grid-template-columns: 1fr;
+  }
+}
+
 .projection-assumptions {
-  position: sticky;
-  top: 24px;
   padding: 20px;
   background: #fff;
   border: 1px solid #e6e9ef;
   border-radius: 12px;
   box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+}
+
+/* Sticky only makes sense in the two-column desktop layout. In the single-column
+   mobile layout it pins the sidebar to the viewport top and overlays the chart. */
+@media (width > 900px) {
+  .projection-assumptions {
+    position: sticky;
+    top: 24px;
+  }
 }
 
 .projection-assumptions h2 {
@@ -69,6 +82,21 @@
   background: #fff;
   border: 1px solid #d1d5db;
   border-radius: 6px;
+}
+
+/* Stand-in for a masked monetary input while Hide Amounts is on.
+   Styled like a disabled input so the layout doesn't shift. */
+.assumption-input-masked {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: #9ca3af;
+  letter-spacing: 2px;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  user-select: none;
 }
 
 .assumption input[type="range"] {

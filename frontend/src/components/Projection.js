@@ -390,14 +390,20 @@ const Projection = () => {
 
           <div className="assumption">
             <label htmlFor="startingValue">Starting portfolio</label>
-            <input
-              id="startingValue"
-              type="number"
-              min="0"
-              step="1000"
-              value={startingValueOverride ?? Math.round(inputs.portfolio?.starting_value ?? 0)}
-              onChange={(e) => setStartingValueOverride(Number(e.target.value))}
-            />
+            {hideAmounts ? (
+              <div className="assumption-input-masked" aria-label="Starting portfolio (hidden)">
+                {MASK}
+              </div>
+            ) : (
+              <input
+                id="startingValue"
+                type="number"
+                min="0"
+                step="1000"
+                value={startingValueOverride ?? Math.round(inputs.portfolio?.starting_value ?? 0)}
+                onChange={(e) => setStartingValueOverride(Number(e.target.value))}
+              />
+            )}
           </div>
 
           <div className="assumption">
