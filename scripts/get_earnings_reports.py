@@ -1,5 +1,31 @@
 """
-Fetches the latest 10-Q or 10-K filing for a given ticker from the SEC EDGAR API
+Fetches the latest 10-Q / 10-K / 20-F / 40-F filing for each eligible instrument
+from the SEC EDGAR API and extracts structured metrics via an LLM.
+
+Coverage model — "latest-only, forward-looking":
+  * Each run processes the *single most recent* SEC filing per instrument
+    (``get_latest_filing_metadata_any``). Historical filings are never
+    backfilled, even if Yahoo lists many prior earnings announcements that
+    have no matching ``EarningsReport`` row.
+  * Rationale: the dashboard ranks current buy/sell signal and forward
+    guidance — a 2024 10-Q adds little for a 10-year-horizon investor and
+    would multiply LLM cost by ~4×/year of history.
+  * Consequence: an instrument that becomes eligible today (e.g. CIK
+    populated, Yahoo earnings data arrived) jumps straight to its current
+    latest filing; prior filings it missed while ineligible stay
+    permanently unprocessed. If you need historical coverage you'd add an
+    opt-in ``--backfill-history N`` mode; this script does not provide one.
+
+Selection priority:
+  1. Instruments with zero ``EarningsReport`` rows ("never-seen") first,
+     so brand-new instruments in the portfolio get their current filing
+     summarised before we refresh existing ones.
+  2. Within that, order by the most recent past Yahoo earnings date
+     descending — recent reporters before stale ones.
+
+Per-instrument decision flow lives in ``get_earnings_report``; the summary
+logged at the start of ``get_earnings_reports`` shows the never-seen /
+updates split and the global never-seen backlog.
 """
 
 import argparse
@@ -267,12 +293,12 @@ def extract_text_from_html(html_content: str) -> str:
     return text
 
 
-def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | None:
+def summarize_with_llm(text: str, ticker: str, form: str, period: str) -> dict[str, Any] | None:
     """
     Extracts structured metrics and generates summary from earnings report.
     Returns dict with structured metrics and summary text, or None on error.
     """
-    logger.info("Analyzing %s for %s (%d characters)", form, ticker, len(text))
+    logger.info("Analyzing %s for %s period %s (%d characters)", form, ticker, period, len(text))
 
     if not GEMINI_API_KEY:
         logger.error("GEMINI_API_KEY is not set in config.py or environment variables")
@@ -379,13 +405,20 @@ def summarize_with_llm(text: str, ticker: str, form: str) -> dict[str, Any] | No
 
         # Convert back to dict for storage (Pydantic model to dict)
         result = validated_result.model_dump()
-
-        logger.info("LLM extraction complete for %s (%d chars processed)", ticker, len(text))
         return result
 
     except Exception as e:
         logger.error("Error calling Gemini API: %s", e, exc_info=True)
         return None
+
+
+def _latest_yahoo_earnings_date(earnings: dict[str, Any] | None) -> str | None:
+    """Most recent key from Yahoo's earnings JSON that is strictly before today.
+    Returns an ISO date string, or None if the dict is empty / has only future dates."""
+    if not earnings:
+        return None
+    today_iso = date.today().isoformat()
+    return next((d for d in sorted(earnings.keys(), reverse=True) if d < today_iso), None)
 
 
 def _check_file_exists_for_date(ticker: str, report_date: str) -> bool:
@@ -402,7 +435,7 @@ def _check_file_exists_for_date(ticker: str, report_date: str) -> bool:
 
 def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     """
-    Fetches, processes, and saves the latest SEC earnings filing for a given ticker.
+    Fetches, processes, and saves the *latest* SEC earnings filing for a given ticker.
 
     Decision flow:
     1. Fetch filing metadata from SEC (lightweight JSON, tries 10-Q/10-K then 20-F/40-F).
@@ -411,8 +444,12 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
        (post-table-truncation scenario: re-run LLM without re-downloading).
     4. Neither DB nor cache → download from SEC and analyse.
 
+    Scope note: "latest" means the single most recent 10-Q/10-K (or 20-F/40-F).
+    If older filings were never processed (common after an instrument just became
+    eligible), they are NOT backfilled here — see the module docstring.
+
     Note: we intentionally do NOT compare the SEC report_date to the Yahoo announcement
-    date.  Those are different things (period end vs. announcement day) and comparing them
+    date. Those are different things (period end vs. announcement day) and comparing them
     caused legitimate new filings to be skipped.
     """
 
@@ -456,7 +493,7 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     text = extract_text_from_html(html_content)
 
     # 6. LLM analysis
-    result = summarize_with_llm(text, ticker, form)
+    result = summarize_with_llm(text, ticker, form, report_date)
 
     if result is None:
         logger.warning("  [error] LLM failed for %s %s — skipping DB save", ticker, report_date)
@@ -496,13 +533,16 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
     Fetch and process earnings reports for instruments with earnings data.
 
     Args:
-        limit: Maximum number of instruments to process.
+        limit: Maximum number of instruments to process per invocation.
         only_holdings: When True, restrict to instruments currently held in the portfolio
                        (latest HoldingDaily snapshot with quantity > 0).
 
-    Prioritizes tickers that:
-    1. Don't have existing reports in database yet (has_reports = 0 first)
-    2. Have more recent earnings dates (more likely to have new filings)
+    Selection priority (see module docstring for the full model):
+        1. Never-seen instruments (``has_reports = 0``) first.
+        2. Within that, most recent past Yahoo earnings announcement date first.
+
+    Per-instrument behaviour: only the *latest* SEC filing is considered — older
+    unprocessed filings are never backfilled by this script.
 
     Truncation note:
         If the earnings_reports table is truncated (e.g. to force re-summarisation with a
@@ -537,6 +577,7 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
                 Instrument.yahoo_symbol,
                 Instrument.cik,
                 InstrumentYahoo.earnings,
+                has_reports.label("has_reports"),
             )
             .join(InstrumentYahoo)
             .filter(
@@ -573,18 +614,60 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
 
         total = len(result)
         start_ts = perf_counter()
+
+        # Global backlog — eligible instruments (CIK + Yahoo earnings data) that have
+        # no EarningsReport row yet. Compared against the current batch's never-seen
+        # count so the log tells you whether today's run will close the gap.
+        eligible_total = (
+            session.execute(
+                select(func.count())
+                .select_from(Instrument)
+                .join(InstrumentYahoo)
+                .where(
+                    Instrument.cik.is_not(None),
+                    InstrumentYahoo.earnings != "{}",
+                    max_earnings_date_expr.is_not(None),
+                )
+            ).scalar()
+            or 0
+        )
+        backlog_total = (
+            session.execute(
+                select(func.count())
+                .select_from(Instrument)
+                .join(InstrumentYahoo)
+                .where(
+                    Instrument.cik.is_not(None),
+                    InstrumentYahoo.earnings != "{}",
+                    max_earnings_date_expr.is_not(None),
+                    has_reports == 0,
+                )
+            ).scalar()
+            or 0
+        )
+
+        # Summary of what got selected: never-seen (top-priority bucket) vs updates
+        # (already have at least one report on file), plus the span of Yahoo-indicated
+        # earnings announcement dates in this batch.
+        never_seen = sum(1 for r in result if r.has_reports == 0)
+        updates = total - never_seen
+        yahoo_dates = [d for d in (_latest_yahoo_earnings_date(r.earnings) for r in result) if d]
+        date_span = f"{min(yahoo_dates)} → {max(yahoo_dates)}" if yahoo_dates else "n/a"
         logger.info(
-            "Processing %d instruments (first 10: %s)",
+            "Processing %d instruments (%d never-seen, %d updates) | Backlog: %d never-seen of %d eligible | "
+            "Yahoo earnings span: %s | first 10: %s",
             total,
+            never_seen,
+            updates,
+            backlog_total,
+            eligible_total,
+            date_span,
             [r.yahoo_symbol for r in result[:10]],
         )
 
         processed = 0
         for row in result:
-            # Most recent Yahoo earnings date before today (used only for logging context)
-            last_earnings_date = next(
-                (d for d in sorted(row.earnings.keys(), reverse=True) if d < date.today().isoformat()), None
-            )
+            last_earnings_date = _latest_yahoo_earnings_date(row.earnings)
             if not last_earnings_date:
                 logger.warning("No valid earnings date found for %s despite query filter, skipping", row.yahoo_symbol)
                 continue
