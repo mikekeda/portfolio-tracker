@@ -44,10 +44,11 @@ _PAGE_DELAY = 10.0
 # Minimum floor for 429 Retry-After to avoid tight loops when header says 0s.
 _MIN_RETRY_WAIT = 5
 
-# csv_id prefix used for records synthesised by this script. Records produced
-# by the CSV importer carry either a T212 CSV reference (e.g. "EOF…") or NULL.
-# Content-based dedup skips matches with this prefix so legitimate multi-fill
-# orders (same ticker/timestamp/qty/total, distinct fill.id) are kept.
+# Prefix used for csv_id values written by this script. Rows originating
+# elsewhere (CSV importer, manual inserts) carry any other reference string or
+# NULL. Content-based dedup skips matches with this prefix so legitimate
+# multi-fill orders (same ticker/timestamp/qty/total, distinct fill.id) are
+# kept — fill uniqueness within the API source is handled by uq_transaction_csv_id.
 _API_CSV_ID_PREFIX = "api:"
 
 # Tolerances for float comparison in the semantic-duplicate check. T212
@@ -197,13 +198,12 @@ def _find_semantic_duplicate(
     quantity: float,
     total: float,
 ) -> Optional[TransactionHistory]:
-    """Look for a pre-existing CSV-origin row representing the same transaction.
+    """Look for a pre-existing non-API row representing the same transaction.
 
     T212 returns the same event with different reference strings across export
-    sources (CSV vs API), so the ``csv_id`` unique constraint alone can't catch
-    cross-source duplicates. We additionally match on (action, ticker,
-    timestamp) with a loose tolerance on quantity and total to absorb per-
-    export rounding drift.
+    sources, so the ``csv_id`` unique constraint alone can't catch cross-source
+    duplicates. We additionally match on (action, ticker, timestamp) with a
+    loose tolerance on quantity and total to absorb per-export rounding drift.
 
     Rows whose ``csv_id`` starts with ``api:`` are deliberately skipped:
     legitimate multi-fill orders arrive with distinct ``fill.id`` values at the
