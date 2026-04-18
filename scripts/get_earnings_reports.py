@@ -79,7 +79,6 @@ class Guidance(BaseModel):
     )
     outlook_commentary: str | None = Field(
         None,
-        max_length=500,
         description="1-2 sentence summary of management's qualitative forward outlook (only if no specific numbers are provided above)",
     )
 
@@ -104,17 +103,17 @@ class InvestmentAssessment(BaseModel):
         description="Overall recommendation: buy (attractive), hold (neutral), avoid (unattractive), consider (worth researching)",
     )
     conviction: Literal["high", "medium", "low"] = Field(
-        ..., description=(
+        ...,
+        description=(
             "Strength of the investment signal, not just data clarity. "
             "High = strong, consistent evidence supports the call (e.g. guidance raised, margins expanding, moat intact). "
             "Medium = mixed signals or limited forward visibility. "
             "Low = contradictory data, one-off items dominating, or unclear long-term trajectory."
-        )
+        ),
     )
     rationale: str = Field(
         "",
         description="2-3 sentence rationale for the recommendation",
-        max_length=500,
     )
     key_catalysts: list[str] = Field(
         default_factory=list,
