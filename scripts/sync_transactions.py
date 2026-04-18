@@ -44,6 +44,18 @@ _PAGE_DELAY = 10.0
 # Minimum floor for 429 Retry-After to avoid tight loops when header says 0s.
 _MIN_RETRY_WAIT = 5
 
+# csv_id prefix used for records synthesised by this script. Records produced
+# by the CSV importer carry either a T212 CSV reference (e.g. "EOF…") or NULL.
+# Content-based dedup skips matches with this prefix so legitimate multi-fill
+# orders (same ticker/timestamp/qty/total, distinct fill.id) are kept.
+_API_CSV_ID_PREFIX = "api:"
+
+# Tolerances for float comparison in the semantic-duplicate check. T212
+# re-exports the same fill with tiny quantity-rounding drift between export
+# dates (observed 1.004257 vs 1.004029 shares for a single Stellantis buy).
+_QTY_TOLERANCE = 1e-4  # ~4 decimals
+_TOTAL_TOLERANCE = 1e-2  # ~2 decimals (pence)
+
 # ── Action mappings (by endpoint) ──────────────────────────────────────────────
 
 # /api/v0/equity/history/transactions — cash movements (no ticker/quantity/price, use ``amount`` for GBP amount):
@@ -174,6 +186,45 @@ def _build_fees(item: dict, instrument_currency: Optional[str]) -> Optional[list
         )
 
     return fees if fees else None
+
+
+def _find_semantic_duplicate(
+    session,
+    *,
+    action: TransactionAction,
+    ticker: Optional[str],
+    timestamp: datetime,
+    quantity: float,
+    total: float,
+) -> Optional[TransactionHistory]:
+    """Look for a pre-existing CSV-origin row representing the same transaction.
+
+    T212 returns the same event with different reference strings across export
+    sources (CSV vs API), so the ``csv_id`` unique constraint alone can't catch
+    cross-source duplicates. We additionally match on (action, ticker,
+    timestamp) with a loose tolerance on quantity and total to absorb per-
+    export rounding drift.
+
+    Rows whose ``csv_id`` starts with ``api:`` are deliberately skipped:
+    legitimate multi-fill orders arrive with distinct ``fill.id`` values at the
+    same second and must both be kept; the ``uq_transaction_csv_id`` constraint
+    already guarantees uniqueness within the API source.
+    """
+    stmt = select(TransactionHistory).where(
+        TransactionHistory.action == action,
+        TransactionHistory.timestamp == timestamp,
+    )
+    stmt = stmt.where(TransactionHistory.ticker.is_(None) if ticker is None else TransactionHistory.ticker == ticker)
+
+    for row in session.execute(stmt).scalars():
+        if row.csv_id and row.csv_id.startswith(_API_CSV_ID_PREFIX):
+            continue
+        if abs((row.quantity or 0.0) - quantity) > _QTY_TOLERANCE:
+            continue
+        if abs((row.total or 0.0) - total) > _TOTAL_TOLERANCE:
+            continue
+        return row
+    return None
 
 
 # ── Pagination ─────────────────────────────────────────────────────────────────
@@ -367,18 +418,37 @@ def _import_orders(
             price = fill.get("price")
             qty = fill.get("quantity") or order.get("filledQuantity") or 0.0
 
+            ts = _parse_dt(date_str)
+            qty_abs = abs(qty or 0.0)
+            total_abs = abs(float(net_value or 0.0))
+
+            dup = _find_semantic_duplicate(
+                session, action=action, ticker=yahoo_ticker, timestamp=ts, quantity=qty_abs, total=total_abs
+            )
+            if dup is not None:
+                logger.info(
+                    "Semantic duplicate skipped: %s %s at %s matches existing id=%d (csv_id=%s)",
+                    action.value,
+                    yahoo_ticker,
+                    ts,
+                    dup.id,
+                    dup.csv_id,
+                )
+                stats["dedup_skipped"] += 1
+                continue
+
             session.add(
                 TransactionHistory(
                     csv_id=csv_id,
-                    timestamp=_parse_dt(date_str),
+                    timestamp=ts,
                     ticker=yahoo_ticker,
                     isin=(order.get("instrument") or {}).get("isin")
                     if isinstance(order.get("instrument"), dict)
                     else None,
                     action=action,
-                    quantity=abs(qty or 0.0),
+                    quantity=qty_abs,
                     price=price if price is not None else None,
-                    total=abs(float(net_value or 0.0)),
+                    total=total_abs,
                     exchange_rate=exchange_rate,
                     result=float(realised) if (is_sell and realised is not None) else None,
                     fees=_build_fees(item, instrument_currency),
@@ -429,16 +499,33 @@ def _import_cash(
                 stats["errors"] += 1
                 continue
 
+            ts = _parse_dt(date_str)
+            total_abs = abs(item.get("amount") or 0.0)  # cash uses 'amount', not 'total'
+
+            dup = _find_semantic_duplicate(
+                session, action=action, ticker=None, timestamp=ts, quantity=0.0, total=total_abs
+            )
+            if dup is not None:
+                logger.info(
+                    "Semantic duplicate skipped: %s at %s matches existing id=%d (csv_id=%s)",
+                    action.value,
+                    ts,
+                    dup.id,
+                    dup.csv_id,
+                )
+                stats["dedup_skipped"] += 1
+                continue
+
             session.add(
                 TransactionHistory(
                     csv_id=csv_id,
-                    timestamp=_parse_dt(date_str),
+                    timestamp=ts,
                     ticker=None,
                     isin=None,
                     action=action,
                     quantity=0.0,
                     price=None,
-                    total=abs(item.get("amount") or 0.0),  # cash uses 'amount', not 'total'
+                    total=total_abs,
                     exchange_rate=None,
                     result=None,
                     fees=None,
@@ -489,15 +576,32 @@ def _import_dividends(
 
             # ``amount`` is the net GBP amount paid (after withholding tax).
             total_gbp = abs(item.get("amount") or item.get("paidQuantity") or 0.0)
+            qty_abs = abs(item.get("quantity") or 0.0)
+            ts = _parse_dt(date_str)
+
+            dup = _find_semantic_duplicate(
+                session, action=action, ticker=yahoo_ticker, timestamp=ts, quantity=qty_abs, total=total_gbp
+            )
+            if dup is not None:
+                logger.info(
+                    "Semantic duplicate skipped: %s %s at %s matches existing id=%d (csv_id=%s)",
+                    action.value,
+                    yahoo_ticker,
+                    ts,
+                    dup.id,
+                    dup.csv_id,
+                )
+                stats["dedup_skipped"] += 1
+                continue
 
             session.add(
                 TransactionHistory(
                     csv_id=csv_id,
-                    timestamp=_parse_dt(date_str),
+                    timestamp=ts,
                     ticker=yahoo_ticker,
                     isin=instrument.get("isin") or item.get("isin") or None,
                     action=action,
-                    quantity=abs(item.get("quantity") or 0.0),
+                    quantity=qty_abs,
                     price=item.get("grossAmountPerShare") or None,
                     total=total_gbp,
                     exchange_rate=None,
@@ -601,6 +705,7 @@ def sync_transactions(
         "cash_skipped": 0,
         "div_imported": 0,
         "div_skipped": 0,
+        "dedup_skipped": 0,
         "errors": 0,
     }
 
@@ -622,12 +727,13 @@ def sync_transactions(
     total_imported = stats["order_imported"] + stats["cash_imported"] + stats["div_imported"]
     total_skipped = stats["order_skipped"] + stats["cash_skipped"] + stats["div_skipped"]
     logger.info(
-        "T212 sync complete — imported: %d (orders: %d, cash: %d, divs: %d) | skipped: %d | errors: %d",
+        "T212 sync complete — imported: %d (orders: %d, cash: %d, divs: %d) | skipped: %d | dedup-skipped: %d | errors: %d",
         total_imported,
         stats["order_imported"],
         stats["cash_imported"],
         stats["div_imported"],
         total_skipped,
+        stats["dedup_skipped"],
         stats["errors"],
     )
     return stats
