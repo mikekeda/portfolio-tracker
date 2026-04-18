@@ -682,17 +682,21 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
             )
             processed += 1
             if processed % 10 == 0 or processed == total:
-                elapsed = perf_counter() - start_ts
+                elapsed_min = (perf_counter() - start_ts) / 60
                 logger.info(
-                    "Earnings progress: %d/%d processed (elapsed %.1fs)",
+                    "Earnings progress: %d/%d processed (elapsed %.1fm)",
                     processed,
                     total,
-                    elapsed,
+                    elapsed_min,
                 )
 
             sleep(1)
 
-        logger.info("Earnings task complete: %d instruments processed in %.1fs", processed, perf_counter() - start_ts)
+        logger.info(
+            "Earnings task complete: %d instruments processed in %.1fm",
+            processed,
+            (perf_counter() - start_ts) / 60,
+        )
 
 
 if __name__ == "__main__":
