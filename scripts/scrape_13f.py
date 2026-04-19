@@ -81,7 +81,20 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "IE00BWT6H894": "G3643J108",  # Flutter Entertainment plc
     "CH0114405324": "H2906T109",  # Garmin Ltd (SIX vs NYSE CUSIP)
     "IE00BYTBXV33": "783513203",  # Ryanair Holdings plc (Dublin vs ADR CUSIP)
-    "GB00BVZK7T90": "904767803",
+    "GB00BVZK7T90": "904767704",  # Unilever PLC (UK line vs US ADR CUSIP UL)
+    # 2026-04-19 — top unmatched by 13F $ (>$2B) after substring-ISIN UPDATE
+    "NL0009434992": "N53745100",  # LyondellBasell Industries N.V. (Euronext NL line)
+    "IE00BTN1Y115": "G5960L103",  # Medtronic plc (Irish line)
+    "IE0001827041": "G25508105",  # CRH plc (Dublin vs NYSE CUSIP)
+    "BMG0112X1056": "0076CA104",  # Aegon Ltd (Bermuda post-2023 redomicile)
+    "IE000S9YS762": "G54950103",  # Linde plc (Irish ordinary vs NYSE CUSIP)
+    "GB00BMVP7Y09": "G7709Q104",  # Royalty Pharma plc (UK ordinary)
+    "DE0005140008": "D18190898",  # Deutsche Bank AG (Xetra line)
+    "FI0009000681": "654902204",  # Nokia Oyj (Helsinki line vs US ADR CUSIP)
+    "NL0013056914": "N14506104",  # Elastic N.V. (Dutch ISIN vs NYSE CUSIP)
+    "GB0009895292": "046353108",  # AstraZeneca PLC (LSE line vs US ADR CUSIP AZN)
+    "IL0011762130": "M7S64H106",  # monday.com Ltd (Israeli ISIN vs Nasdaq CUSIP MNDY)
+    "NL0000687663": "N00985106",  # AerCap Holdings N.V. (Dutch ISIN vs NYSE CUSIP AER)
 }
 
 
@@ -394,7 +407,12 @@ def scrape_investor(
         if 0 < total_value < 100_000_000:
             holdings = [{**h, "value": h["value"] * 1000} for h in holdings]
             total_value *= 1000
-            logger.warning("  Non-compliant 2024+ filing for %s (%s): raw AUM %s < 100M. Scaled ×1000", name, report_date, f"${total_value/1000:,}")
+            logger.warning(
+                "  Non-compliant 2024+ filing for %s (%s): raw AUM %s < 100M. Scaled ×1000",
+                name,
+                report_date,
+                f"${total_value / 1000:,}",
+            )
 
         results.append(
             {
