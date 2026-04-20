@@ -81,7 +81,7 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "IE00BWT6H894": "G3643J108",  # Flutter Entertainment plc
     "CH0114405324": "H2906T109",  # Garmin Ltd (SIX vs NYSE CUSIP)
     "IE00BYTBXV33": "783513203",  # Ryanair Holdings plc (Dublin vs ADR CUSIP)
-    "GB00BVZK7T90": "904767704",  # Unilever PLC (UK line vs US ADR CUSIP UL)
+    "GB00BVZK7T90": "904767803",  # Unilever PLC (UK line vs US ADR CUSIP UL)
     # 2026-04-19 — top unmatched by 13F $ (>$2B) after substring-ISIN UPDATE
     "NL0009434992": "N53745100",  # LyondellBasell Industries N.V. (Euronext NL line)
     "IE00BTN1Y115": "G5960L103",  # Medtronic plc (Irish line)
