@@ -119,6 +119,8 @@ TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
 YAHOO_UPDATE_LIMIT = 100
 YAHOO_UPDATE_INTERVAL_DAYS = 1
 
+_BAD_NUMERIC_STRINGS = frozenset({"infinity", "-infinity", "inf", "-inf", "nan"})
+
 
 @lru_cache(maxsize=1)
 def _get_session_factory() -> sessionmaker:
@@ -599,6 +601,10 @@ def scrub_for_json(obj):
     if isinstance(obj, float):
         return None if (math.isnan(obj) or math.isinf(obj)) else obj
 
+    # Yahoo sometimes returns "Infinity"/"NaN" as strings for ratios with near-zero denominators.
+    if isinstance(obj, str) and obj.strip().lower() in _BAD_NUMERIC_STRINGS:
+        return None
+
     if isinstance(obj, dict):
         return {k.date().isoformat() if isinstance(k, datetime) else str(k): scrub_for_json(v) for k, v in obj.items()}
 
@@ -617,7 +623,7 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
     }
 
     try:
-        yahoo_data["info"] = ticker.info
+        yahoo_data["info"] = scrub_for_json(ticker.info)
 
         if yahoo_data["info"].get("quoteType") == "ETF":
             # ETF don't have cashflow, earnings, recommendations, analyst_price_targets, splits

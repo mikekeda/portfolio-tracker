@@ -42,6 +42,22 @@ class ScreenerCategory(Enum):
     MACRO_ENVIRONMENT = "macro"  # Added for broader market context screeners
 
 
+class Sector(str, Enum):
+    """Yahoo Finance sector taxonomy. Values must match `info.sector` exactly."""
+
+    TECHNOLOGY = "Technology"
+    FINANCIAL_SERVICES = "Financial Services"
+    HEALTHCARE = "Healthcare"
+    CONSUMER_CYCLICAL = "Consumer Cyclical"
+    CONSUMER_DEFENSIVE = "Consumer Defensive"
+    INDUSTRIALS = "Industrials"
+    COMMUNICATION_SERVICES = "Communication Services"
+    ENERGY = "Energy"
+    REAL_ESTATE = "Real Estate"
+    UTILITIES = "Utilities"
+    BASIC_MATERIALS = "Basic Materials"
+
+
 @dataclass(frozen=True)
 class FieldRef:
     """Explicitly marks RHS as a field reference for field-vs-field comparisons."""
@@ -87,11 +103,19 @@ class ScreenerDefinition:
     available: bool = True
     weight: int = 5  # 0..10, usefulness for LT growth/high-risk
     combine_with: list[str] = field(default_factory=list)  # list of screener IDs
+    # Sectors where this screener is structurally inappropriate. Empty => all.
+    excluded_sectors: frozenset[Sector] = frozenset()
     # Derived at __post_init__ time for O(1) lookup in the combination-bonus hot path.
     combine_with_set: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.combine_with_set = frozenset(self.combine_with)
+
+
+# Quality/FCF/ROIC rules don't apply to banks (leverage by design) or REITs (use FFO, not FCF).
+_QUALITY_EXCLUDED: frozenset[Sector] = frozenset({Sector.FINANCIAL_SERVICES, Sector.REAL_ESTATE})
+# Debt rules additionally exclude utilities (structural high D/E from regulated rate-base model).
+_DEBT_EXCLUDED: frozenset[Sector] = frozenset({Sector.FINANCIAL_SERVICES, Sector.REAL_ESTATE, Sector.UTILITIES})
 
 
 class ScreenerConfig:
@@ -132,6 +156,7 @@ class ScreenerConfig:
                     "growth_at_reasonable_price",
                     "top_quality_proxy",
                 ],
+                excluded_sectors=_QUALITY_EXCLUDED,
             ),
             # Value + Quality
             "value_quality": ScreenerDefinition(
@@ -158,6 +183,7 @@ class ScreenerConfig:
                     "pe_vs_history",
                     "top_quality_proxy",
                 ],
+                excluded_sectors=_QUALITY_EXCLUDED,
             ),
             # Growth at Reasonable Price
             "growth_at_reasonable_price": ScreenerDefinition(
@@ -185,6 +211,7 @@ class ScreenerConfig:
                     "pe_vs_history",
                     "top_quality_proxy",
                 ],
+                excluded_sectors=_QUALITY_EXCLUDED,
             ),
             # Oversold in Uptrend
             "oversold_uptrend": ScreenerDefinition(
@@ -328,6 +355,7 @@ class ScreenerConfig:
                     "pe_compression",
                     "top_quality_proxy",
                 ],
+                excluded_sectors=_DEBT_EXCLUDED,
             ),
             # 52-Week Breakout (Quiet Base + Volume)
             "breakout_quiet_base": ScreenerDefinition(
@@ -378,6 +406,7 @@ class ScreenerConfig:
                     "oversold_uptrend",
                     "top_quality_proxy",
                 ],
+                excluded_sectors=_QUALITY_EXCLUDED,
             ),
             # Improving Analyst Sentiment
             "improving_sentiment": ScreenerDefinition(
@@ -441,6 +470,7 @@ class ScreenerConfig:
                     "growth_at_reasonable_price",
                     "value_quality",
                 ],
+                excluded_sectors=_QUALITY_EXCLUDED,
             ),
             # Negative screeners
             "death_cross": ScreenerDefinition(
@@ -471,6 +501,7 @@ class ScreenerConfig:
                 ],
                 available=True,
                 weight=-4,  # Apply a partial penalty
+                excluded_sectors=_QUALITY_EXCLUDED,
             ),
             "red_flag_high_debt": ScreenerDefinition(
                 id="red_flag_high_debt",
@@ -482,18 +513,22 @@ class ScreenerConfig:
                 ],
                 available=True,
                 weight=-3,
+                excluded_sectors=_DEBT_EXCLUDED,
             ),
             "red_flag_cash_burn": ScreenerDefinition(
                 id="red_flag_cash_burn",
                 name="Red Flag: Negative FCF",
-                description="""Mature company burning cash (Negative FCF, Revenue Growth < 30%). High-growth pre-profit companies are exempt.""",
+                description="""Mature company burning cash (Negative FCF, Revenue Growth < 30%, Revenue >= $100M). Pre-revenue biotechs, small commercial-stage names, and high-growth pre-profit companies are exempt.""",
                 category=ScreenerCategory.QUALITY,
                 criteria=[
                     ScreenerCriteria("free_cashflow_yield", "<", 0, "Company is burning cash"),
                     ScreenerCriteria("revenue_growth", "<", 30, "Not high-growth (burn is not intentional investment)"),
+                    # Excludes pre-revenue biotechs. Yahoo totalRevenue is in reporting ccy.
+                    ScreenerCriteria("total_revenue", ">=", 100_000_000, "Has meaningful revenue (>= $100M, not pre-commercial)"),
                 ],
                 available=True,
                 weight=-5,  # This is a significant red flag
+                excluded_sectors=_QUALITY_EXCLUDED,
             ),
             # Top Quality (based on screenshot)
             "top_quality_proxy": ScreenerDefinition(
@@ -534,6 +569,7 @@ Check those criteria:
                     "value_quality",
                     "growth_at_reasonable_price",
                 ],
+                excluded_sectors=_DEBT_EXCLUDED,
                 # Combines well with entry points and other quality/growth validators
             ),
         }
@@ -578,6 +614,7 @@ Check those criteria:
             "pe_5y_avg_vs_current_pct",
             "roic",
             "debtToEquity",
+            "total_revenue",
         ]
 
     def validate(self) -> None:
@@ -620,6 +657,10 @@ Check those criteria:
     def passes_screener(self, fields: dict[str, Any], screener_def: ScreenerDefinition) -> bool:
         """Short-circuiting boolean check used by the screener hot loop. Returns False
         as soon as any criterion fails, without allocating a details list."""
+        if screener_def.excluded_sectors:
+            sector = fields.get("sector")
+            if sector and sector in screener_def.excluded_sectors:
+                return False
         for criteria in screener_def.criteria:
             ok, _ = self.eval_criterion(fields, criteria)
             if not ok:
@@ -651,6 +692,7 @@ Check those criteria:
                     "available": screener.available,
                     "weight": screener.weight,
                     "combine_with": screener.combine_with,
+                    "excluded_sectors": sorted(s.value for s in screener.excluded_sectors),
                 }
                 for screener in self.screeners.values()
                 if screener.available

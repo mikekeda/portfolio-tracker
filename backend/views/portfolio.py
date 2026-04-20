@@ -363,6 +363,7 @@ async def get_current_portfolio(
                 "revenue_growth": info["revenueGrowth"] * 100.0
                 if info.get("revenueGrowth")
                 else None,  # Keep full precision for screener evaluation
+                "total_revenue": info.get("totalRevenue"),  # Yahoo TTM revenue (reporting ccy)
                 "return_on_assets": info["returnOnAssets"] * 100.0
                 if info.get("returnOnAssets")
                 else None,  # Keep full precision for screener evaluation
