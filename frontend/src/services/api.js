@@ -108,6 +108,13 @@ export const portfolioAPI = {
     return response.data;
   },
 
+  // Get compact fundamentals (price, mkt cap, PE, ROIC, etc.) for chart summary row
+  getChartFundamentals: async (symbols) => {
+    const symbolsParam = Array.isArray(symbols) ? symbols.join(',') : symbols;
+    const response = await apiClient.get(`/api/chart/fundamentals?symbols=${symbolsParam}`);
+    return response.data;
+  },
+
   // Get all portfolio movers (holdings with price changes) for a given period
   getTopMovers: async (period = '1d') => {
     const response = await apiClient.get(`/api/market/movers?period=${period}`);
