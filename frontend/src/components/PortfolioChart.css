@@ -315,9 +315,196 @@
 
 .asset-allocation-section h3 {
   color: #333;
-  margin: 0 0 20px 0;
+  margin: 0 0 4px 0;
   font-size: 20px;
   font-weight: 600;
+}
+
+.asset-allocation-header {
+  margin-bottom: 16px;
+}
+
+.asset-allocation-caption {
+  margin: 0;
+  font-size: 13px;
+  color: #6c757d;
+}
+
+.asset-allocation-caption .positive {
+  color: #00A846;
+  font-weight: 600;
+}
+
+.asset-allocation-caption .negative {
+  color: #CC2929;
+  font-weight: 600;
+}
+
+.asset-allocation-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.group-by-selector {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.group-by-label {
+  font-size: 13px;
+  color: #6c757d;
+  margin-right: 4px;
+}
+
+.group-by-btn {
+  padding: 4px 12px;
+  font-size: 13px;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  color: #495057;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.group-by-btn:hover {
+  background: #f1f3f5;
+  border-color: #adb5bd;
+}
+
+.group-by-btn.active {
+  background: #495057;
+  color: #fff;
+  border-color: #495057;
+}
+
+.group-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.group-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 999px;
+  color: #495057;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.group-chip:hover {
+  background: #e9ecef;
+  border-color: #adb5bd;
+}
+
+.group-chip.active {
+  background: #495057;
+  color: #fff;
+  border-color: #495057;
+}
+
+.group-chip-name {
+  font-weight: 600;
+}
+
+.group-chip-alloc {
+  opacity: 0.75;
+}
+
+.group-chip.active .group-chip-alloc,
+.group-chip.active .group-chip-change.positive,
+.group-chip.active .group-chip-change.negative {
+  color: #fff;
+  opacity: 0.9;
+}
+
+.group-chip-change.positive {
+  color: #00A846;
+  font-weight: 600;
+}
+
+.group-chip-change.negative {
+  color: #CC2929;
+  font-weight: 600;
+}
+
+.other-expanded-banner {
+  font-size: 12px;
+  color: #6c757d;
+  margin-bottom: 8px;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+.link-button:hover {
+  color: #1d4ed8;
+}
+
+.alloc-treemap-container {
+  user-select: none;
+}
+
+.alloc-tile rect {
+  transition: filter 0.15s ease, opacity 0.15s ease;
+}
+
+.alloc-tile:hover rect {
+  filter: brightness(1.18);
+}
+
+.alloc-group-header rect {
+  transition: filter 0.15s ease;
+}
+
+.alloc-group-header:hover rect {
+  filter: brightness(1.4);
+}
+
+.alloc-tooltip {
+  background: rgba(0, 0, 0, 0.92);
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  line-height: 1.4;
+  z-index: 1000;
+  pointer-events: none;
+  max-width: 280px;
+}
+
+.alloc-tooltip-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.alloc-tooltip-row.positive {
+  color: #4ade80;
+}
+
+.alloc-tooltip-row.negative {
+  color: #f87171;
 }
 
 /* Recharts Treemap customization */
@@ -354,7 +541,7 @@
 
 }
 
-/* Treemap Legend */
+/* Treemap Legend - finviz-style horizontal colour strip */
 .treemap-legend-container {
   display: flex;
   flex-direction: column;
@@ -364,13 +551,21 @@
 }
 
 .treemap-legend {
-  display: flex;
-  justify-content: center;
-  gap: 20px;
-  margin-top: 5px;
-  flex-wrap: wrap;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1;
 }
 
+.treemap-legend-swatch {
+  padding: 6px 14px;
+  text-align: center;
+  min-width: 56px;
+  white-space: nowrap;
+}
+
+/* Generic legend item used elsewhere (Projection, UnderwaterChart). */
 .legend-item {
   display: flex;
   align-items: center;
@@ -386,20 +581,32 @@
   display: inline-block;
 }
 
+.legend-color-brightest-gain {
+  background-color: #00C853;
+}
+
 .legend-color-strong-gain {
   background-color: #00A846;
 }
 
-.legend-color-gain {
-  background-color: #0D3D22;
+.legend-color-medium-gain {
+  background-color: #1c7a3f;
 }
 
-.legend-color-loss {
-  background-color: #5a1a1a;
+.legend-color-neutral {
+  background-color: #2c2c2c;
+}
+
+.legend-color-medium-loss {
+  background-color: #7a1f1f;
 }
 
 .legend-color-strong-loss {
   background-color: #CC2929;
+}
+
+.legend-color-brightest-loss {
+  background-color: #E63838;
 }
 
 /* Custom Tooltip Styles */

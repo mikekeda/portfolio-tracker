@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -13,13 +13,13 @@ import {
   AreaChart,
   Label,
   ReferenceLine,
-  Treemap
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import './PortfolioChart.css';
 import SharedTooltip from './SharedTooltip';
 import UnderwaterChart from './UnderwaterChart';
+import AllocationTreemap from './AllocationTreemap';
 
 // Shared date format used by the history data and any overlays (deposit
 // markers) so <ReferenceLine x=...> snaps to the same XAxis category.
@@ -83,167 +83,27 @@ CombinedTooltip.defaultProps = {
   hideAmounts: false,
 };
 
-// Treemap content renderer for Asset Allocation
-const TreemapContent = (props) => {
-  const { x, y, width, height, payload, navigate } = props;
-
-  // Defensive checks for rendering
-  if (
-    typeof x !== 'number' ||
-    typeof y !== 'number' ||
-    typeof width !== 'number' ||
-    typeof height !== 'number' ||
-    width <= 0 ||
-    height <= 0
-  ) {
-    return null;
-  }
-
-  // Fallback for data access
-  const itemData = payload || props;
-  const name = itemData.name || itemData.root?.name || 'N/A';
-
-  // Only render leaf nodes (items with no children) or items with explicit values
-  if (!itemData.change_pct && itemData.change_pct !== 0 && !itemData.value) {
-    return null;
-  }
-
-  const changePct = itemData.change_pct || 0;
-  const isPositive = changePct >= 0;
-
-  let bgColor;
-  // Trading212-like colors: Bright for significant moves, Dark/Muted for small moves
-  if (changePct >= 2.0) {
-    bgColor = '#00A846'; // Bright Green (> 2%)
-  } else if (changePct >= 0) {
-    bgColor = '#0D3D22'; // Dark Green (0 - 2%)
-  } else if (changePct >= -2.0) {
-    bgColor = '#5a1a1a'; // Lighter Dark Red (-2% - 0)
-  } else {
-    bgColor = '#CC2929'; // Bright Red (< -2%)
-  }
-
-  const handleTileClick = () => {
-    const symbol = itemData.name || itemData.root?.name;
-    if (symbol && symbol !== 'N/A' && navigate) {
-      navigate(`/stock/${encodeURIComponent(symbol)}`);
-    }
-  };
-
-  return (
-    <g className="treemap-item">
-      <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        fill={bgColor}
-        stroke="#fff"
-        strokeWidth={2}
-        rx={6}
-        ry={6}
-        onClick={handleTileClick}
-        style={{ cursor: 'pointer' }}
-      />
-      {width > 30 && height > 30 && (
-        <>
-          <text
-            x={x + width / 2}
-            y={y + height / 2 - 2}
-            textAnchor="middle"
-            fill="white"
-            fontSize={Math.max(9, Math.min(14, width / 4))}
-            fontWeight="700"
-            style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)', pointerEvents: 'none' }}
-          >
-            {name}
-          </text>
-          <text
-            x={x + width / 2}
-            y={y + height / 2 + (height < 50 ? 10 : 15)}
-            textAnchor="middle"
-            fill="white"
-            fontSize={Math.max(8, Math.min(11, width / 5))}
-            fontWeight="500"
-            style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)', pointerEvents: 'none' }}
-          >
-            {isPositive ? '+' : ''}{changePct.toFixed(2)}%
-          </text>
-        </>
-      )}
-    </g>
-  );
+// Finviz colour scheme: 3 cutoffs per side -> 4 zones per side, scaled per
+// period so the shading stays meaningful at every horizon. A "strong" 1d
+// move (>= 3%) is roughly comparable in significance to a "strong" 90d move
+// (>= 20%); the band widths grow with sqrt-of-time.
+const BAND_THRESHOLDS = {
+  '1d':  { low: 1,   mid: 2,    strong: 3 },
+  '1w':  { low: 2,   mid: 4,    strong: 6 },
+  '1m':  { low: 3.3, mid: 6.7,  strong: 10 },
+  '90d': { low: 6.7, mid: 13.3, strong: 20 },
 };
 
-TreemapContent.propTypes = {
-  x: PropTypes.number,
-  y: PropTypes.number,
-  width: PropTypes.number,
-  height: PropTypes.number,
-  payload: PropTypes.oneOfType([
-    PropTypes.object,
-    PropTypes.shape({
-      name: PropTypes.string,
-      fullName: PropTypes.string,
-      change_pct: PropTypes.number,
-      value: PropTypes.number,
-      root: PropTypes.shape({
-        name: PropTypes.string,
-      }),
-    }),
-  ]),
-  navigate: PropTypes.func,
+const PERIOD_LABELS = {
+  '1d': '1 day',
+  '1w': '1 week',
+  '1m': '1 month',
+  '90d': '90 days',
 };
 
-TreemapContent.defaultProps = {
-  x: 0,
-  y: 0,
-  width: 0,
-  height: 0,
-  payload: null,
-  navigate: null,
-};
-
-// Treemap tooltip content renderer
-const TreemapTooltip = ({ active, payload }) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload || {};
-    const changePct = data.change_pct || 0;
-    const isPositive = changePct >= 0;
-    const allocText = typeof data.allocation_pct === 'number' ? data.allocation_pct.toFixed(2) : '0.00';
-    const changeText = Math.abs(changePct).toFixed(2);
-
-    return (
-      <div className="custom-tooltip treemap-tooltip">
-        <p className="tooltip-title">{data.fullName || data.name || 'N/A'}</p>
-        <p className="tooltip-text">allocation: {allocText}%</p>
-        <p className={`tooltip-text ${isPositive ? 'positive' : 'negative'}`}>
-          {isPositive ? 'up' : 'down'}: {changeText}%
-        </p>
-      </div>
-    );
-  }
-  return null;
-};
-
-TreemapTooltip.propTypes = {
-  active: PropTypes.bool,
-  payload: PropTypes.arrayOf(
-    PropTypes.shape({
-      payload: PropTypes.shape({
-        name: PropTypes.string,
-        fullName: PropTypes.string,
-        change_pct: PropTypes.number,
-        allocation_pct: PropTypes.number,
-      }),
-    })
-  ),
-};
-
-TreemapTooltip.defaultProps = {
-  active: false,
-  payload: [],
-};
+// Holdings smaller than this share of their bucket collapse into a single
+// "Other" tile so the long tail doesn't fill the treemap with unreadable boxes.
+const OTHER_THRESHOLD_PCT = 0.5;
 
 const PortfolioChart = ({ selectedPeriod }) => {
   const navigate = useNavigate();
@@ -256,6 +116,9 @@ const PortfolioChart = ({ selectedPeriod }) => {
   const [deposits, setDeposits] = useState([]);
   const [assetAllocation, setAssetAllocation] = useState(null);
   const [allocationLoading, setAllocationLoading] = useState(true);
+  const [groupBy, setGroupBy] = useState('flat'); // 'flat' | 'sector' | 'region'
+  const [selectedGroup, setSelectedGroup] = useState(null); // active group filter
+  const [expandOther, setExpandOther] = useState(false);
 
   const timeRanges = [
     { label: '1 Month', value: '30' },
@@ -356,7 +219,9 @@ const PortfolioChart = ({ selectedPeriod }) => {
               name: asset.name || '',
               value: asset.value || 0,
               allocation_pct: totalValue > 0 ? ((asset.value || 0) / totalValue) * 100 : 0,
-              change_pct: asset.change_pct || 0
+              change_pct: asset.change_pct || 0,
+              sector: asset.sector || 'Other',
+              country: asset.country || 'Other',
             }))
             .sort((a, b) => b.value - a.value);
 
@@ -375,6 +240,62 @@ const PortfolioChart = ({ selectedPeriod }) => {
 
     fetchAssetAllocation();
   }, [selectedPeriod]);
+
+  // Drop any drill-down filter / Other-expansion when the user switches
+  // grouping or period, so the view doesn't reference stale group names.
+  useEffect(() => {
+    setSelectedGroup(null);
+    setExpandOther(false);
+  }, [groupBy, selectedPeriod]);
+
+  // One-line "32 up / 11 down / weighted +0.47%" header. Computed off the raw
+  // (unfiltered) allocation list so it always describes the whole portfolio,
+  // not just whatever group is currently filtered into the treemap.
+  const summary = useMemo(() => {
+    if (!assetAllocation || assetAllocation.length === 0) return null;
+    let up = 0;
+    let down = 0;
+    let totalValue = 0;
+    let weightedSum = 0;
+    assetAllocation.forEach((a) => {
+      if (a.change_pct > 0) up += 1;
+      else if (a.change_pct < 0) down += 1;
+      totalValue += a.value;
+      weightedSum += a.change_pct * a.value;
+    });
+    const weighted = totalValue > 0 ? weightedSum / totalValue : 0;
+    return { up, down, weighted };
+  }, [assetAllocation]);
+
+  // Per-group totals for the chip row (sector / region view). Each chip shows
+  // the group's share of the portfolio and its value-weighted change so the
+  // user can spot where the day's move is coming from before drilling in.
+  const groupTotals = useMemo(() => {
+    if (!assetAllocation || groupBy === 'flat') return [];
+    const key = groupBy === 'sector' ? 'sector' : 'country';
+    const buckets = new Map();
+    assetAllocation.forEach((a) => {
+      const name = a[key] || 'Other';
+      const existing = buckets.get(name) || { name, value: 0, weightedSum: 0, count: 0 };
+      existing.value += a.value;
+      existing.weightedSum += a.change_pct * a.value;
+      existing.count += 1;
+      buckets.set(name, existing);
+    });
+    const totalValue = assetAllocation.reduce((sum, a) => sum + a.value, 0);
+    return Array.from(buckets.values())
+      .map((b) => ({
+        name: b.name,
+        value: b.value,
+        count: b.count,
+        allocation_pct: totalValue > 0 ? (b.value / totalValue) * 100 : 0,
+        change_pct: b.value > 0 ? b.weightedSum / b.value : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [assetAllocation, groupBy]);
+
+  const bands = BAND_THRESHOLDS[selectedPeriod] ?? BAND_THRESHOLDS['1d'];
+  const periodLabel = PERIOD_LABELS[selectedPeriod] ?? selectedPeriod;
 
   return (
     <div className="portfolio-chart-container">
@@ -498,33 +419,110 @@ const PortfolioChart = ({ selectedPeriod }) => {
 
       {/* Asset Allocation */}
       <div className={`asset-allocation-section ${allocationLoading ? 'loading' : ''}`}>
-        <h3>Asset Allocation</h3>
+        <div className="asset-allocation-header">
+          <h3>Asset Allocation</h3>
+          <p className="asset-allocation-caption">
+            Change over {periodLabel}
+            {summary && (
+              <>
+                {' \u00b7 '}
+                <span className="positive">{summary.up} up</span>
+                {' \u00b7 '}
+                <span className="negative">{summary.down} down</span>
+                {' \u00b7 '}
+                <span className={summary.weighted >= 0 ? 'positive' : 'negative'}>
+                  weighted {summary.weighted >= 0 ? '+' : ''}{summary.weighted.toFixed(2)}%
+                </span>
+              </>
+            )}
+          </p>
+        </div>
+
+        <div className="asset-allocation-controls">
+          <div className="group-by-selector">
+            <span className="group-by-label">Group by:</span>
+            {[
+              { id: 'flat',   label: 'Flat' },
+              { id: 'sector', label: 'Sector' },
+              { id: 'region', label: 'Region' },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={`group-by-btn ${groupBy === opt.id ? 'active' : ''}`}
+                onClick={() => setGroupBy(opt.id)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {groupBy !== 'flat' && groupTotals.length > 0 && (
+          <div className="group-chips">
+            <button
+              type="button"
+              className={`group-chip ${selectedGroup === null ? 'active' : ''}`}
+              onClick={() => setSelectedGroup(null)}
+            >
+              All
+            </button>
+            {groupTotals.map((g) => {
+              const isPositive = g.change_pct >= 0;
+              return (
+                <button
+                  key={g.name}
+                  type="button"
+                  className={`group-chip ${selectedGroup === g.name ? 'active' : ''}`}
+                  onClick={() => setSelectedGroup(selectedGroup === g.name ? null : g.name)}
+                  title={`${g.count} holdings · ${g.allocation_pct.toFixed(1)}% of portfolio`}
+                >
+                  <span className="group-chip-name">{g.name}</span>
+                  <span className="group-chip-alloc">{g.allocation_pct.toFixed(1)}%</span>
+                  <span className={`group-chip-change ${isPositive ? 'positive' : 'negative'}`}>
+                    {isPositive ? '+' : ''}{g.change_pct.toFixed(2)}%
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {expandOther && (
+          <div className="other-expanded-banner">
+            Showing all small holdings &middot;{' '}
+            <button type="button" className="link-button" onClick={() => setExpandOther(false)}>
+              collapse Other
+            </button>
+          </div>
+        )}
+
         {allocationLoading && (
           <div className="loading-overlay loading-overlay-tall">
             <div className="loading">Loading asset allocation...</div>
           </div>
         )}
         {assetAllocation && assetAllocation.length > 0 ? (
-          <ResponsiveContainer width="100%" height={600} key={`treemap-${selectedPeriod}`}>
-            <Treemap
-              data={assetAllocation.map(asset => ({
-                name: asset.symbol || 'N/A',
-                fullName: asset.name || '',
-                size: asset.value || 0,
-                value: asset.value || 0,
-                change_pct: asset.change_pct || 0,
-                allocation_pct: asset.allocation_pct || 0
-              }))}
-              dataKey="size"
-              ratio={4 / 3}
-              stroke="#fff"
-              fill="#fff"
-              isAnimationActive={false}
-              content={<TreemapContent navigate={navigate} />}
-            >
-              <Tooltip content={<TreemapTooltip />} />
-            </Treemap>
-          </ResponsiveContainer>
+          <AllocationTreemap
+            data={assetAllocation.map((a) => ({
+              symbol: a.symbol,
+              name: a.symbol,
+              fullName: a.name,
+              value: a.value,
+              change_pct: a.change_pct,
+              sector: a.sector,
+              country: a.country,
+            }))}
+            groupBy={groupBy}
+            selectedGroup={selectedGroup}
+            onSelectGroup={(name) => setSelectedGroup(selectedGroup === name ? null : name)}
+            expandOther={expandOther}
+            onOtherClick={() => setExpandOther(true)}
+            bands={bands}
+            otherThreshold={groupBy === 'flat' ? 0 : OTHER_THRESHOLD_PCT}
+            height={600}
+            navigate={navigate}
+          />
         ) : (
           <div className="error">
             No asset allocation data available
@@ -533,22 +531,13 @@ const PortfolioChart = ({ selectedPeriod }) => {
 
         <div className="treemap-legend-container">
           <div className="treemap-legend">
-            <div className="legend-item">
-              <span className="legend-color legend-color-strong-gain"></span>
-              <span>Strong Gain (&gt; +2%)</span>
-            </div>
-            <div className="legend-item">
-              <span className="legend-color legend-color-gain"></span>
-              <span>Gain (0% to +2%)</span>
-            </div>
-            <div className="legend-item">
-              <span className="legend-color legend-color-loss"></span>
-              <span>Loss (-2% to 0%)</span>
-            </div>
-            <div className="legend-item">
-              <span className="legend-color legend-color-strong-loss"></span>
-              <span>Strong Loss (&lt; -2%)</span>
-            </div>
+            <div className="treemap-legend-swatch legend-color-brightest-loss">-{bands.strong}%</div>
+            <div className="treemap-legend-swatch legend-color-strong-loss">-{bands.mid}%</div>
+            <div className="treemap-legend-swatch legend-color-medium-loss">-{bands.low}%</div>
+            <div className="treemap-legend-swatch legend-color-neutral">0%</div>
+            <div className="treemap-legend-swatch legend-color-medium-gain">+{bands.low}%</div>
+            <div className="treemap-legend-swatch legend-color-strong-gain">+{bands.mid}%</div>
+            <div className="treemap-legend-swatch legend-color-brightest-gain">+{bands.strong}%</div>
           </div>
         </div>
       </div>

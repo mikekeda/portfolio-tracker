@@ -55,6 +55,32 @@ async def get_movers(
     for price in instruments:
         prices_data[price.yahoo_symbol].append(price)
 
+    # Resolve a single sector/country label per holding for the Asset Allocation
+    # treemap. ETFs are pro-rata split across many groups in the portfolio-wide
+    # allocation snapshot, so for a per-tile view we tag them as 'Fund' for the
+    # sector facet and fall back to Yahoo's country (often missing for global
+    # ETFs) -> 'Global' for the region facet, rather than picking an arbitrary
+    # primary group.
+    metadata: dict[str, dict[str, str]] = {}
+    if prices_data:
+        inst_result = await session.execute(
+            select(Instrument)
+            .where(Instrument.yahoo_symbol.in_(list(prices_data.keys())))
+            .options(selectinload(Instrument.yahoo))
+        )
+        for inst in inst_result.scalars().all():
+            info = (inst.yahoo.info or {}) if inst.yahoo else {}
+            if info.get("quoteType") == "ETF":
+                metadata[inst.yahoo_symbol] = {
+                    "sector": "Fund",
+                    "country": info.get("country") or "Global",
+                }
+            else:
+                metadata[inst.yahoo_symbol] = {
+                    "sector": info.get("sector") or "Other",
+                    "country": info.get("country") or "Other",
+                }
+
     # Calculate percentage changes
     movers = []
     for symbol, symbol_data in prices_data.items():
@@ -71,6 +97,7 @@ async def get_movers(
                 )
                 gain_pct = symbol_data[-1].ppl / (market_value_gbp - symbol_data[-1].ppl) * 100.0
 
+                meta = metadata.get(symbol, {"sector": "Other", "country": "Other"})
                 movers.append(
                     {
                         "symbol": symbol,
@@ -80,6 +107,8 @@ async def get_movers(
                         "t212_code": symbol_data[0].t212_code,
                         "gain_pct": gain_pct,
                         "value": market_value_gbp,
+                        "sector": meta["sector"],
+                        "country": meta["country"],
                     }
                 )
 
