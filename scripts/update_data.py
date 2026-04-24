@@ -287,6 +287,7 @@ def update_holdings() -> list[HoldingDaily]:
                 .outerjoin(InstrumentYahoo, Instrument.id == InstrumentYahoo.instrument_id)
                 .where(InstrumentYahoo.instrument_id.is_(None))
                 .where(Instrument.yahoo_symbol.isnot(None))
+                .where(Instrument.yahoo_symbol.notin_(STOCKS_DELISTED))
             )
             .scalars()
             .all()
@@ -295,7 +296,9 @@ def update_holdings() -> list[HoldingDaily]:
         stale_yahoo_ids: list[int] = list(
             session.execute(
                 select(InstrumentYahoo.instrument_id)
+                .join(Instrument, Instrument.id == InstrumentYahoo.instrument_id)
                 .where(InstrumentYahoo.updated_at < cutoff)
+                .where(Instrument.yahoo_symbol.notin_(STOCKS_DELISTED))
                 .order_by(InstrumentYahoo.updated_at)
             )
             .scalars()
@@ -565,7 +568,10 @@ def update_prices(tickers_to_add: set[str]) -> None:
     today = datetime.now(TIMEZONE).date()
 
     with get_session() as session:
-        tickers = set(session.scalars(select(Instrument.yahoo_symbol)).all())
+        tickers = {
+            t for t in session.scalars(select(Instrument.yahoo_symbol)).all()
+            if t and t not in STOCKS_DELISTED
+        }
 
         existing_prices = (
             session.query(
@@ -591,7 +597,7 @@ def update_prices(tickers_to_add: set[str]) -> None:
             session.commit()
 
         # Get prices for new tickers
-        new_tickers = list(tickers_to_add | tickers - set(row.symbol for row in existing_prices))
+        new_tickers = list(tickers_to_add | (tickers - {row.symbol for row in existing_prices}))
         start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
         _update_prices(session, new_tickers, start)  # all new tickers at once
         session.commit()

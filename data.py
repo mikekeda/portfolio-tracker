@@ -34,9 +34,10 @@ STOCKS_ALIASES: dict[str, str] = {
     "AI1": "AI",
     "ANTM": "ELV",
     "ARNC": "HWM",
-    "BHI": "BKR",
+    "BDEV": "BTRW",
     "BRK/A": "BRK-A",
     "BRK_B": "BRK-B",
+    "BT": "BT-A",
     "BYND1": "BYND",
     "CBG": "CBRE",
     "CCIR": "KYIV",
@@ -48,13 +49,14 @@ STOCKS_ALIASES: dict[str, str] = {
     "DPS": "KDP",
     "EJFA": "PGY",
     "FB": "META",
-    "FI": "XPRO",
     "FLT": "CPAY",
     "FP": "TTE",
     "GARENA": "SE",
     "GNPK": "RDW",
+    "GVC": "ENT",
     "HCN": "WELL",
     "HCP": "DOC",
+    "ICP": "ICG",
     "IPAX": "LUNR",
     "IPOB": "OPEN",
     "IPOE": "SOFI",
@@ -91,9 +93,13 @@ STOCKS_ALIASES: dict[str, str] = {
 # Prefer STOCKS_ALIASES for simple renames so new syncs get a live Yahoo symbol; use this for
 # halted shells, SPACs that no longer trade under the old symbol, or bad T212 lines to hide.
 STOCKS_DELISTED: set[str] = {
-    "8GC.DE",
-    "AGR.L",
-    "HYUDl_EQ",
+    "8GC.DE",    # legacy Xetra entry, no Yahoo price feed
+    "AGR.L",     # legacy LSE entry, no Yahoo price feed
+    "ALCC1",     # AltC Acquisition - merged into Oklo (OKLO)
+    "BSAQ",      # Black Spade Acquisition - SPAC, no longer trading
+    "DEAC",      # Diamond Eagle Acquisition - merged into DraftKings (DKNG)
+    "DMYQ",      # dMY Squared Technology - SPAC, no longer trading
+    "HYUDl_EQ",  # raw T212 code (rejected by convert_ticker, filtered in fetch_holdings)
 }
 
 SP500 = [
