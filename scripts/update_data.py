@@ -497,6 +497,9 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
 
 def _update_prices(session: Session, tickers: list[str], start: date) -> None:
     """Update price data from Yahoo Finance."""
+    if not tickers:
+        return None
+
     now = datetime.now(TIMEZONE)
 
     preview = tickers[:10]

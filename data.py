@@ -75,6 +75,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "SNE": "SONY",
     "SQ": "XYZ",
     "SRNG": "DNA",
+    "SV": "SMR",     # NuScale Power - SPAC rename (Spring Valley → NuScale)
     "SVFC": "SYM",
     "SYMC": "GEN",
     "TMK": "GL",
