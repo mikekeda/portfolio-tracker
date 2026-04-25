@@ -16,20 +16,20 @@ app.autodiscover_tasks(["celery_tasks"])
 # - Tasks run during market hours on weekdays and during market hours time on weekends
 #
 # update_data_task:
-#   - Weekdays: Every 2 hours during market hours + midnight (0:00, 8:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00)
+#   - Weekdays: Every 2 hours during market hours + midnight (0:00, 8:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00)
 #   - Weekends: Every 4 hours + midnight (0:00, 8:00, 12:00, 16:00, 20:00)
 #
 # calculate_portfolio_returns_task:
-#   - Weekdays: Every 4 hours, 5 min after update_data (0:05, 8:05, 12:05, 16:05)
+#   - Weekdays: Every 4 hours, 5 min after update_data (0:05, 8:05, 12:05, 16:05, 20:05)
 #   - Weekends: Every 8 hours, 5 min after update_data (0:05, 8:05, 16:05)
 # When schedules overlap, calculate_portfolio_returns runs 5 minutes after update_data
 
 app.conf.beat_schedule = {
     # Update data during market hours (Mon-Fri): Every 2 hours + midnight to prevent missing data errors
-    # Runs at 0:00, 8:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00
+    # Runs at 0:00, 8:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00
     "update_data_market_hours": {
         "task": "celery_tasks.tasks.update_data_task",
-        "schedule": crontab(minute=0, hour="0,8,10,12,14,16,18,20", day_of_week="mon-fri"),
+        "schedule": crontab(minute=0, hour="0,8,10,12,14,16,18,20,22", day_of_week="mon-fri"),
         "args": (),
     },
     # Update data weekends: Every 4 hours + midnight to prevent missing data errors
@@ -40,10 +40,10 @@ app.conf.beat_schedule = {
         "args": (),
     },
     # Calculate portfolio returns during market hours: Every 4 hours, staggered 5 min after update_data
-    # Runs at 0:05, 8:05, 12:05, 16:05 (5 minutes after update_data at 0:00, 8:00, 12:00, 16:00)
+    # Runs at 0:05, 8:05, 12:05, 16:05, 20:05 (5 minutes after update_data at 0:00, 8:00, 12:00, 16:00, 20:00)
     "calculate_portfolio_returns_market_hours": {
         "task": "celery_tasks.tasks.calculate_portfolio_returns_task",
-        "schedule": crontab(minute=5, hour="0,8,12,16", day_of_week="mon-fri"),
+        "schedule": crontab(minute=5, hour="0,8,12,16,20", day_of_week="mon-fri"),
         "args": (),
     },
     # Calculate portfolio returns weekends: Every 8 hours, staggered 5 min after update_data
