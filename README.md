@@ -95,7 +95,8 @@ PYTHONPATH=/home/debian/sites/portfolio_tracker python scripts/update_data.py
 - **`scrape_wisesheets_pe.py`**: Scrape PE ratios from Wisesheets
 - **`populate_cik.py`**: Populate missing instrument CIK values from SEC ticker map
 - **`scrape_13f.py`**: Scrape SEC 13F institutional holdings data
-- **`get_earnings_reports.py`**: Fetch SEC filings and generate structured LLM summaries
+- **`get_earnings_reports.py`**: Fetch SEC filings (10-Q/10-K/20-F/40-F/6-K) and generate structured LLM summaries
+- **`get_uk_earnings_reports.py`**: Fetch UK RNS earnings announcements from Investegate for `.L` tickers not routed via SEC, and generate the same structured LLM summaries
 
 ## Code Quality
 

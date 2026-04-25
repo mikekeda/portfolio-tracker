@@ -1,0 +1,586 @@
+"""
+Fetches the latest earnings-related RNS announcement for each eligible UK
+instrument (yahoo_symbol ending in ``.L``) via Investegate, extracts text and
+runs the same LLM analysis pipeline as the US SEC route.
+
+Coverage model — "latest-real, forward-looking" (mirrors get_earnings_reports.py):
+  * Each run walks the most-recent earnings-relevant RNS announcements for
+    one instrument newest-first and processes the first one that passes
+    every gate. Older candidates that already exist in the DB short-circuit
+    the loop.
+  * Earnings-relevant means a headline matches Interim / Preliminary /
+    Final / Full Year (incl. Q4 and Fourth Quarter) / Annual /
+    Trading Update / Trading Statement / Quarterly Update.
+  * Three filters protect the LLM from non-results disclosures:
+    1. Headline classifier rejects PDMR Shareholding, Holding(s) in
+       Company, Form 8.3/8.5, Transaction in Own Shares, etc.
+    2. Body size gate (``MIN_BODY_CHARS``) rejects publication-notice
+       stubs (e.g. "Annual Report has been published, available at
+       https://…") *before* any LLM call.
+    3. LLM ``is_earnings_report`` flag — last-resort skip if the first
+       two miss.
+
+Selection priority:
+  1. Instruments with zero EarningsReport rows ("never-seen") first.
+  2. Within that, order by most recent past Yahoo earnings date desc.
+
+Why .L (and not info.country = "United Kingdom"):
+  - Investegate keys per-company URLs by TIDM, which only exists for LSE
+    listings. A country filter would lose non-UK companies that DO report
+    via RNS on LSE (Glencore, Antofagasta, several Guernsey/Cayman trusts).
+  - We additionally exclude instruments with a populated CIK so any FPI
+    that already routes through SEC (e.g. ASML.AS via populate_cik.py) is
+    not double-processed. In practice the dual-listed UK majors (SHEL,
+    BP, AZN, GSK, HSBA, BARC, LLOY, NWG) lack a CIK in the local DB
+    because populate_cik.py matches on US tickers only — they all flow
+    through this UK pipeline. The DB unique key (instrument_id, date)
+    is the safety net if anything ever slips through both routes.
+
+Source notes:
+  - Investegate (www.investegate.co.uk) is a third-party RNS aggregator.
+    The official LSE RNS Data Feed is paid; the LSE website is bot-blocked.
+    Investegate is the most stable free alternative as of 2026-04.
+  - Per-company URL: https://www.investegate.co.uk/company/{TIDM}
+  - Per-announcement: stable IDs in the path; full HTML body present.
+
+Known caveats:
+  - The Investegate company page returns ~50 most-recent announcements only.
+    For high-noise tickers (active buyback programmes, daily NAV updates from
+    investment trusts), earnings RNS can fall off the page before the next
+    one is published. Affected examples observed during development: JD.
+    (JD Sports — many PDMR Shareholding rows during buyback windows), SMT
+    (Scottish Mortgage — daily NAV updates). Such tickers will simply log
+    ``[no-match]`` and be skipped this run; they get picked up on the next
+    earnings announcement when the page churn settles.
+  - TIDM derivation strips ``.L`` and converts dashes to dots
+    (``BT-A.L`` → ``BT.A``). One known edge case: any LSE listing whose
+    Yahoo symbol differs structurally from its TIDM (currently none in
+    portfolio) will need a manual override.
+"""
+
+import argparse
+import re
+from datetime import date, datetime
+from time import perf_counter, sleep
+
+import requests
+from bs4 import BeautifulSoup
+from sqlalchemy import func, select
+from sqlalchemy.sql import text as sql_text
+
+from config import logger
+from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
+from scripts._earnings_common import (
+    DATA_DIR,
+    _check_file_exists_for_date,
+    extract_text_from_html,
+    summarize_with_llm,
+)
+from scripts.update_data import get_session
+
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.0 Safari/605.1.15 PortfolioTracker/1.0"
+)
+HEADERS = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+
+INVESTEGATE_BASE = "https://www.investegate.co.uk"
+INVESTEGATE_COMPANY_URL = INVESTEGATE_BASE + "/company/{tidm}"
+
+# Plain-text body size below which we treat the announcement as a stub (e.g.
+# "Annual Report has been published, available at https://…" publication
+# notices) and skip without calling the LLM. Observed sizes:
+#   - real Interim/Final/Prelim/Annual press releases: 50–170 KB
+#   - publication-notice stubs: 4–7 KB
+# 15 KB sits comfortably between them.
+MIN_BODY_CHARS = 15000
+
+# Headline → type discriminator. Order matters — first match wins, so the more
+# specific patterns are listed before broader ones. All matches are
+# case-insensitive.
+#
+# We deliberately MATCH publication-notice headlines like "Annual Financial
+# Report" (banks/oil/pharma) and "Annual Report and Accounts" (smaller caps)
+# even though they are sometimes stubs — the size gate above weeds out the
+# stubs while still letting through the genuine annual document where it is
+# the actual filing.
+HEADLINE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("INTERIM", re.compile(r"\b(half[- ]year(?:ly)?|interim\s+(?:results|statement|report))\b", re.IGNORECASE)),
+    ("PRELIM", re.compile(r"\b(prelim(?:inary)?\s+results)\b", re.IGNORECASE)),
+    ("FINAL", re.compile(r"\bfinal\s+results\b", re.IGNORECASE)),
+    # Full-year press releases used by AZN, GSK, SHEL, BP, RIO, etc. that were
+    # not caught by FINAL/PRELIM/ANNUAL — added 2026-04 after first dry-run.
+    (
+        "FULLYEAR",
+        re.compile(
+            r"\b(full[- ]?year\s+results|q[1-4]\s+and\s+full[- ]?year\s+results|fourth\s+quarter\s+(?:and\s+)?(?:full[- ]?year\s+)?results)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("ANNUAL", re.compile(r"\bannual\s+(?:report|results|financial\s+report)\b", re.IGNORECASE)),
+    ("TRADING", re.compile(r"\b(trading\s+(?:update|statement)|q[1-4]\s+trading|quarterly\s+update)\b", re.IGNORECASE)),
+)
+
+
+def classify_headline(headline: str) -> str | None:
+    """Return the report TYPE for a headline, or None if not earnings-related."""
+    for type_name, pattern in HEADLINE_PATTERNS:
+        if pattern.search(headline):
+            return type_name
+    return None
+
+
+def yahoo_symbol_to_tidm_candidates(yahoo_symbol: str) -> list[str]:
+    """Return Investegate TIDM candidates to try, in priority order.
+
+    Yahoo uses dashes for hyphenated TIDMs (e.g. ``BT-A.L``) where Investegate
+    uses dots (``BT.A``), so we always convert dashes to dots first.
+
+    Some London tickers natively END in a dot (``BP.``, ``JD.``) but Yahoo
+    drops the trailing dot, so ``BP.L`` → ``BP`` and ``JD.L`` → ``JD``. To
+    recover those we add a trailing-dot variant as a fallback whenever the
+    base candidate has no internal dot.
+
+    Returns an empty list if the symbol is not a ``.L`` listing.
+    """
+    if not yahoo_symbol.endswith(".L"):
+        return []
+    base = yahoo_symbol[:-2].replace("-", ".")
+    candidates = [base]
+    if "." not in base:
+        candidates.append(base + ".")
+    return candidates
+
+
+# ─── Listing parser ─────────────────────────────────────────────────────────
+
+
+def _parse_announcement_row(row) -> dict | None:
+    """Parse a single announcement row from the Investegate company page table.
+
+    Returns dict with keys ``date`` (datetime.date), ``headline`` (str),
+    ``url`` (absolute URL), or None if the row doesn't look like an
+    announcement.
+    """
+    cells = row.find_all("td")
+    if len(cells) < 4:
+        return None
+
+    # The Investegate row layout is: Date | Time | Source-link | Announcement-link
+    # The announcement link has class="announcement-link"; the source link
+    # (RNS / PRN / etc) is on the third cell and must NOT be picked up here.
+    link = row.find("a", class_="announcement-link", href=True)
+    if not link:
+        return None
+
+    href = link["href"]
+    if "/announcement/" not in href:
+        return None
+
+    headline = link.get_text(strip=True)
+    if not headline:
+        return None
+
+    # Parse date from the first cell. Format observed: "24 Apr 2026"
+    date_text = cells[0].get_text(strip=True)
+    try:
+        announcement_date = datetime.strptime(date_text, "%d %b %Y").date()
+    except ValueError:
+        return None
+
+    url = href if href.startswith("http") else INVESTEGATE_BASE + href
+
+    return {"date": announcement_date, "headline": headline, "url": url}
+
+
+def _fetch_listing_for_tidm(tidm: str) -> list[dict]:
+    """Fetch one Investegate company page and parse announcement rows."""
+    url = INVESTEGATE_COMPANY_URL.format(tidm=tidm)
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.warning("Investegate listing fetch failed for TIDM=%s: %s", tidm, e)
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    announcements: list[dict] = []
+    for row in soup.find_all("tr"):
+        parsed = _parse_announcement_row(row)
+        if parsed is not None:
+            announcements.append(parsed)
+
+    return announcements
+
+
+def fetch_listing(yahoo_symbol: str) -> list[dict]:
+    """Fetch the Investegate listing for a Yahoo ``.L`` symbol.
+
+    Walks the candidate TIDMs from ``yahoo_symbol_to_tidm_candidates`` and
+    returns the first non-empty result. Returns ``[]`` if no candidate
+    yields announcements. The successful TIDM is logged at DEBUG so the
+    trailing-dot fallback (``BP.L`` → ``BP.``) is observable when needed.
+    """
+    for tidm in yahoo_symbol_to_tidm_candidates(yahoo_symbol):
+        rows = _fetch_listing_for_tidm(tidm)
+        if rows:
+            logger.debug("Investegate listing for %s served via TIDM=%s (%d rows)", yahoo_symbol, tidm, len(rows))
+            return rows
+    return []
+
+
+def find_earnings_announcements(announcements: list[dict]) -> list[tuple[dict, str]]:
+    """Return all earnings-relevant announcements paired with their type.
+
+    Investegate orders the listing newest-first, so the returned list is in
+    that order too. The caller walks it and short-circuits on the first row
+    that passes the size gate / DB / LLM checks. This fall-through matters
+    when a publication-notice stub (e.g. "Annual Financial Report") is the
+    most-recent earnings headline but the genuine press release sits a few
+    days earlier in the same listing.
+    """
+    out: list[tuple[dict, str]] = []
+    for a in announcements:
+        type_name = classify_headline(a["headline"])
+        if type_name is not None:
+            out.append((a, type_name))
+    return out
+
+
+# ─── Announcement fetch + cache ─────────────────────────────────────────────
+
+
+def get_announcement_html(ticker: str, announcement_date: date, report_type: str, url: str) -> str | None:
+    """Return announcement HTML body, using local disk cache.
+
+    ``report_type`` is the full ``RNS-<TYPE>`` string used both for the cache
+    filename and stamped into ``EarningsReport.metrics``, keeping disk and DB
+    naming aligned.
+
+    Cache layout: data/filings/{ticker}/{YYYY-MM-DD}_{report_type}.html
+    On HTTP error returns None and logs a warning.
+    """
+    ticker_dir = DATA_DIR / ticker
+    ticker_dir.mkdir(parents=True, exist_ok=True)
+    filename = f"{announcement_date.isoformat()}_{report_type}.html"
+    file_path = ticker_dir / filename
+
+    if file_path.exists():
+        logger.debug("Loading cached announcement from %s", file_path)
+        return file_path.read_text(encoding="utf-8")
+
+    try:
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        logger.warning("Announcement download failed for %s %s: %s", ticker, url, e)
+        return None
+
+    html = response.text
+    file_path.write_text(html, encoding="utf-8")
+    return html
+
+
+# ─── Per-instrument flow ────────────────────────────────────────────────────
+
+
+def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> EarningsReport | None:
+    """Fetch + analyse the latest earnings-relevant RNS for one ``.L`` ticker.
+
+    Decision flow:
+    1. Fetch the Investegate company page (with TIDM trailing-dot fallback).
+    2. Filter to earnings-relevant headlines; preserve newest-first order.
+    3. Walk those candidates, for each one:
+       a. If already in DB at that date → return existing (we're up-to-date).
+       b. If HTML cached on disk → regenerate summary without download.
+       c. Otherwise download the announcement HTML from Investegate.
+       d. Body size below ``MIN_BODY_CHARS`` → log [skip-stub], try next.
+       e. LLM ``is_earnings_report=False`` → log [skip], try next.
+       f. Otherwise persist and return.
+    4. If every candidate was rejected → log [exhausted] and return None.
+    """
+    if not ticker.endswith(".L"):
+        logger.debug("[skip] %s is not a .L listing", ticker)
+        return None
+
+    announcements = fetch_listing(ticker)
+    if not announcements:
+        logger.warning(
+            "No announcements parsed for %s (tried TIDMs %s)",
+            ticker,
+            yahoo_symbol_to_tidm_candidates(ticker),
+        )
+        return None
+
+    candidates = find_earnings_announcements(announcements)
+    if not candidates:
+        logger.info(
+            "[no-match] %s — none of %d recent announcements look like earnings",
+            ticker,
+            len(announcements),
+        )
+        return None
+
+    # Walk earnings-relevant candidates newest-first. Skip publication-notice
+    # stubs via the size gate (no LLM call) and fall through to earlier
+    # candidates — the genuine press release for AZN/HSBA/SHEL/NWG style names
+    # sits a few days behind the "Annual Financial Report" notice.
+    for announcement, type_name in candidates:
+        announcement_date = announcement["date"]
+        report_type = f"RNS-{type_name}"
+
+        existing = session.execute(
+            select(EarningsReport).filter(
+                EarningsReport.instrument_id == instrument_id,
+                EarningsReport.date == announcement_date,
+            )
+        ).scalar_one_or_none()
+        if existing:
+            logger.debug("[skip] %s already in DB (%s period %s)", ticker, report_type, announcement_date.isoformat())
+            return existing
+
+        html_cached = _check_file_exists_for_date(ticker, announcement_date.isoformat(), report_type)
+        if html_cached:
+            logger.debug(
+                "[cache] %s %s period %s — regenerating summary (no download)",
+                ticker,
+                report_type,
+                announcement_date,
+            )
+        else:
+            logger.debug(
+                "[download] %s %s period %s — fetching from Investegate", ticker, report_type, announcement_date
+            )
+
+        html = get_announcement_html(ticker, announcement_date, report_type, announcement["url"])
+        if html is None:
+            continue
+
+        text = extract_text_from_html(html)
+        if len(text) < MIN_BODY_CHARS:
+            logger.info(
+                "[skip-stub] %s %s period %s — body %d chars < %d (publication notice); trying earlier candidate",
+                ticker,
+                report_type,
+                announcement_date,
+                len(text),
+                MIN_BODY_CHARS,
+            )
+            continue
+
+        result = summarize_with_llm(text, ticker, report_type=report_type, period=announcement_date.isoformat())
+        if result is None:
+            logger.warning("[error] LLM failed for %s %s — trying earlier candidate", ticker, announcement_date)
+            continue
+
+        if result.get("is_earnings_report") is False:
+            logger.info(
+                "[skip] %s %s period %s — LLM flagged as non-earnings; trying earlier candidate",
+                ticker,
+                report_type,
+                announcement_date,
+            )
+            continue
+
+        summary = result.get("summary", "")
+        metrics = {k: v for k, v in result.items() if k != "summary"}
+        metrics["report_type"] = report_type
+        metrics["headline"] = announcement["headline"]
+        metrics["source_url"] = announcement["url"]
+
+        earnings_report = EarningsReport(
+            instrument_id=instrument_id,
+            date=announcement_date,
+            summary=summary,
+            metrics=metrics,
+        )
+        session.add(earnings_report)
+        session.commit()
+
+        assessment = metrics.get("investment_assessment") or {}
+        logger.info(
+            "[saved] %s %s period %s | rec=%s conv=%s | %s",
+            ticker,
+            report_type,
+            announcement_date,
+            assessment.get("recommendation", "—"),
+            assessment.get("conviction", "—"),
+            announcement["headline"][:80],
+        )
+        return earnings_report
+
+    logger.info(
+        "[exhausted] %s — %d earnings-relevant candidates all rejected (stubs/non-earnings)",
+        ticker,
+        len(candidates),
+    )
+    return None
+
+
+# ─── Selection / batch driver ───────────────────────────────────────────────
+
+
+def _latest_yahoo_earnings_date(earnings: dict | None) -> str | None:
+    """Most recent key from Yahoo's earnings JSON that is strictly before today."""
+    if not earnings:
+        return None
+    today_iso = date.today().isoformat()
+    return next((d for d in sorted(earnings.keys(), reverse=True) if d < today_iso), None)
+
+
+def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> None:
+    """Fetch and process UK RNS earnings reports for eligible ``.L`` instruments.
+
+    Eligibility:
+        - yahoo_symbol LIKE '%.L'
+        - cik IS NULL (instruments with a CIK go through the SEC pipeline)
+        - InstrumentYahoo row exists (so we can rank by Yahoo earnings dates)
+
+    Selection priority (mirrors the US script):
+        1. Never-seen instruments (has_reports = 0) first.
+        2. Within that, most recent past Yahoo earnings announcement date desc.
+           Instruments with no Yahoo earnings data fall to the end.
+    """
+
+    with get_session() as session:
+        today_iso = date.today().isoformat()
+
+        max_earnings_date_expr = (
+            select(func.max(sql_text("date")))
+            .select_from(func.jsonb_object_keys(InstrumentYahoo.earnings).alias("date"))
+            .where(sql_text("date < :today_iso").bindparams(today_iso=today_iso))
+            .correlate(InstrumentYahoo)
+            .scalar_subquery()
+        )
+
+        has_reports = (
+            select(func.count(EarningsReport.id))
+            .where(EarningsReport.instrument_id == Instrument.id)
+            .correlate(Instrument)
+            .scalar_subquery()
+        )
+
+        query = (
+            select(
+                Instrument.id,
+                Instrument.yahoo_symbol,
+                InstrumentYahoo.earnings,
+                has_reports.label("has_reports"),
+            )
+            .join(InstrumentYahoo)
+            .filter(
+                Instrument.yahoo_symbol.like("%.L"),
+                Instrument.cik.is_(None),
+            )
+            .order_by(
+                has_reports.asc(),
+                max_earnings_date_expr.desc().nulls_last(),
+            )
+            .limit(limit)
+        )
+
+        if only_holdings:
+            latest_date = session.execute(select(func.max(HoldingDaily.date))).scalar()
+            if latest_date:
+                held_ids = (
+                    session.execute(
+                        select(HoldingDaily.instrument_id)
+                        .where(HoldingDaily.date == latest_date)
+                        .where(HoldingDaily.quantity > 0)
+                    )
+                    .scalars()
+                    .all()
+                )
+                query = query.filter(Instrument.id.in_(held_ids))
+                logger.info("only_holdings=True: restricting to %d held instruments", len(held_ids))
+            else:
+                logger.warning("only_holdings=True but no holdings found — processing nothing")
+                return
+
+        result = session.execute(query).all()
+        total = len(result)
+        start_ts = perf_counter()
+
+        eligible_total = (
+            session.execute(
+                select(func.count())
+                .select_from(Instrument)
+                .where(
+                    Instrument.yahoo_symbol.like("%.L"),
+                    Instrument.cik.is_(None),
+                )
+            ).scalar()
+            or 0
+        )
+        backlog_total = (
+            session.execute(
+                select(func.count())
+                .select_from(Instrument)
+                .where(
+                    Instrument.yahoo_symbol.like("%.L"),
+                    Instrument.cik.is_(None),
+                    has_reports == 0,
+                )
+            ).scalar()
+            or 0
+        )
+
+        never_seen = sum(1 for r in result if r.has_reports == 0)
+        updates = total - never_seen
+        yahoo_dates = [d for d in (_latest_yahoo_earnings_date(r.earnings) for r in result) if d]
+        date_span = f"{min(yahoo_dates)} → {max(yahoo_dates)}" if yahoo_dates else "n/a"
+        logger.info(
+            "UK RNS: processing %d instruments (%d never-seen, %d updates) | "
+            "Backlog: %d never-seen of %d eligible | Yahoo earnings span: %s | first 10: %s",
+            total,
+            never_seen,
+            updates,
+            backlog_total,
+            eligible_total,
+            date_span,
+            [r.yahoo_symbol for r in result[:10]],
+        )
+
+        processed = 0
+        for row in result:
+            logger.debug(
+                "── %s  (Yahoo last earnings: %s)",
+                row.yahoo_symbol,
+                _latest_yahoo_earnings_date(row.earnings) or "n/a",
+            )
+
+            try:
+                get_uk_earnings_report(
+                    ticker=row.yahoo_symbol,
+                    session=session,
+                    instrument_id=row.id,
+                )
+            except Exception:
+                logger.exception("UK RNS processing failed for %s", row.yahoo_symbol)
+                session.rollback()
+
+            processed += 1
+            if processed % 10 == 0 or processed == total:
+                elapsed_min = (perf_counter() - start_ts) / 60
+                logger.info("UK RNS progress: %d/%d processed (elapsed %.1fm)", processed, total, elapsed_min)
+
+            sleep(1)
+
+        logger.info(
+            "UK RNS task complete: %d instruments processed in %.1fm",
+            processed,
+            (perf_counter() - start_ts) / 60,
+        )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Fetch and summarise UK RNS earnings via Investegate")
+    parser.add_argument("--limit", type=int, default=10, help="Maximum number of instruments to process (default: 10)")
+    parser.add_argument(
+        "--only-holdings",
+        action="store_true",
+        default=False,
+        help="Restrict to instruments currently held in the portfolio",
+    )
+    args = parser.parse_args()
+    get_uk_earnings_reports(limit=args.limit, only_holdings=args.only_holdings)

@@ -29,28 +29,22 @@ updates split and the global never-seen backlog.
 """
 
 import argparse
-import json
-import logging
 from datetime import date
-from pathlib import Path
 from time import perf_counter, sleep
-from typing import Any, Literal
 
 import requests
-from bs4 import BeautifulSoup
-from google import genai
-from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.sql import text as sql_text
 
-from config import GEMINI_API_KEY, logger
+from config import logger
 from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
+from scripts._earnings_common import (
+    DATA_DIR,
+    _check_file_exists_for_date,
+    extract_text_from_html,
+    summarize_with_llm,
+)
 from scripts.update_data import get_session
-
-# Silence verbose third-party SDK loggers (AFC status, HTTP request lines).
-# Note: google-genai uses "google_genai" (underscore) as its logger namespace, not "google.genai".
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("google_genai").setLevel(logging.WARNING)
 
 # SEC requires a User-Agent in the format: "Company Name email@example.com"
 # TODO: Replace with your actual contact info
@@ -58,128 +52,8 @@ USER_AGENT = "PortfolioTracker/1.0 (admin@example.com)"
 
 HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate", "Host": "www.sec.gov"}
 
-# SEC Endpoints
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{primary_document}"
-
-# Local Storage Configuration
-DATA_DIR = Path("data/filings")
-MODEL = "gemini-3-flash-preview"
-
-# Gemini client — created once at import time
-_genai_client: genai.Client | None = None
-
-
-def _get_genai_client() -> genai.Client:
-    global _genai_client
-    if _genai_client is None:
-        _genai_client = genai.Client(api_key=GEMINI_API_KEY)
-    return _genai_client
-
-
-# Pydantic models for structured output - focused on most important metrics for retail investors
-class EPSGuidance(BaseModel):
-    """EPS guidance is most important for stock price (Price = EPS × PE)."""
-
-    next_quarter: float | None = Field(None, description="EPS guidance for next quarter")
-    next_year: float | None = Field(None, description="EPS guidance for full year")
-    growth_pct: float | None = Field(None, description="Implied YoY growth percentage from guidance")
-
-
-class RevenueGuidance(BaseModel):
-    """Revenue guidance for forward periods."""
-
-    next_quarter: float | None = Field(None, description="Revenue guidance for next quarter in millions")
-    next_year: float | None = Field(None, description="Revenue guidance for full year in millions")
-    growth_pct: float | None = Field(None, description="Implied growth percentage")
-
-
-class Guidance(BaseModel):
-    """Forward-looking guidance from management - CRITICAL for valuation."""
-
-    eps_guidance: EPSGuidance | None = Field(None, description="EPS guidance is most important for stock price")
-    revenue_guidance: RevenueGuidance | None = None
-    operating_margin_guidance: float | None = Field(
-        None,
-        description="Guided operating margin % for next period, if explicitly stated (e.g. 'we expect operating margin of ~20%')",
-    )
-    outlook_commentary: str | None = Field(
-        None,
-        description="1-2 sentence summary of management's qualitative forward outlook (only if no specific numbers are provided above)",
-    )
-
-
-class ConsensusComparison(BaseModel):
-    """How actual results and guidance compare to analyst consensus estimates."""
-
-    revenue_beat_pct: float | None = Field(
-        None, description="How much revenue beat/missed consensus (positive = beat, negative = miss)"
-    )
-    eps_beat_pct: float | None = Field(None, description="How much EPS beat/missed consensus")
-    guidance_vs_consensus: Literal["above", "below", "in-line"] | None = Field(
-        None, description="How guidance compares to consensus"
-    )
-
-
-class InvestmentAssessment(BaseModel):
-    """LLM assessment of whether the stock is a good buy based on the report."""
-
-    recommendation: Literal["buy", "hold", "avoid", "consider"] = Field(
-        ...,
-        description="Overall recommendation: buy (attractive), hold (neutral), avoid (unattractive), consider (worth researching)",
-    )
-    conviction: Literal["high", "medium", "low"] = Field(
-        ...,
-        description=(
-            "Strength of the investment signal, not just data clarity. "
-            "High = strong, consistent evidence supports the call (e.g. guidance raised, margins expanding, moat intact). "
-            "Medium = mixed signals or limited forward visibility. "
-            "Low = contradictory data, one-off items dominating, or unclear long-term trajectory."
-        ),
-    )
-    rationale: str = Field(
-        "",
-        description="2-3 sentence rationale for the recommendation",
-    )
-    key_catalysts: list[str] = Field(
-        default_factory=list,
-        description="Top 2-4 positive catalysts or growth drivers from the report",
-    )
-    key_concerns: list[str] = Field(
-        default_factory=list,
-        description="Top 2-4 risks or headwinds from the report",
-    )
-    quality_signals: Literal["strong", "adequate", "weak"] | None = Field(
-        None,
-        description=(
-            "Earnings quality for a long-term investor. "
-            "Strong = FCF >= reported net income, gross/operating margins stable or expanding, "
-            "and disciplined capital use (e.g. moat-building R&D or strategic CapEx aligned with "
-            "growth; prudent buybacks or debt paydown that does not starve investment—not financial engineering). "
-            "Adequate = FCF roughly tracks net income, margins flat, neutral capital allocation. "
-            "Weak = FCF significantly below net income (accruals concern), margin compression, "
-            "share dilution, or rising debt without clear return on that investment."
-        ),
-    )
-
-
-class EarningsReportMetrics(BaseModel):
-    """Structured metrics extracted from earnings report - focused on forward-looking data."""
-
-    guidance: Guidance = Field(..., description="Forward-looking guidance from management - CRITICAL for valuation")
-    consensus_comparison: ConsensusComparison | None = None
-    investment_assessment: InvestmentAssessment | None = Field(
-        None,
-        description="Assessment of whether the stock is a good buy based on the report",
-    )
-    summary: str = Field(
-        ...,
-        description=(
-            "Markdown-formatted summary (350-500 words) with sections: Key Financial Results, "
-            "Strategic Highlights, Risks & Headwinds, Future Outlook, Investment Thesis, Bottom Line. "
-            "Use bold for key numbers, include specific percentages and comparisons."
-        ),
-    )
 
 
 def get_latest_filing_metadata(cik: str, form_types: tuple[str, ...] = ("10-Q", "10-K")):
@@ -259,178 +133,13 @@ def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
     return html_content
 
 
-def extract_text_from_html(html_content: str) -> str:
-    """Parses HTML content to extract clean text for LLM."""
-
-    # Parse HTML
-    soup = BeautifulSoup(html_content, "html.parser")
-
-    # Remove script and style elements
-    for tag in soup(["script", "style", "noscript", "ix:header", "xbrl"]):
-        tag.decompose()
-
-    # Get text, use a separator to keep paragraphs distinct
-    text = soup.get_text(separator="\n")
-
-    # Clean up whitespace
-    lines = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # Filter out common XBRL noise lines
-        if (
-            line.startswith("http://")
-            or line.startswith("https://")
-            or line.startswith("iso4217:")
-            or line.startswith("xbrli:")
-        ):
-            continue
-        lines.append(line)
-
-    text = "\n".join(lines)
-
-    return text
-
-
-def summarize_with_llm(text: str, ticker: str, form: str, period: str) -> dict[str, Any] | None:
-    """
-    Extracts structured metrics and generates summary from earnings report.
-    Returns dict with structured metrics and summary text, or None on error.
-    """
-    logger.info("Analyzing %s for %s period %s (%d characters)", form, ticker, period, len(text))
-
-    if not GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY is not set in config.py or environment variables")
-        return None
-
-    try:
-        client = _get_genai_client()
-
-        # Truncate text if it's too long
-        max_chars = 500000
-        if len(text) > max_chars:
-            logger.info("Truncating text from %d to %d characters", len(text), max_chars)
-            text = text[:max_chars]
-
-        prompt = f"""
-        You are a financial analyst helping a retail investor decide whether {ticker} is a
-        good long-term investment. This investor holds stocks in a tax-free ISA account with
-        a 10+ year horizon. They are growth and quality investors — they want businesses that
-        can compound capital over a decade, not short-term trades. Assess from a long-term
-        compounding perspective: a weak next quarter that doesn't damage the long-term thesis
-        is not a reason to avoid; deteriorating ROIC or returns on capital (only when stated
-        or clearly inferable from the filing), moat erosion, or management capital
-        misallocation IS a reason to avoid.
-
-        Analyze this {form} earnings report and extract structured metrics while generating
-        a comprehensive summary.
-
-        **CRITICAL: EPS Guidance is the highest priority** - Stock price = EPS × PE ratio. If EPS guidance grows 10%, stock should theoretically grow 10% with same PE.
-
-        **Extract the following structured data:**
-
-        1. **Guidance (MOST IMPORTANT - REQUIRED):**
-           - Scan ALL of: "Outlook", "Guidance", "Forecast", "Expectations", "Financial Outlook", "Business Outlook", "Looking Ahead", MD&A forward-looking sections.
-           - **EPS guidance**: "expects EPS of $X.XX", "forecasts EPS between $X and $Y", "diluted EPS guidance of $X.XX–$Y.YY".
-             Calculate growth_pct vs prior year actual EPS if available.
-           - **Revenue guidance**: extract in millions for next quarter and full year; calculate growth_pct if prior period available.
-           - **Operating margin guidance**: capture if stated explicitly (e.g. "operating margin of approximately 20%", "adjusted EBIT margin ~15%").
-           - **Outlook commentary**: if no specific numbers exist, write 1–2 sentences
-             summarising management's qualitative forward outlook
-             (e.g. "expects double-digit revenue growth driven by cloud segment").
-           - **IMPORTANT**: For numeric fields, only populate from explicitly stated numbers. Do NOT infer or estimate numbers not in the text.
-
-        2. **Consensus Comparison (if available):**
-           - Look for "consensus", "analyst estimates", "Street estimates", "beats", "misses"
-           - Extract revenue_beat_pct and eps_beat_pct; note guidance_vs_consensus (above/below/in-line)
-           - Only extract if explicitly mentioned. Do NOT calculate if consensus is not stated.
-
-        3. **Investment Assessment (REQUIRED - answer "is this a good buy?"):**
-           - **recommendation**: "buy" (attractive), "hold" (neutral), "avoid" (unattractive), or "consider" (worth researching)
-           - **conviction**: "high", "medium", or "low" — strength of the investment signal (consistent evidence vs mixed vs contradictory), not merely how clear the filing text is
-           - **rationale**: 2-3 sentences explaining why (e.g., "Strong guidance raise and margin expansion support buy. Debt paydown reduces risk.")
-           - **key_catalysts**: 2-4 positive drivers (e.g., "AI revenue accelerating", "Market share gains", "Buyback program")
-           - **key_concerns**: 2-4 risks (e.g., "Macro headwinds", "Customer concentration", "Margin pressure")
-           - **quality_signals**: use the schema rubric (FCF vs net income, margins, capital allocation, dilution/debt)
-           - **capital_allocation** (add to rationale if relevant): Is the company reinvesting in moat-building (R&D, capacity)? Buying back shares or diluting? Taking on debt for growth or for financial engineering?
-           - Base assessment on: long-term compounding potential, earnings quality, moat durability, management capital allocation, risk/reward over 10 years — NOT short-term price momentum
-
-        **Generate Summary (Markdown, 350-500 words):**
-
-        ### Key Financial Results
-        - Lead with revenue, EPS, net income with YoY/QoQ comparisons
-        - Include gross margin and operating margin with basis point changes
-        - Segment performance with specific percentages; beat/miss vs. consensus if mentioned
-
-        ### Strategic Highlights
-        - Major strategic initiatives; operational improvements; capital allocation (buybacks, dividends, debt)
-
-        ### Risks & Headwinds
-        - Top 3-5 risks with specific details; regulatory, competitive, macro concerns
-
-        ### Future Outlook
-        - **EPS guidance prominently featured** (next quarter/year with growth %)
-        - Revenue guidance; CapEx plans; management commentary; capital allocation plans
-
-        ### Investment Thesis
-        - 2-3 bullet points: bull case, bear case, key metric to watch
-
-        ### Bottom Line
-        - 1-2 sentences: Direct answer "Good buy because..." or "Avoid because..." or "Hold and watch..."
-        - Include the single most important factor from the report
-
-        **Formatting:**
-        - Use **bold** for key numbers and percentages
-        - Use millions as unit (e.g., $13,640 million not $13.64 billion)
-        - Be specific with numbers; if a metric is not available, use null
-
-        --- REPORT TEXT ---
-        {text}
-        """
-
-        # Use structured output with JSON schema
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "response_json_schema": EarningsReportMetrics.model_json_schema(),
-            },
-        )
-
-        # Parse and validate JSON response with Pydantic
-        result_dict = json.loads(response.text)
-        validated_result = EarningsReportMetrics.model_validate(result_dict)
-
-        # Convert back to dict for storage (Pydantic model to dict)
-        result = validated_result.model_dump()
-        return result
-
-    except Exception as e:
-        logger.error("Error calling Gemini API: %s", e, exc_info=True)
-        return None
-
-
-def _latest_yahoo_earnings_date(earnings: dict[str, Any] | None) -> str | None:
+def _latest_yahoo_earnings_date(earnings: dict | None) -> str | None:
     """Most recent key from Yahoo's earnings JSON that is strictly before today.
     Returns an ISO date string, or None if the dict is empty / has only future dates."""
     if not earnings:
         return None
     today_iso = date.today().isoformat()
     return next((d for d in sorted(earnings.keys(), reverse=True) if d < today_iso), None)
-
-
-def _check_file_exists_for_date(ticker: str, report_date: str) -> bool:
-    """Check if any filing file exists for the given date (handles form variations like 10-Q, 10-Q/A, etc.)."""
-    ticker_dir = DATA_DIR / ticker
-    if not ticker_dir.exists():
-        return False
-
-    for file_path in ticker_dir.iterdir():
-        if file_path.is_file() and file_path.name.startswith(f"{report_date}_") and file_path.suffix == ".html":
-            return True
-    return False
 
 
 def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
@@ -471,16 +180,17 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     ).scalar_one_or_none()
 
     if existing_report:
-        logger.debug("  [skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
+        logger.debug("[skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
         return existing_report
 
     # 3. Check HTML cache
-    html_cached = _check_file_exists_for_date(ticker, report_date)
+    safe_form = form.replace("/", "_")
+    html_cached = _check_file_exists_for_date(ticker, report_date, safe_form)
 
     if html_cached:
-        logger.debug("  [cache] %s %s period %s — regenerating summary (no download)", ticker, form, report_date)
+        logger.debug("[cache] %s %s period %s — regenerating summary (no download)", ticker, form, report_date)
     else:
-        logger.debug("  [download] %s %s period %s — fetching from SEC", ticker, form, report_date)
+        logger.debug("[download] %s %s period %s — fetching from SEC", ticker, form, report_date)
 
     # 4. Get HTML (returns cached file if present, downloads otherwise)
     try:
@@ -493,14 +203,19 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     text = extract_text_from_html(html_content)
 
     # 6. LLM analysis
-    result = summarize_with_llm(text, ticker, form, report_date)
+    result = summarize_with_llm(text, ticker, report_type=form, period=report_date)
 
     if result is None:
-        logger.warning("  [error] LLM failed for %s %s — skipping DB save", ticker, report_date)
+        logger.warning("[error] LLM failed for %s %s — skipping DB save", ticker, report_date)
+        return None
+
+    if result.get("is_earnings_report") is False:
+        logger.info("[skip] %s %s period %s — LLM flagged as non-earnings disclosure", ticker, form, report_date)
         return None
 
     summary = result.get("summary", "")
     metrics = {k: v for k, v in result.items() if k != "summary"}
+    metrics["report_type"] = form
 
     # 7. Save
     earnings_report = EarningsReport(
@@ -515,7 +230,7 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     eps_guidance = (metrics.get("guidance") or {}).get("eps_guidance") or {}
     assessment = metrics.get("investment_assessment") or {}
     logger.info(
-        "  [saved] %s %s period %s | rec=%s conv=%s | EPS next_q=%s next_y=%s growth=%s%%",
+        "[saved] %s %s period %s | rec=%s conv=%s | EPS next_q=%s next_y=%s growth=%s%%",
         ticker,
         form,
         report_date,
@@ -654,7 +369,7 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
         yahoo_dates = [d for d in (_latest_yahoo_earnings_date(r.earnings) for r in result) if d]
         date_span = f"{min(yahoo_dates)} → {max(yahoo_dates)}" if yahoo_dates else "n/a"
         logger.info(
-            "Processing %d instruments (%d never-seen, %d updates) | Backlog: %d never-seen of %d eligible | "
+            "SEC: processing %d instruments (%d never-seen, %d updates) | Backlog: %d never-seen of %d eligible | "
             "Yahoo earnings span: %s | first 10: %s",
             total,
             never_seen,
@@ -674,17 +389,21 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
 
             logger.debug("── %s  (Yahoo last earnings: %s)", row.yahoo_symbol, last_earnings_date)
 
-            get_earnings_report(
-                ticker=row.yahoo_symbol,
-                cik=row.cik,
-                session=session,
-                instrument_id=row.id,
-            )
+            try:
+                get_earnings_report(
+                    ticker=row.yahoo_symbol,
+                    cik=row.cik,
+                    session=session,
+                    instrument_id=row.id,
+                )
+            except Exception:
+                logger.exception("SEC processing failed for %s", row.yahoo_symbol)
+                session.rollback()
             processed += 1
             if processed % 10 == 0 or processed == total:
                 elapsed_min = (perf_counter() - start_ts) / 60
                 logger.info(
-                    "Earnings progress: %d/%d processed (elapsed %.1fm)",
+                    "SEC progress: %d/%d processed (elapsed %.1fm)",
                     processed,
                     total,
                     elapsed_min,
@@ -693,7 +412,7 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
             sleep(1)
 
         logger.info(
-            "Earnings task complete: %d instruments processed in %.1fm",
+            "SEC task complete: %d instruments processed in %.1fm",
             processed,
             (perf_counter() - start_ts) / 60,
         )

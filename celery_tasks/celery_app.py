@@ -88,6 +88,15 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=4),
         "args": (100,),
     },
+    # Fetch UK RNS earnings reports from Investegate: Daily at 4:30 AM UTC
+    # Staggered 30 min after the SEC run to avoid overlapping LLM API quota and
+    # to keep the two pipelines' logs interleaved-but-separable. Targets .L
+    # instruments without a populated CIK.
+    "fetch_uk_earnings_reports_nightly": {
+        "task": "celery_tasks.tasks.fetch_uk_earnings_reports_task",
+        "schedule": crontab(minute=30, hour=4),
+        "args": (100,),
+    },
     # Scrape SEC 13F institutional holdings: Weekly on Monday at 1 AM UTC
     # 13F filings are due quarterly (~45 days after quarter end: May 15, Aug 14, Nov 14, Feb 14).
     # Weekly cadence catches new filings within days of publication; no-op when already up to date.

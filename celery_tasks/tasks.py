@@ -2,6 +2,7 @@ import asyncio
 from celery_tasks.celery_app import app
 from scripts.update_returns import update_returns
 from scripts.get_earnings_reports import get_earnings_reports
+from scripts.get_uk_earnings_reports import get_uk_earnings_reports
 from scripts.scrape_13f import main as scrape_13f_main
 from scripts.scrape_wisesheets_pe import update_pe_data
 from scripts.update_data import update_data
@@ -41,6 +42,17 @@ def update_pies_task():
 def fetch_earnings_reports_task(limit: int = 100):
     """Fetch and process earnings reports from SEC EDGAR API."""
     get_earnings_reports(limit=limit)
+
+
+@app.task
+def fetch_uk_earnings_reports_task(limit: int = 100):
+    """Fetch and process UK RNS earnings reports from Investegate.
+
+    Targets ``.L`` instruments without a populated CIK (i.e. not already
+    routed via SEC). See scripts/get_uk_earnings_reports.py for the full
+    selection model and per-instrument decision flow.
+    """
+    get_uk_earnings_reports(limit=limit)
 
 
 @app.task
