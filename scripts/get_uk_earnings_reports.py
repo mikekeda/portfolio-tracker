@@ -35,6 +35,7 @@ next results date.
 
 import argparse
 import re
+from collections import Counter
 from datetime import date, datetime
 from time import perf_counter, sleep
 
@@ -68,6 +69,28 @@ INVESTEGATE_COMPANY_URL = INVESTEGATE_BASE + "/company/{tidm}"
 #   - publication-notice stubs: 4–7 KB
 # 15 KB sits comfortably between them.
 MIN_BODY_CHARS = 15000
+
+# Outcome tags returned by get_uk_earnings_report and tallied for the run-end
+# summary. Mutually exclusive — exactly one is returned per call.
+OUTCOME_SAVED = "saved"
+OUTCOME_UPDATE_NOOP = "update-noop"
+OUTCOME_EXHAUSTED = "exhausted"
+OUTCOME_NO_MATCH = "no-match"
+OUTCOME_LISTING_FAILED = "listing-failed"
+OUTCOME_NOT_LISTED = "not-listed"
+
+# Non-earnings-issuing listings that pass Yahoo's quoteType=EQUITY filter.
+# ETCs and GDRs are sometimes tagged EQUITY by Yahoo even though they don't
+# publish UK RNS earnings. Verified empirically via shortName lookup —
+# extend as new ones appear in the holdings.
+NON_EARNINGS_LISTINGS = frozenset({
+    "SMSN.L",  # Samsung Electronics GDR (Korean issuer, depository receipt)
+    "GLDW.L",  # WisdomTree Physical Gold ETC
+    "SGLN.L",  # iShares Physical Gold ETC
+    "PHNX.L",  # Phoenix Group Holdings — TODO: real UK earnings issuer but
+               # Investegate has no /company/PHNX page (verified 2026-04-26).
+               # Remove from this set once an alt source is wired up.
+})
 
 # Headline → type discriminator. Order matters — first match wins, so the more
 # specific patterns are listed before broader ones. All matches are
@@ -204,28 +227,18 @@ def fetch_listing(yahoo_symbol: str) -> list[dict]:
 
 
 def find_earnings_announcements(announcements: list[dict]) -> list[tuple[dict, str]]:
-    """Return all earnings-relevant announcements paired with their type.
-
-    Investegate orders the listing newest-first, so the returned list is in
-    that order too. The caller walks it and short-circuits on the first row
-    that passes the size gate / DB / LLM checks. This fall-through matters
-    when a publication-notice stub (e.g. "Annual Financial Report") is the
-    most-recent earnings headline but the genuine press release sits a few
-    days earlier in the same listing.
-
-    Investegate sometimes lists the same RNS twice (original + RNS Reach
-    rebroadcast for retail investors) — observed on TSCO.L 2026-04-16
-    RNS-PRELIM and 2026-01-08 RNS-TRADING. We dedupe on
-    ``(date, type, url)`` so the LLM cost / log lines don't double up,
-    while preserving newest-first ordering.
-    """
-    seen: set[tuple[date, str, str]] = set()
+    """Return earnings-relevant announcements paired with their type, newest-first."""
+    # Dedupe on (date, type) — Investegate sometimes rebroadcasts the same RNS
+    # under "RNS Reach" with a different URL but identical body (seen on TSCO.L
+    # 2026-04-16). No UK issuer publishes two distinct earnings of the same
+    # type on the same day, so this is safe and avoids a redundant fetch.
+    seen: set[tuple[date, str]] = set()
     out: list[tuple[dict, str]] = []
     for a in announcements:
         type_name = classify_headline(a["headline"])
         if type_name is None:
             continue
-        key = (a["date"], type_name, a["url"])
+        key = (a["date"], type_name)
         if key in seen:
             continue
         seen.add(key)
@@ -270,23 +283,16 @@ def get_announcement_html(ticker: str, announcement_date: date, report_type: str
 # ─── Per-instrument flow ────────────────────────────────────────────────────
 
 
-def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> EarningsReport | None:
+def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> str:
     """Fetch + analyse the latest earnings-relevant RNS for one ``.L`` ticker.
 
-    Decision flow:
-    1. Fetch the Investegate company page (with TIDM trailing-dot fallback).
-    2. Filter to earnings-relevant headlines; preserve newest-first order.
-    3. Walk those candidates, for each one:
-       a. If already in DB at that date → return existing (we're up-to-date).
-       b. Fetch the announcement HTML (disk-cached transparently).
-       c. Body size below ``MIN_BODY_CHARS`` → log [skip-stub], try next.
-       d. LLM ``is_earnings_report=False`` → log [skip], try next.
-       e. Otherwise persist and return.
-    4. If every candidate was rejected → log [exhausted] and return None.
+    Walks earnings-relevant announcements newest-first, short-circuits on the
+    first row already in DB (no-op) or saves the first row that passes the
+    size + LLM gates. Returns one of the ``OUTCOME_*`` tags for batch tallying.
     """
     if not ticker.endswith(".L"):
         logger.debug("[skip] %s is not a .L listing", ticker)
-        return None
+        return OUTCOME_NOT_LISTED
 
     announcements = fetch_listing(ticker)
     if not announcements:
@@ -295,7 +301,7 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
             ticker,
             yahoo_symbol_to_tidm_candidates(ticker),
         )
-        return None
+        return OUTCOME_LISTING_FAILED
 
     candidates = find_earnings_announcements(announcements)
     if not candidates:
@@ -304,7 +310,7 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
             ticker,
             len(announcements),
         )
-        return None
+        return OUTCOME_NO_MATCH
 
     # Walk earnings-relevant candidates newest-first. Skip publication-notice
     # stubs via the size gate (no LLM call) and fall through to earlier
@@ -322,10 +328,8 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
             )
         ).scalar_one_or_none()
         if existing:
-            # If we walked past stubs to get here, log the post-stub fallback
-            # to an existing DB record at INFO so the per-instrument flow is
-            # visible. First-candidate hits stay at DEBUG to keep batch logs
-            # quiet on the common incremental "nothing new" case.
+            # Post-stub DB hits log at INFO so the fallback is visible;
+            # first-candidate hits stay at DEBUG to keep noop runs quiet.
             if skipped_stubs > 0:
                 logger.info(
                     "[update-noop] %s — already up-to-date at %s (walked past %d stub(s))",
@@ -340,7 +344,7 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
                     report_type,
                     announcement_date.isoformat(),
                 )
-            return existing
+            return OUTCOME_UPDATE_NOOP
 
         html = get_announcement_html(ticker, announcement_date, report_type, announcement["url"])
         if html is None:
@@ -348,7 +352,8 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
 
         text = extract_text_from_html(html)
         if len(text) < MIN_BODY_CHARS:
-            logger.info(
+            # DEBUG: the per-instrument summary line carries the stub count.
+            logger.debug(
                 "[skip-stub] %s %s period %s — body %d chars < %d (publication notice); trying earlier candidate",
                 ticker,
                 report_type,
@@ -398,14 +403,14 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
             assessment.get("conviction", "—"),
             announcement["headline"][:80],
         )
-        return earnings_report
+        return OUTCOME_SAVED
 
     logger.info(
         "[exhausted] %s — %d earnings-relevant candidates all rejected (stubs/non-earnings)",
         ticker,
         len(candidates),
     )
-    return None
+    return OUTCOME_EXHAUSTED
 
 
 # ─── Selection / batch driver ───────────────────────────────────────────────
@@ -451,12 +456,9 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
             .scalar_subquery()
         )
 
-        # Skip non-equity vehicles. Yahoo info.quoteType is "ETF" / "MUTUALFUND"
-        # / "INDEX" / "CURRENCY" / "CRYPTOCURRENCY" for those; "EQUITY" for
-        # ordinary shares. Excluded so we don't waste Investegate fetches and
-        # log noise on tickers that never publish RNS earnings (e.g. VUAG.L,
-        # SGLN.L, BOTZ.L). coalesce-to-EQUITY keeps any rare row with a
-        # missing quoteType in the pool rather than silently dropping it.
+        # Skip non-equity vehicles by Yahoo quoteType — they never publish RNS
+        # earnings. coalesce-to-EQUITY keeps rows with a missing quoteType in
+        # the pool rather than silently dropping them.
         non_equity_quote_types = ("ETF", "MUTUALFUND", "INDEX", "CURRENCY", "CRYPTOCURRENCY")
         equity_only = func.coalesce(InstrumentYahoo.info["quoteType"].astext, "EQUITY").notin_(
             non_equity_quote_types
@@ -474,6 +476,7 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
                 Instrument.yahoo_symbol.like("%.L"),
                 Instrument.cik.is_(None),
                 equity_only,
+                Instrument.yahoo_symbol.notin_(NON_EARNINGS_LISTINGS),
             )
             .order_by(
                 has_reports.asc(),
@@ -513,6 +516,7 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
                     Instrument.yahoo_symbol.like("%.L"),
                     Instrument.cik.is_(None),
                     equity_only,
+                    Instrument.yahoo_symbol.notin_(NON_EARNINGS_LISTINGS),
                 )
             ).scalar()
             or 0
@@ -526,6 +530,7 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
                     Instrument.yahoo_symbol.like("%.L"),
                     Instrument.cik.is_(None),
                     equity_only,
+                    Instrument.yahoo_symbol.notin_(NON_EARNINGS_LISTINGS),
                     has_reports == 0,
                 )
             ).scalar()
@@ -548,6 +553,7 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
             [r.yahoo_symbol for r in result[:10]],
         )
 
+        outcomes: Counter[str] = Counter()
         processed = 0
         for row in result:
             logger.debug(
@@ -557,14 +563,16 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
             )
 
             try:
-                get_uk_earnings_report(
+                outcome = get_uk_earnings_report(
                     ticker=row.yahoo_symbol,
                     session=session,
                     instrument_id=row.id,
                 )
+                outcomes[outcome] += 1
             except Exception:
                 logger.exception("UK RNS processing failed for %s", row.yahoo_symbol)
                 session.rollback()
+                outcomes["error"] += 1
 
             processed += 1
             if processed % 10 == 0 or processed == total:
@@ -574,9 +582,16 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
             sleep(1)
 
         logger.info(
-            "UK RNS task complete: %d instruments processed in %.1fm",
+            "UK RNS task complete: %d instruments processed in %.1fm | "
+            "saved=%d update-noop=%d exhausted=%d no-match=%d listing-failed=%d errors=%d",
             processed,
             (perf_counter() - start_ts) / 60,
+            outcomes[OUTCOME_SAVED],
+            outcomes[OUTCOME_UPDATE_NOOP],
+            outcomes[OUTCOME_EXHAUSTED],
+            outcomes[OUTCOME_NO_MATCH],
+            outcomes[OUTCOME_LISTING_FAILED],
+            outcomes["error"],
         )
 
 
