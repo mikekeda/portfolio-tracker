@@ -1,61 +1,36 @@
 """
 Fetches the latest earnings-related RNS announcement for each eligible UK
-instrument (yahoo_symbol ending in ``.L``) via Investegate, extracts text and
-runs the same LLM analysis pipeline as the US SEC route.
+instrument (``yahoo_symbol`` ending in ``.L``) via Investegate and runs the
+shared LLM analysis pipeline. Sibling to ``get_earnings_reports.py`` (US SEC).
 
-Coverage model — "latest-real, forward-looking" (mirrors get_earnings_reports.py):
-  * Each run walks the most-recent earnings-relevant RNS announcements for
-    one instrument newest-first and processes the first one that passes
-    every gate. Older candidates that already exist in the DB short-circuit
-    the loop.
-  * Earnings-relevant means a headline matches Interim / Preliminary /
-    Final / Full Year (incl. Q4 and Fourth Quarter) / Annual /
-    Trading Update / Trading Statement / Quarterly Update.
+Coverage model — "latest-real, forward-looking":
+  * Walks an instrument's recent earnings-relevant RNS announcements
+    newest-first and processes the first that passes every gate. Older
+    candidates already in the DB short-circuit the loop.
   * Three filters protect the LLM from non-results disclosures:
-    1. Headline classifier rejects PDMR Shareholding, Holding(s) in
-       Company, Form 8.3/8.5, Transaction in Own Shares, etc.
-    2. Body size gate (``MIN_BODY_CHARS``) rejects publication-notice
-       stubs (e.g. "Annual Report has been published, available at
-       https://…") *before* any LLM call.
-    3. LLM ``is_earnings_report`` flag — last-resort skip if the first
-       two miss.
+      1. Headline classifier (matches Interim / Preliminary / Final /
+         Full Year / Annual / Trading Update; rejects PDMR Shareholding,
+         Holding(s) in Company, Form 8.3/8.5, Transaction in Own Shares).
+      2. Body size gate (``MIN_BODY_CHARS``) rejects publication-notice
+         stubs ("Annual Report has been published…") before the LLM call.
+      3. LLM ``is_earnings_report`` flag — last-resort skip.
 
-Selection priority:
-  1. Instruments with zero EarningsReport rows ("never-seen") first.
-  2. Within that, order by most recent past Yahoo earnings date desc.
+Selection: never-seen instruments first, then by most recent past Yahoo
+earnings date desc — same priority as the SEC route.
 
-Why .L (and not info.country = "United Kingdom"):
-  - Investegate keys per-company URLs by TIDM, which only exists for LSE
-    listings. A country filter would lose non-UK companies that DO report
-    via RNS on LSE (Glencore, Antofagasta, several Guernsey/Cayman trusts).
-  - We additionally exclude instruments with a populated CIK so any FPI
-    that already routes through SEC (e.g. ASML.AS via populate_cik.py) is
-    not double-processed. In practice the dual-listed UK majors (SHEL,
-    BP, AZN, GSK, HSBA, BARC, LLOY, NWG) lack a CIK in the local DB
-    because populate_cik.py matches on US tickers only — they all flow
-    through this UK pipeline. The DB unique key (instrument_id, date)
-    is the safety net if anything ever slips through both routes.
+Eligibility: ``yahoo_symbol LIKE '%.L' AND cik IS NULL``. Investegate keys
+per-company URLs by TIDM (LSE-listings only), so a country filter would
+lose non-UK names that report via RNS on LSE. The CIK-null clause avoids
+double-processing FPIs that already route through SEC; the dual-listed UK
+majors (SHEL, BP, AZN, GSK, HSBA, BARC, LLOY, NWG) lack a CIK locally
+because populate_cik.py matches on US tickers only and so flow here.
 
-Source notes:
-  - Investegate (www.investegate.co.uk) is a third-party RNS aggregator.
-    The official LSE RNS Data Feed is paid; the LSE website is bot-blocked.
-    Investegate is the most stable free alternative as of 2026-04.
-  - Per-company URL: https://www.investegate.co.uk/company/{TIDM}
-  - Per-announcement: stable IDs in the path; full HTML body present.
-
-Known caveats:
-  - The Investegate company page returns ~50 most-recent announcements only.
-    For high-noise tickers (active buyback programmes, daily NAV updates from
-    investment trusts), earnings RNS can fall off the page before the next
-    one is published. Affected examples observed during development: JD.
-    (JD Sports — many PDMR Shareholding rows during buyback windows), SMT
-    (Scottish Mortgage — daily NAV updates). Such tickers will simply log
-    ``[no-match]`` and be skipped this run; they get picked up on the next
-    earnings announcement when the page churn settles.
-  - TIDM derivation strips ``.L`` and converts dashes to dots
-    (``BT-A.L`` → ``BT.A``). One known edge case: any LSE listing whose
-    Yahoo symbol differs structurally from its TIDM (currently none in
-    portfolio) will need a manual override.
+Source: ``https://www.investegate.co.uk/company/{TIDM}`` — third-party
+aggregator (LSE's own feed is paid; lse.com is bot-blocked). The listing
+returns the ~50 most-recent announcements only, so for high-churn tickers
+(active buybacks, daily NAV trusts — JD., SMT., BARC, GSK, LLOY, STAN)
+the earnings RNS can rotate off-page and log ``[no-match]`` until the
+next results date.
 """
 
 import argparse
@@ -72,7 +47,6 @@ from config import logger
 from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
 from scripts._earnings_common import (
     DATA_DIR,
-    _check_file_exists_for_date,
     extract_text_from_html,
     summarize_with_llm,
 )
@@ -238,12 +212,24 @@ def find_earnings_announcements(announcements: list[dict]) -> list[tuple[dict, s
     when a publication-notice stub (e.g. "Annual Financial Report") is the
     most-recent earnings headline but the genuine press release sits a few
     days earlier in the same listing.
+
+    Investegate sometimes lists the same RNS twice (original + RNS Reach
+    rebroadcast for retail investors) — observed on TSCO.L 2026-04-16
+    RNS-PRELIM and 2026-01-08 RNS-TRADING. We dedupe on
+    ``(date, type, url)`` so the LLM cost / log lines don't double up,
+    while preserving newest-first ordering.
     """
+    seen: set[tuple[date, str, str]] = set()
     out: list[tuple[dict, str]] = []
     for a in announcements:
         type_name = classify_headline(a["headline"])
-        if type_name is not None:
-            out.append((a, type_name))
+        if type_name is None:
+            continue
+        key = (a["date"], type_name, a["url"])
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((a, type_name))
     return out
 
 
@@ -292,11 +278,10 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
     2. Filter to earnings-relevant headlines; preserve newest-first order.
     3. Walk those candidates, for each one:
        a. If already in DB at that date → return existing (we're up-to-date).
-       b. If HTML cached on disk → regenerate summary without download.
-       c. Otherwise download the announcement HTML from Investegate.
-       d. Body size below ``MIN_BODY_CHARS`` → log [skip-stub], try next.
-       e. LLM ``is_earnings_report=False`` → log [skip], try next.
-       f. Otherwise persist and return.
+       b. Fetch the announcement HTML (disk-cached transparently).
+       c. Body size below ``MIN_BODY_CHARS`` → log [skip-stub], try next.
+       d. LLM ``is_earnings_report=False`` → log [skip], try next.
+       e. Otherwise persist and return.
     4. If every candidate was rejected → log [exhausted] and return None.
     """
     if not ticker.endswith(".L"):
@@ -325,6 +310,7 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
     # stubs via the size gate (no LLM call) and fall through to earlier
     # candidates — the genuine press release for AZN/HSBA/SHEL/NWG style names
     # sits a few days behind the "Annual Financial Report" notice.
+    skipped_stubs = 0
     for announcement, type_name in candidates:
         announcement_date = announcement["date"]
         report_type = f"RNS-{type_name}"
@@ -336,21 +322,25 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
             )
         ).scalar_one_or_none()
         if existing:
-            logger.debug("[skip] %s already in DB (%s period %s)", ticker, report_type, announcement_date.isoformat())
+            # If we walked past stubs to get here, log the post-stub fallback
+            # to an existing DB record at INFO so the per-instrument flow is
+            # visible. First-candidate hits stay at DEBUG to keep batch logs
+            # quiet on the common incremental "nothing new" case.
+            if skipped_stubs > 0:
+                logger.info(
+                    "[update-noop] %s — already up-to-date at %s (walked past %d stub(s))",
+                    ticker,
+                    announcement_date.isoformat(),
+                    skipped_stubs,
+                )
+            else:
+                logger.debug(
+                    "[skip-existing] %s already in DB (%s period %s)",
+                    ticker,
+                    report_type,
+                    announcement_date.isoformat(),
+                )
             return existing
-
-        html_cached = _check_file_exists_for_date(ticker, announcement_date.isoformat(), report_type)
-        if html_cached:
-            logger.debug(
-                "[cache] %s %s period %s — regenerating summary (no download)",
-                ticker,
-                report_type,
-                announcement_date,
-            )
-        else:
-            logger.debug(
-                "[download] %s %s period %s — fetching from Investegate", ticker, report_type, announcement_date
-            )
 
         html = get_announcement_html(ticker, announcement_date, report_type, announcement["url"])
         if html is None:
@@ -366,6 +356,7 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> Earnings
                 len(text),
                 MIN_BODY_CHARS,
             )
+            skipped_stubs += 1
             continue
 
         result = summarize_with_llm(text, ticker, report_type=report_type, period=announcement_date.isoformat())
@@ -460,6 +451,17 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
             .scalar_subquery()
         )
 
+        # Skip non-equity vehicles. Yahoo info.quoteType is "ETF" / "MUTUALFUND"
+        # / "INDEX" / "CURRENCY" / "CRYPTOCURRENCY" for those; "EQUITY" for
+        # ordinary shares. Excluded so we don't waste Investegate fetches and
+        # log noise on tickers that never publish RNS earnings (e.g. VUAG.L,
+        # SGLN.L, BOTZ.L). coalesce-to-EQUITY keeps any rare row with a
+        # missing quoteType in the pool rather than silently dropping it.
+        non_equity_quote_types = ("ETF", "MUTUALFUND", "INDEX", "CURRENCY", "CRYPTOCURRENCY")
+        equity_only = func.coalesce(InstrumentYahoo.info["quoteType"].astext, "EQUITY").notin_(
+            non_equity_quote_types
+        )
+
         query = (
             select(
                 Instrument.id,
@@ -471,6 +473,7 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
             .filter(
                 Instrument.yahoo_symbol.like("%.L"),
                 Instrument.cik.is_(None),
+                equity_only,
             )
             .order_by(
                 has_reports.asc(),
@@ -505,9 +508,11 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
             session.execute(
                 select(func.count())
                 .select_from(Instrument)
+                .join(InstrumentYahoo)
                 .where(
                     Instrument.yahoo_symbol.like("%.L"),
                     Instrument.cik.is_(None),
+                    equity_only,
                 )
             ).scalar()
             or 0
@@ -516,9 +521,11 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
             session.execute(
                 select(func.count())
                 .select_from(Instrument)
+                .join(InstrumentYahoo)
                 .where(
                     Instrument.yahoo_symbol.like("%.L"),
                     Instrument.cik.is_(None),
+                    equity_only,
                     has_reports == 0,
                 )
             ).scalar()

@@ -192,6 +192,12 @@ def extract_text_from_html(html_content: str) -> str:
     # Get text, use a separator to keep paragraphs distinct
     text = soup.get_text(separator="\n")
 
+    # Strip NUL (0x00) bytes — Postgres rejects them in TEXT/VARCHAR columns
+    # and they sometimes appear in RNS HTML payloads (observed on SPX.L
+    # 2026-03-10 RNS-FULLYEAR). Other C0 control bytes are harmless to LLMs
+    # and to the DB, so we leave them alone.
+    text = text.replace("\x00", "")
+
     # Clean up whitespace
     lines = []
     for line in text.splitlines():
