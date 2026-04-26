@@ -127,22 +127,27 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
             "yahoo_earnings": (yh.earnings or {}) if yh else {},
         }
 
-    # Match each report to its Yahoo announcement date (period-end + 0–90 days)
+    # SEC saves period-end as EarningsReport.date (map forward to Yahoo's announcement);
+    # UK RNS saves the announcement date itself and yfinance often lacks historical LSE
+    # earnings, so use it directly.
     announcement_map: dict[int, tuple] = {}  # inst_id -> (symbol, ann_date | None)
     for inst_id, (rdate, _) in latest_reports.items():
         ctx = inst_ctx.get(inst_id, {})
         symbol = ctx.get("symbol")
         best: date | None = None
-        best_delta = float("inf")
-        for date_str in ctx.get("yahoo_earnings", {}):
-            try:
-                yd = date.fromisoformat(date_str[:10])
-                delta = (yd - rdate).days
-                if 0 <= delta <= 90 and delta < best_delta:
-                    best_delta = delta
-                    best = yd
-            except (ValueError, TypeError):
-                pass
+        if symbol and symbol.endswith(".L"):
+            best = rdate
+        else:
+            best_delta = float("inf")
+            for date_str in ctx.get("yahoo_earnings", {}):
+                try:
+                    yd = date.fromisoformat(date_str[:10])
+                    delta = (yd - rdate).days
+                    if 0 <= delta <= 90 and delta < best_delta:
+                        best_delta = delta
+                        best = yd
+                except (ValueError, TypeError):
+                    pass
         announcement_map[inst_id] = (symbol, best)
 
     # Bulk price query for all announcement dates

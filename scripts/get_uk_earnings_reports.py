@@ -26,11 +26,10 @@ majors (SHEL, BP, AZN, GSK, HSBA, BARC, LLOY, NWG) lack a CIK locally
 because populate_cik.py matches on US tickers only and so flow here.
 
 Source: ``https://www.investegate.co.uk/company/{TIDM}`` — third-party
-aggregator (LSE's own feed is paid; lse.com is bot-blocked). The listing
-returns the ~50 most-recent announcements only, so for high-churn tickers
-(active buybacks, daily NAV trusts — JD., SMT., BARC, GSK, LLOY, STAN)
-the earnings RNS can rotate off-page and log ``[no-match]`` until the
-next results date.
+aggregator (LSE's own feed is paid; lse.com is bot-blocked). ~50 rows per
+page; we paginate lazily via ``?page=N`` (cheap names cost one fetch)
+because daily 8.3/8.5/buyback RNS for high-churn tickers (BARC, GSK, LLOY,
+HSBA, STAN, SMT., JD.) push the latest earnings off page 1.
 """
 
 import argparse
@@ -61,6 +60,15 @@ HEADERS = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"
 
 INVESTEGATE_BASE = "https://www.investegate.co.uk"
 INVESTEGATE_COMPANY_URL = INVESTEGATE_BASE + "/company/{tidm}"
+
+# Per-instrument listing-page cap. Walked lazily — page N+1 only fetched when
+# pages 1..N yielded no save and no DB hit. ~50 rows/page; high-churn names
+# (BARC, HSBA) need many pages because daily 8.3/8.5/buyback RNS dominate.
+MAX_LISTING_PAGES = 10
+
+# Throttle between paginated fetches inside one instrument; instrument-level
+# politeness is handled by the 1s sleep in the driver.
+INVESTEGATE_PAGE_DELAY = 0.3
 
 # Plain-text body size below which we treat the announcement as a stub (e.g.
 # "Annual Report has been published, available at https://…" publication
@@ -190,14 +198,16 @@ def _parse_announcement_row(row) -> dict | None:
     return {"date": announcement_date, "headline": headline, "url": url}
 
 
-def _fetch_listing_for_tidm(tidm: str) -> list[dict]:
+def _fetch_listing_page_for_tidm(tidm: str, page: int) -> list[dict]:
     """Fetch one Investegate company page and parse announcement rows."""
     url = INVESTEGATE_COMPANY_URL.format(tidm=tidm)
+    if page > 1:
+        url = f"{url}?page={page}"
     try:
         response = requests.get(url, headers=HEADERS, timeout=30)
         response.raise_for_status()
     except requests.RequestException as e:
-        logger.warning("Investegate listing fetch failed for TIDM=%s: %s", tidm, e)
+        logger.warning("Investegate listing fetch failed for TIDM=%s page=%d: %s", tidm, page, e)
         return []
 
     soup = BeautifulSoup(response.text, "html.parser")
@@ -210,20 +220,44 @@ def _fetch_listing_for_tidm(tidm: str) -> list[dict]:
     return announcements
 
 
-def fetch_listing(yahoo_symbol: str) -> list[dict]:
-    """Fetch the Investegate listing for a Yahoo ``.L`` symbol.
+def iter_listing_pages(yahoo_symbol: str, max_pages: int = MAX_LISTING_PAGES):
+    """Yield ``(page_number, rows)`` for ``yahoo_symbol``'s Investegate listing.
 
-    Walks the candidate TIDMs from ``yahoo_symbol_to_tidm_candidates`` and
-    returns the first non-empty result. Returns ``[]`` if no candidate
-    yields announcements. The successful TIDM is logged at DEBUG so the
-    trailing-dot fallback (``BP.L`` → ``BP.``) is observable when needed.
+    Resolves the TIDM on the first non-empty page (handles ``BP.L`` → ``BP.``
+    fallback once) and reuses it. Stops on empty page or ``max_pages``.
     """
-    for tidm in yahoo_symbol_to_tidm_candidates(yahoo_symbol):
-        rows = _fetch_listing_for_tidm(tidm)
-        if rows:
-            logger.debug("Investegate listing for %s served via TIDM=%s (%d rows)", yahoo_symbol, tidm, len(rows))
-            return rows
-    return []
+    working_tidm: str | None = None
+    for page in range(1, max_pages + 1):
+        if page > 1:
+            sleep(INVESTEGATE_PAGE_DELAY)
+
+        if working_tidm is None:
+            for tidm in yahoo_symbol_to_tidm_candidates(yahoo_symbol):
+                rows = _fetch_listing_page_for_tidm(tidm, page=page)
+                if rows:
+                    working_tidm = tidm
+                    logger.debug(
+                        "Investegate listing for %s served via TIDM=%s (page %d, %d rows)",
+                        yahoo_symbol,
+                        tidm,
+                        page,
+                        len(rows),
+                    )
+                    yield page, rows
+                    break
+            if working_tidm is None:
+                return
+        else:
+            rows = _fetch_listing_page_for_tidm(working_tidm, page=page)
+            if not rows:
+                return
+            logger.debug(
+                "Investegate listing for %s page %d (%d rows)",
+                yahoo_symbol,
+                page,
+                len(rows),
+            )
+            yield page, rows
 
 
 def find_earnings_announcements(announcements: list[dict]) -> list[tuple[dict, str]]:
@@ -286,16 +320,122 @@ def get_announcement_html(ticker: str, announcement_date: date, report_type: str
 def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> str:
     """Fetch + analyse the latest earnings-relevant RNS for one ``.L`` ticker.
 
-    Walks earnings-relevant announcements newest-first, short-circuits on the
-    first row already in DB (no-op) or saves the first row that passes the
-    size + LLM gates. Returns one of the ``OUTCOME_*`` tags for batch tallying.
+    Walks Investegate pages lazily, newest-first. Short-circuits on first DB
+    hit (no-op) or saves the first row passing the size + LLM gates. Returns
+    one of the ``OUTCOME_*`` tags for batch tallying.
     """
     if not ticker.endswith(".L"):
         logger.debug("[skip] %s is not a .L listing", ticker)
         return OUTCOME_NOT_LISTED
 
-    announcements = fetch_listing(ticker)
-    if not announcements:
+    accumulated_rows: list[dict] = []
+    seen_keys: set[tuple[date, str]] = set()
+    skipped_stubs = 0
+    candidates_walked = 0
+    pages_used = 0
+
+    for _page_num, page_rows in iter_listing_pages(ticker):
+        pages_used += 1
+        accumulated_rows.extend(page_rows)
+
+        all_candidates = find_earnings_announcements(accumulated_rows)
+        new_candidates = [(a, t) for a, t in all_candidates if (a["date"], t) not in seen_keys]
+        if not new_candidates:
+            continue
+
+        for announcement, type_name in new_candidates:
+            announcement_date = announcement["date"]
+            seen_keys.add((announcement_date, type_name))
+            candidates_walked += 1
+            report_type = f"RNS-{type_name}"
+
+            existing = session.execute(
+                select(EarningsReport).filter(
+                    EarningsReport.instrument_id == instrument_id,
+                    EarningsReport.date == announcement_date,
+                )
+            ).scalar_one_or_none()
+            if existing:
+                # First-candidate page-1 hits stay at DEBUG to keep noop runs quiet;
+                # post-stub or paginated hits log at INFO so the fallback is visible.
+                if skipped_stubs > 0 or pages_used > 1:
+                    logger.info(
+                        "[update-noop] %s — already up-to-date at %s (walked %d stub(s), %d page(s))",
+                        ticker,
+                        announcement_date.isoformat(),
+                        skipped_stubs,
+                        pages_used,
+                    )
+                else:
+                    logger.debug(
+                        "[skip-existing] %s already in DB (%s period %s)",
+                        ticker,
+                        report_type,
+                        announcement_date.isoformat(),
+                    )
+                return OUTCOME_UPDATE_NOOP
+
+            html = get_announcement_html(ticker, announcement_date, report_type, announcement["url"])
+            if html is None:
+                continue
+
+            text = extract_text_from_html(html)
+            if len(text) < MIN_BODY_CHARS:
+                # DEBUG: the per-instrument summary line carries the stub count.
+                logger.debug(
+                    "[skip-stub] %s %s period %s — body %d chars < %d (publication notice); trying earlier candidate",
+                    ticker,
+                    report_type,
+                    announcement_date,
+                    len(text),
+                    MIN_BODY_CHARS,
+                )
+                skipped_stubs += 1
+                continue
+
+            result = summarize_with_llm(text, ticker, report_type=report_type, period=announcement_date.isoformat())
+            if result is None:
+                logger.warning("[error] LLM failed for %s %s — trying earlier candidate", ticker, announcement_date)
+                continue
+
+            if result.get("is_earnings_report") is False:
+                logger.info(
+                    "[skip] %s %s period %s — LLM flagged as non-earnings; trying earlier candidate",
+                    ticker,
+                    report_type,
+                    announcement_date,
+                )
+                continue
+
+            summary = result.get("summary", "")
+            metrics = {k: v for k, v in result.items() if k != "summary"}
+            metrics["report_type"] = report_type
+            metrics["headline"] = announcement["headline"]
+            metrics["source_url"] = announcement["url"]
+
+            earnings_report = EarningsReport(
+                instrument_id=instrument_id,
+                date=announcement_date,
+                summary=summary,
+                metrics=metrics,
+            )
+            session.add(earnings_report)
+            session.commit()
+
+            assessment = metrics.get("investment_assessment") or {}
+            logger.info(
+                "[saved] %s %s period %s | rec=%s conv=%s | pages=%d | %s",
+                ticker,
+                report_type,
+                announcement_date,
+                assessment.get("recommendation", "—"),
+                assessment.get("conviction", "—"),
+                pages_used,
+                announcement["headline"][:80],
+            )
+            return OUTCOME_SAVED
+
+    if pages_used == 0:
         logger.warning(
             "No announcements parsed for %s (tried TIDMs %s)",
             ticker,
@@ -303,112 +443,20 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> str:
         )
         return OUTCOME_LISTING_FAILED
 
-    candidates = find_earnings_announcements(announcements)
-    if not candidates:
+    if candidates_walked == 0:
         logger.info(
-            "[no-match] %s — none of %d recent announcements look like earnings",
+            "[no-match] %s — none of %d announcements across %d page(s) look like earnings",
             ticker,
-            len(announcements),
+            len(accumulated_rows),
+            pages_used,
         )
         return OUTCOME_NO_MATCH
 
-    # Walk earnings-relevant candidates newest-first. Skip publication-notice
-    # stubs via the size gate (no LLM call) and fall through to earlier
-    # candidates — the genuine press release for AZN/HSBA/SHEL/NWG style names
-    # sits a few days behind the "Annual Financial Report" notice.
-    skipped_stubs = 0
-    for announcement, type_name in candidates:
-        announcement_date = announcement["date"]
-        report_type = f"RNS-{type_name}"
-
-        existing = session.execute(
-            select(EarningsReport).filter(
-                EarningsReport.instrument_id == instrument_id,
-                EarningsReport.date == announcement_date,
-            )
-        ).scalar_one_or_none()
-        if existing:
-            # Post-stub DB hits log at INFO so the fallback is visible;
-            # first-candidate hits stay at DEBUG to keep noop runs quiet.
-            if skipped_stubs > 0:
-                logger.info(
-                    "[update-noop] %s — already up-to-date at %s (walked past %d stub(s))",
-                    ticker,
-                    announcement_date.isoformat(),
-                    skipped_stubs,
-                )
-            else:
-                logger.debug(
-                    "[skip-existing] %s already in DB (%s period %s)",
-                    ticker,
-                    report_type,
-                    announcement_date.isoformat(),
-                )
-            return OUTCOME_UPDATE_NOOP
-
-        html = get_announcement_html(ticker, announcement_date, report_type, announcement["url"])
-        if html is None:
-            continue
-
-        text = extract_text_from_html(html)
-        if len(text) < MIN_BODY_CHARS:
-            # DEBUG: the per-instrument summary line carries the stub count.
-            logger.debug(
-                "[skip-stub] %s %s period %s — body %d chars < %d (publication notice); trying earlier candidate",
-                ticker,
-                report_type,
-                announcement_date,
-                len(text),
-                MIN_BODY_CHARS,
-            )
-            skipped_stubs += 1
-            continue
-
-        result = summarize_with_llm(text, ticker, report_type=report_type, period=announcement_date.isoformat())
-        if result is None:
-            logger.warning("[error] LLM failed for %s %s — trying earlier candidate", ticker, announcement_date)
-            continue
-
-        if result.get("is_earnings_report") is False:
-            logger.info(
-                "[skip] %s %s period %s — LLM flagged as non-earnings; trying earlier candidate",
-                ticker,
-                report_type,
-                announcement_date,
-            )
-            continue
-
-        summary = result.get("summary", "")
-        metrics = {k: v for k, v in result.items() if k != "summary"}
-        metrics["report_type"] = report_type
-        metrics["headline"] = announcement["headline"]
-        metrics["source_url"] = announcement["url"]
-
-        earnings_report = EarningsReport(
-            instrument_id=instrument_id,
-            date=announcement_date,
-            summary=summary,
-            metrics=metrics,
-        )
-        session.add(earnings_report)
-        session.commit()
-
-        assessment = metrics.get("investment_assessment") or {}
-        logger.info(
-            "[saved] %s %s period %s | rec=%s conv=%s | %s",
-            ticker,
-            report_type,
-            announcement_date,
-            assessment.get("recommendation", "—"),
-            assessment.get("conviction", "—"),
-            announcement["headline"][:80],
-        )
-        return OUTCOME_SAVED
-
     logger.info(
-        "[exhausted] %s — %d earnings-relevant candidates all rejected (stubs/non-earnings)",
+        "[exhausted] %s — %d earnings-relevant candidates rejected (stubs/non-earnings) across %d page(s)",
         ticker,
-        len(candidates),
+        candidates_walked,
+        pages_used,
     )
     return OUTCOME_EXHAUSTED
 
