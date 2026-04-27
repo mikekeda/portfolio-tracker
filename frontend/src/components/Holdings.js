@@ -855,6 +855,37 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 60,
       }),
+      columnHelper.accessor('f_score', {
+        header: () => <span title="Piotroski F-Score (0–9): 9-point fundamentals checklist">F</span>,
+        cell: (info) => {
+          const value = info.getValue();
+          if (value === null || value === undefined) return <span className="screener-score"></span>;
+
+          // Mirror the screener-score tiers so quality columns share a visual language.
+          let className = '';
+          if (value >= 8) className = 'excellent';
+          else if (value >= 6) className = 'good';
+          else if (value >= 4) className = 'average';
+          else if (value >= 2) className = 'poor';
+          else className = 'very-poor';
+
+          const details = info.row.original.f_score_details;
+          const tip = details
+            ? `Piotroski F-Score: ${value}/9\n\n${Object.entries(details)
+                .map(([label, passed]) => `${passed ? '✓' : '✗'} ${label}`)
+                .join('\n')}`
+            : `Piotroski F-Score: ${value}/9`;
+
+          return (
+            <span className={`screener-score ${className}`} title={tip}>
+              {value}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 40,
+      }),
       columnHelper.accessor('free_cashflow_yield', {
         header: 'FCF',
         cell: (info) => {
@@ -1554,6 +1585,7 @@ const Holdings = () => {
       'profit_margins': 'Margins',
       'revenue_growth': 'Growth',
       'roic': 'ROIC',
+      'f_score': 'F',
       'free_cashflow_yield': 'FCF',
       'quickRatio': 'Quick',
       'debtToEquity': 'D/E',

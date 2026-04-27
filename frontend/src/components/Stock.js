@@ -795,6 +795,20 @@ const Stock = () => {
       tooltip: kpiTooltips['FCF Yield'],
     },
     ...(() => {
+      if (data.f_score == null) return [];
+      const details = data.f_score_details || {};
+      const breakdown = Object.entries(details)
+        .map(([label, passed]) => `${passed ? '✓' : '✗'} ${label}`)
+        .join('\n');
+      const tooltip = `Piotroski F-Score: ${data.f_score}/9${breakdown ? `\n\n${breakdown}` : ''}`;
+      return [{
+        label: 'F-Score',
+        value: `${data.f_score}/9`,
+        className: data.f_score >= 8 ? 'positive' : data.f_score <= 3 ? 'negative' : '',
+        tooltip,
+      }];
+    })(),
+    ...(() => {
       const apt = data.analyst_price_targets || {};
       const mean = apt.mean;
       const lo = apt.low;

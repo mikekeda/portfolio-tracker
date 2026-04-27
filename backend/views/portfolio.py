@@ -22,6 +22,7 @@ from backend.utils.market_data import (
     get_consumer_sentiment,
     get_yield_spread,
 )
+from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
@@ -313,7 +314,9 @@ async def get_current_portfolio(
         dcf_high = dcf_analysis["high"]
 
         # Yahoo Finance info for this instrument
-        info = (holding.instrument.yahoo.info or {}) if holding.instrument.yahoo else {}
+        yh = holding.instrument.yahoo
+        info = (yh.info or {}) if yh else {}
+        f_score_result = get_piotroski_f_score(yh.cashflow, yh.balance_sheet, yh.income_stmt) if yh else None
         trends = calculate_historical_trends(holding)
         profit = holding.ppl if holding.ppl is not None else 0
         cost_basis = (market_value_gbp - holding.ppl) if holding.ppl is not None else 0
@@ -376,6 +379,8 @@ async def get_current_portfolio(
                 if info.get("returnOnEquity")
                 else None,  # Keep full precision for screener evaluation
                 "roic": get_roic(info),
+                "f_score": f_score_result["score"] if f_score_result else None,
+                "f_score_details": f_score_result["details"] if f_score_result else None,
                 "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100
                 if (info.get("freeCashflow") and info.get("marketCap", 0) > 0)
                 else None,

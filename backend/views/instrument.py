@@ -16,6 +16,7 @@ from backend.utils.form13f import (
     _compute_form13f_signal_score,
     _score_reason,
 )
+from backend.utils.piotroski import get_piotroski_f_score
 from backend.views._shared import get_rates
 from config import PRICE_FIELD, TIMEZONE
 from models import (
@@ -351,6 +352,7 @@ async def get_instrument(
     dcf_diff: float | None = (dcf_price / current_price - 1) if (dcf_price and current_price) else None
 
     yh = instrument.yahoo
+    f_score_result = get_piotroski_f_score(yh.cashflow, yh.balance_sheet, yh.income_stmt) if yh else None
     return {
         "instrument": {
             "id": instrument.id,
@@ -384,4 +386,6 @@ async def get_instrument(
         "dcf_low": dcf_low,
         "dcf_high": dcf_high,
         "dcf_implied_growth": dcf_analysis["implied_growth"],
+        "f_score": f_score_result["score"] if f_score_result else None,
+        "f_score_details": f_score_result["details"] if f_score_result else None,
     }
