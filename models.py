@@ -194,6 +194,8 @@ class InstrumentYahoo(Base):
     splits: Mapped[dict[str, Any]] = mapped_column(JSONB)
     news: Mapped[list[dict[str, Any]]] = mapped_column(JSONB)
     pes: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    balance_sheet: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    income_stmt: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -112,6 +112,8 @@ class YahooData(TypedDict):
     analyst_price_targets: dict[str, float]
     splits: dict[str, float]
     news: list[dict[str, Any]]
+    balance_sheet: dict[str, dict[str, Optional[int]]]
+    income_stmt: dict[str, dict[str, Optional[int]]]
 
 
 TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
@@ -358,6 +360,8 @@ def update_holdings() -> list[HoldingDaily]:
                 yahoo_row.analyst_price_targets = yahoo_datas[yahoo_symbol]["analyst_price_targets"]
                 yahoo_row.splits = yahoo_datas[yahoo_symbol]["splits"]
                 yahoo_row.news = yahoo_datas[yahoo_symbol]["news"]  # TODO: Keep old news?
+                yahoo_row.balance_sheet = yahoo_datas[yahoo_symbol]["balance_sheet"]
+                yahoo_row.income_stmt = yahoo_datas[yahoo_symbol]["income_stmt"]
                 yahoo_row.updated_at = datetime.now(TIMEZONE)
             else:
                 session.add(
@@ -371,6 +375,8 @@ def update_holdings() -> list[HoldingDaily]:
                         splits=yahoo_datas[yahoo_symbol]["splits"],
                         news=yahoo_datas[yahoo_symbol]["news"],
                         pes={},  # Populated by scrape_wisesheets_pe / scrape_macrotrends_pe
+                        balance_sheet=yahoo_datas[yahoo_symbol]["balance_sheet"],
+                        income_stmt=yahoo_datas[yahoo_symbol]["income_stmt"],
                     )
                 )
 
@@ -629,6 +635,8 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
         "analyst_price_targets": {},
         "splits": {},
         "news": [],
+        "balance_sheet": {},
+        "income_stmt": {},
     }
 
     try:
@@ -640,6 +648,10 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
 
         data = ticker.cashflow.to_dict()
         yahoo_data["cashflow"] = scrub_for_json(data)
+
+        # Annual balance sheet + income statement power the Piotroski F-Score (needs YoY deltas).
+        yahoo_data["balance_sheet"] = scrub_for_json(ticker.balance_sheet.to_dict())
+        yahoo_data["income_stmt"] = scrub_for_json(ticker.income_stmt.to_dict())
 
         try:
             data = ticker.get_earnings_dates(limit=40)
