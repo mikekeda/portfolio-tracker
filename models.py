@@ -247,6 +247,11 @@ class InstrumentMetricsDaily(Base):
     institutional: Mapped[float] = mapped_column(Float, nullable=True)  # heldPercentInstitutions
     beta: Mapped[float] = mapped_column(Float, nullable=True)
 
+    # Insider trades aggregated over trailing 90 days (yfinance, US-only coverage in practice)
+    insider_buy_count_90d: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    insider_sell_count_90d: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    insider_net_value_90d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
 

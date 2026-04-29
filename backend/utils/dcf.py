@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import EQUITY_RISK_PREMIUM, TIMEZONE
 from models import Instrument, PricesDaily
-from backend.utils.market_data import get_risk_free_rates
+from utils.market_data import get_risk_free_rates
 from backend.utils.technical import PRICE_COLUMN, calculate_annualized_volatility
 
 # --- Constants ---

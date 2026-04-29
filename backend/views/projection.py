@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app import get_db_session
-from backend.utils.market_data import gen_fred_latest
+from utils.market_data import gen_fred_latest
 from models import PortfolioDaily
 
 router = APIRouter()

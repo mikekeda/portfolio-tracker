@@ -16,7 +16,7 @@ import certifi
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from backend.utils.market_data import (
+from utils.market_data import (
     gen_buffett_indicator,
     gen_fear_greed_index,
     gen_market_breadth_indicator,

@@ -40,6 +40,7 @@ from config import (
     TRADING212_API_KEY,
     logger,
 )
+from utils.insider import compute_insider_signal
 from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
 from models import (
     CurrencyRateDaily,
@@ -114,6 +115,7 @@ class YahooData(TypedDict):
     news: list[dict[str, Any]]
     balance_sheet: dict[str, dict[str, Optional[int]]]
     income_stmt: dict[str, dict[str, Optional[int]]]
+    insider_transactions: list[dict[str, Any]]
 
 
 TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
@@ -381,6 +383,10 @@ def update_holdings() -> list[HoldingDaily]:
                 )
 
             # Upsert InstrumentMetricsDaily for this date (market facts)
+            insider_signal = compute_insider_signal(
+                yahoo_datas[yahoo_symbol].get("insider_transactions"),
+                current_date,
+            )
             metrics_row = (
                 session.query(InstrumentMetricsDaily)
                 .filter(
@@ -394,6 +400,9 @@ def update_holdings() -> list[HoldingDaily]:
                 metrics_row.pe_ratio = yahoo_data.get("trailingPE")
                 metrics_row.institutional = yahoo_data.get("heldPercentInstitutions")
                 metrics_row.beta = yahoo_data.get("beta")
+                metrics_row.insider_buy_count_90d = insider_signal["buy_count"]
+                metrics_row.insider_sell_count_90d = insider_signal["sell_count"]
+                metrics_row.insider_net_value_90d = insider_signal["net_value"]
                 metrics_row.updated_at = datetime.now(TIMEZONE)
             else:
                 session.add(
@@ -404,6 +413,9 @@ def update_holdings() -> list[HoldingDaily]:
                         pe_ratio=yahoo_data.get("trailingPE"),
                         institutional=yahoo_data.get("heldPercentInstitutions"),
                         beta=yahoo_data.get("beta"),
+                        insider_buy_count_90d=insider_signal["buy_count"],
+                        insider_sell_count_90d=insider_signal["sell_count"],
+                        insider_net_value_90d=insider_signal["net_value"],
                     )
                 )
 
@@ -637,6 +649,7 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
         "news": [],
         "balance_sheet": {},
         "income_stmt": {},
+        "insider_transactions": [],
     }
 
     try:
@@ -652,6 +665,17 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
         # Annual balance sheet + income statement power the Piotroski F-Score (needs YoY deltas).
         yahoo_data["balance_sheet"] = scrub_for_json(ticker.balance_sheet.to_dict())
         yahoo_data["income_stmt"] = scrub_for_json(ticker.income_stmt.to_dict())
+
+        # Yahoo's holders modules are by far the flakiest part of yfinance
+        # (404s, KeyErrors, empty frames — see ranaroussi/yfinance#1904). Wrap
+        # in its own try so a single bad response doesn't taint the rest of
+        # the profile fetch. UK/EU tickers will simply return [].
+        try:
+            insider_df = ticker.insider_transactions
+            if insider_df is not None and not insider_df.empty:
+                yahoo_data["insider_transactions"] = scrub_for_json(insider_df.to_dict(orient="records"))
+        except Exception as e:  # noqa: BLE001 — yfinance throws every exception type imaginable here
+            logger.debug("No insider_transactions for %s: %s", ticker.ticker, e)
 
         try:
             data = ticker.get_earnings_dates(limit=40)
@@ -688,7 +712,7 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
 
 def get_yahoo_ticker_data(symbols: list[str]) -> dict[str, YahooData]:
     """Update Yahoo Finance data for all holdings."""
-    logger.info("Fetching %s Yahoo Finance profiles", len(symbols))
+    logger.info("Fetching %s Yahoo Finance profiles (first 10: %s)", len(symbols), symbols[:10])
     yahoo_data: dict[str, YahooData] = {}
 
     # Fetch in batches

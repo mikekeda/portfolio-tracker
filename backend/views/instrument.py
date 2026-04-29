@@ -25,6 +25,7 @@ from models import (
     Form13FManager,
     HoldingDaily,
     Instrument,
+    InstrumentMetricsDaily,
     PricesDaily,
     TransactionHistory,
 )
@@ -353,6 +354,20 @@ async def get_instrument(
 
     yh = instrument.yahoo
     f_score_result = get_piotroski_f_score(yh.cashflow, yh.balance_sheet, yh.income_stmt) if yh else None
+
+    # Latest insider aggregates from the most recent metrics row.
+    insider_row = (
+        await session.execute(
+            select(
+                InstrumentMetricsDaily.insider_buy_count_90d,
+                InstrumentMetricsDaily.insider_sell_count_90d,
+                InstrumentMetricsDaily.insider_net_value_90d,
+            )
+            .where(InstrumentMetricsDaily.instrument_id == instrument.id)
+            .order_by(InstrumentMetricsDaily.date.desc())
+            .limit(1)
+        )
+    ).first()
     return {
         "instrument": {
             "id": instrument.id,
@@ -388,4 +403,7 @@ async def get_instrument(
         "dcf_implied_growth": dcf_analysis["implied_growth"],
         "f_score": f_score_result["score"] if f_score_result else None,
         "f_score_details": f_score_result["details"] if f_score_result else None,
+        "insider_buy_count_90d": insider_row[0] if insider_row else None,
+        "insider_sell_count_90d": insider_row[1] if insider_row else None,
+        "insider_net_value_90d": insider_row[2] if insider_row else None,
     }

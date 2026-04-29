@@ -14,7 +14,7 @@ from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.drawdown import compute_max_drawdown, underwater_series
 from backend.utils.form13f import _get_form13f_for_instruments
-from backend.utils.market_data import (
+from utils.market_data import (
     gen_buffett_indicator,
     gen_fear_greed_index,
     gen_market_breadth_indicator,
@@ -33,6 +33,7 @@ from models import (
     EarningsReport,
     HoldingDaily,
     Instrument,
+    InstrumentMetricsDaily,
     PortfolioDaily,
     PricesDaily,
     TransactionAction,
@@ -81,6 +82,48 @@ def _twrr_wealth_index(
             continue
         out.append(factor ** (days / 365.25))
     return out
+
+
+async def _get_insider_signals(session: AsyncSession, instrument_ids: list[int]) -> dict[int, dict]:
+    """Return latest 90d insider aggregates per instrument as {instrument_id: {...}}.
+
+    Pulls the most recent ``InstrumentMetricsDaily`` row (across any date) per
+    instrument so the signal survives a brief gap in daily ingestion.
+    """
+    if not instrument_ids:
+        return {}
+
+    latest_sq = (
+        select(
+            InstrumentMetricsDaily.instrument_id,
+            func.max(InstrumentMetricsDaily.date).label("max_date"),
+        )
+        .where(InstrumentMetricsDaily.instrument_id.in_(instrument_ids))
+        .group_by(InstrumentMetricsDaily.instrument_id)
+        .subquery()
+    )
+    rows = await session.execute(
+        select(
+            InstrumentMetricsDaily.instrument_id,
+            InstrumentMetricsDaily.insider_buy_count_90d,
+            InstrumentMetricsDaily.insider_sell_count_90d,
+            InstrumentMetricsDaily.insider_net_value_90d,
+        ).join(
+            latest_sq,
+            and_(
+                InstrumentMetricsDaily.instrument_id == latest_sq.c.instrument_id,
+                InstrumentMetricsDaily.date == latest_sq.c.max_date,
+            ),
+        )
+    )
+    return {
+        inst_id: {
+            "insider_buy_count_90d": buy,
+            "insider_sell_count_90d": sell,
+            "insider_net_value_90d": net,
+        }
+        for inst_id, buy, sell, net in rows.all()
+    }
 
 
 async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int, dict]:
@@ -297,6 +340,7 @@ async def get_current_portfolio(
     instrument_ids = [h.instrument.id for h in items]
     form13f = await _get_form13f_for_instruments(session, instrument_ids)
     earnings_signals = await _get_earnings_signals(session, items)
+    insider_signals = await _get_insider_signals(session, instrument_ids)
 
     portfolio_data = []
     for holding in items:
@@ -429,6 +473,14 @@ async def get_current_portfolio(
                         "earnings_conviction": None,
                         "since_earnings_pct": None,
                         "earnings_announcement_date": None,
+                    }
+                ),
+                **(
+                    insider_signals.get(holding.instrument.id)
+                    or {
+                        "insider_buy_count_90d": None,
+                        "insider_sell_count_90d": None,
+                        "insider_net_value_90d": None,
                     }
                 ),
             }

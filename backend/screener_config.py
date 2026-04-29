@@ -448,6 +448,33 @@ class ScreenerConfig:
                     "value_quality",
                 ],
             ),
+            # Insider Cluster Buying (Lakonishok-Lee).
+            # Yahoo proxies SEC Form 3/4, so coverage is effectively US-only — UK/EU
+            # holdings will simply not pass this rule (insider_buy_count_90d=0).
+            "insider_buying": ScreenerDefinition(
+                id="insider_buying",
+                name="Insider Cluster Buying",
+                description=">= 2 distinct insiders net-bought in last 90d with net value >= $50k",
+                category=ScreenerCategory.FUNDAMENTALS,
+                criteria=[
+                    ScreenerCriteria("insider_buy_count_90d", ">=", 2, ">= 2 distinct insider buyers in 90d"),
+                    ScreenerCriteria("insider_net_value_90d", ">=", 50_000, "Net buy >= $50k (filters token trades)"),
+                ],
+                requires_historical_data=False,
+                requires_yahoo_data=False,
+                available=True,
+                weight=6,
+                combine_with=[
+                    "qarp",
+                    "top_quality_proxy",
+                    "pe_vs_history",
+                    "value_quality",
+                    "growth_at_reasonable_price",
+                    "oversold_uptrend",
+                    "momentum_pullback",
+                    "quality_growth_pullback",
+                ],
+            ),
             "pe_vs_history": ScreenerDefinition(
                 id="pe_vs_history",
                 name="PE Below 5-Year Average",
@@ -615,6 +642,8 @@ Check those criteria:
             "roic",
             "debtToEquity",
             "total_revenue",
+            "insider_buy_count_90d",
+            "insider_net_value_90d",
         ]
 
     def validate(self) -> None:

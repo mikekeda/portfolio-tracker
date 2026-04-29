@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
-from backend.utils.market_data import gen_fred_latest
+from utils.market_data import gen_fred_latest
 from backend.views._shared import get_rates
 from config import TIMEZONE
 from models import HoldingDaily, Instrument, MarketMetricsDaily, Pie, PieInstrument

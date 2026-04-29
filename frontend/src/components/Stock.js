@@ -809,6 +809,32 @@ const Stock = () => {
       }];
     })(),
     ...(() => {
+      const buys = data.insider_buy_count_90d;
+      const sells = data.insider_sell_count_90d;
+      const net = data.insider_net_value_90d;
+      // Hide tile entirely when there's no coverage (NULL from backend) OR
+      // no activity at all in the window — empty "0B / 0S" is just noise.
+      if (buys == null && sells == null) return [];
+      const b = buys ?? 0;
+      const s = sells ?? 0;
+      if (b === 0 && s === 0) return [];
+      const n = net ?? 0;
+      const formatK = (v) => {
+        const abs = Math.abs(v);
+        if (abs >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
+        if (abs >= 1_000) return `${(v / 1_000).toFixed(0)}k`;
+        return v.toFixed(0);
+      };
+      const sign = n >= 0 ? '+' : '-';
+      const netLabel = `${sign}$${formatK(Math.abs(n))}`;
+      return [{
+        label: 'Insiders 90d',
+        value: `${b}B / ${s}S`,
+        className: b >= 2 && n > 0 ? 'positive' : (s >= 3 && n < 0 ? 'negative' : ''),
+        tooltip: `Insider trades (last 90d): ${b} buyer(s), ${s} seller(s)\nNet value: ${netLabel}\nSource: yfinance / SEC Form 4 (US tickers only)`,
+      }];
+    })(),
+    ...(() => {
       const apt = data.analyst_price_targets || {};
       const mean = apt.mean;
       const lo = apt.low;
