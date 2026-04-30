@@ -22,15 +22,12 @@ from lxml import etree
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from config import logger
+from config import SEC_USER_AGENT, logger
 from models import Form13FFiling, Form13FHolding, Form13FManager, Instrument
 from scripts.update_data import get_session
 
-# SEC requires User-Agent in format: "Company Name email@example.com"
-# See: https://www.sec.gov/os/accessing-edgar-data
-USER_AGENT = "PortfolioTracker/1.0 (admin@example.com)"
 HEADERS = {
-    "User-Agent": USER_AGENT,
+    "User-Agent": SEC_USER_AGENT,
     "Accept": "application/json",
     "Accept-Encoding": "gzip, deflate",
 }

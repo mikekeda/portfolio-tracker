@@ -58,6 +58,10 @@ async def _build_earnings_reports(instrument, yh, session: AsyncSession) -> list
     # Collect all announcement dates we'll need prices for
     announcement_dates: list[date] = []
     for report in reports:
+        # PR rows carry the explicit release date in metrics["release_date"]
+        if report.metrics.get("report_type") == "PR":
+            announcement_dates.append(date.fromisoformat(report.metrics["release_date"]))
+            continue
         best: date | None = None
         best_delta = float("inf")
         for yd in yahoo_dates:

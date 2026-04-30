@@ -36,21 +36,18 @@ import requests
 from sqlalchemy import func, select
 from sqlalchemy.sql import text as sql_text
 
-from config import logger
+from config import SEC_USER_AGENT, logger
 from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
 from scripts._earnings_common import (
     DATA_DIR,
+    PR_REPORT_TYPE,
     _check_file_exists_for_date,
     extract_text_from_html,
     summarize_with_llm,
 )
 from scripts.update_data import get_session
 
-# SEC requires a User-Agent in the format: "Company Name email@example.com"
-# TODO: Replace with your actual contact info
-USER_AGENT = "PortfolioTracker/1.0 (admin@example.com)"
-
-HEADERS = {"User-Agent": USER_AGENT, "Accept-Encoding": "gzip, deflate", "Host": "www.sec.gov"}
+HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate", "Host": "www.sec.gov"}
 
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{primary_document}"
@@ -67,7 +64,7 @@ def get_latest_filing_metadata(cik: str, form_types: tuple[str, ...] = ("10-Q", 
     """
 
     url = SEC_SUBMISSIONS_URL.format(cik=cik)
-    response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+    response = requests.get(url, headers={"User-Agent": SEC_USER_AGENT}, timeout=30)
     response.raise_for_status()
     data = response.json()
 
@@ -172,7 +169,7 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     report_date = metadata["reportDate"]
     form = metadata["form"]
 
-    # 2. DB check — primary skip condition
+    # 2. DB check — skip if a canonical row already exists; supersede a PR row
     existing_report = session.execute(
         select(EarningsReport).filter(
             EarningsReport.instrument_id == instrument_id, EarningsReport.date == date.fromisoformat(report_date)
@@ -180,8 +177,22 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     ).scalar_one_or_none()
 
     if existing_report:
-        logger.debug("[skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
-        return existing_report
+        # PR rows are placeholders ingested via ingest_earnings_pr.py; replace
+        # them with the canonical SEC filing. Legacy rows (pre-cce2a1f3) lack
+        # report_type → fall into the else branch and are kept as-is.
+        if existing_report.metrics.get("report_type") == PR_REPORT_TYPE:
+            logger.info(
+                "[supersede] %s: replacing PR row %d with canonical %s (period %s)",
+                ticker,
+                existing_report.id,
+                form,
+                report_date,
+            )
+            session.delete(existing_report)
+            session.flush()
+        else:
+            logger.debug("[skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
+            return existing_report
 
     # 3. Check HTML cache
     safe_form = form.replace("/", "_")

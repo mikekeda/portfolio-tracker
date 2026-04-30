@@ -23,6 +23,7 @@ from typing import Any, Literal
 
 from bs4 import BeautifulSoup
 from google import genai
+from google.genai import types
 from pydantic import BaseModel, Field
 
 from config import GEMINI_API_KEY, logger
@@ -47,7 +48,12 @@ ReportType = Literal[
     "RNS-PRELIM",
     "RNS-ANNUAL",
     "RNS-TRADING",
+    "PR",
 ]
+
+# PR (press release) rows are intentionally temporary — superseded by the
+# canonical SEC filing in get_earnings_reports.py once it lands on EDGAR.
+PR_REPORT_TYPE = "PR"
 
 _genai_client: genai.Client | None = None
 
@@ -336,6 +342,15 @@ _REGIONAL_NOTES_FPI = """
 - Outlook sections may quote currencies other than USD (EUR, GBP, JPY). Do not force conversion to USD.
 """
 
+_REGIONAL_NOTES_PR = """
+**Earnings press-release notes:**
+- This is a same-day earnings press release (typically issued on the day of the earnings call), NOT a regulatory filing.
+- The corresponding SEC 10-Q / 10-K / 20-F / 6-K filing usually lands 2-4 weeks later with full GAAP detail; this row is intended to be superseded by that SEC row.
+- Press releases focus on headline P&L, segment commentary, and forward guidance. Balance-sheet detail is often limited or absent.
+- Numbers may be preliminary; minor restatements occasionally appear in the eventual SEC filing.
+- Currency, EPS units, and accounting basis (GAAP / non-GAAP / adjusted) follow the company's filing convention — preserve them as stated.
+"""
+
 _REGIONAL_NOTES_RNS = """
 **UK RNS (LSE) notes:**
 - This is a UK regulatory news announcement, not a SEC filing.
@@ -353,6 +368,8 @@ _REGIONAL_NOTES_RNS = """
 
 
 def _regional_notes_for(report_type: str) -> str:
+    if report_type == "PR":
+        return _REGIONAL_NOTES_PR
     if report_type in ("20-F", "40-F", "6-K"):
         return _REGIONAL_NOTES_FPI
     if report_type.startswith("RNS-"):
@@ -411,6 +428,72 @@ def summarize_with_llm(
         response = client.models.generate_content(
             model=MODEL,
             contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_json_schema": EarningsReportMetrics.model_json_schema(),
+            },
+        )
+
+        result_dict = json.loads(response.text)
+        validated_result = EarningsReportMetrics.model_validate(result_dict)
+        return validated_result.model_dump()
+
+    except Exception as e:
+        logger.error("Error calling Gemini API: %s", e, exc_info=True)
+        return None
+
+
+def summarize_pdf_with_llm(
+    pdf_bytes: bytes,
+    ticker: str,
+    report_type: str,
+    period: str,
+) -> dict[str, Any] | None:
+    """Run the same extraction pipeline as ``summarize_with_llm`` but with a PDF source.
+
+    Sends the PDF directly to Gemini's multimodal endpoint instead of pre-extracting
+    text. Lets the model own table/multi-column layout parsing, which is where local
+    PDF extractors (pypdf / pdfplumber) typically misread financial tables.
+
+    Args:
+        pdf_bytes: Raw PDF content (already downloaded by the caller).
+        ticker: Yahoo Finance symbol (used in the prompt only).
+        report_type: One of the ReportType literal values; selects regional notes.
+        period: ISO date string used as period context in the prompt.
+
+    Returns the same dict shape as ``summarize_with_llm``, or None on API error.
+    """
+    logger.info(
+        "Analyzing %s PDF for %s period %s (%d bytes)",
+        report_type,
+        ticker,
+        period,
+        len(pdf_bytes),
+    )
+
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY is not set in config.py or environment variables")
+        return None
+
+    try:
+        client = _get_genai_client()
+
+        # Reuse the shared prompt; the {text} slot is just a pointer to the attached
+        # PDF since the document is sent as a separate Part.
+        prompt = _BASE_PROMPT.format(
+            ticker=ticker,
+            report_type=report_type,
+            period=period,
+            regional_notes=_regional_notes_for(report_type),
+            text="(See the attached PDF for the full report. Extract all metrics from it.)",
+        )
+
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[
+                types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf"),
+                prompt,
+            ],
             config={
                 "response_mime_type": "application/json",
                 "response_json_schema": EarningsReportMetrics.model_json_schema(),

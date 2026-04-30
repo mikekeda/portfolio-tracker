@@ -74,6 +74,9 @@ DOMAIN = get_env_var("DOMAIN", "http://localhost:3000")
 FRED_API_KEY = get_env_var("FRED_API_KEY")
 GEMINI_API_KEY = get_env_var("GEMINI_API_KEY")
 
+# SEC EDGAR requires User-Agent in the form "Company Name email@example.com".
+SEC_USER_AGENT = "PortfolioTracker/1.0 (admin@example.com)"
+
 # Yahoo Finance Configuration
 PRICE_FIELD = "Adj Close"  # or "close_price" if you prefer raw closes
 BATCH_SIZE_YF = 50  # tickers per yahoo request
