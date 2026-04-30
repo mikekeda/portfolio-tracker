@@ -1,4 +1,4 @@
-"""Ingest a single earnings-release PDF and persist as ``EarningsReport`` (``report_type='PR'``).
+"""Ingest a single earnings-release (PDF or HTML page) and persist as ``EarningsReport`` (``report_type='PR'``).
 
 Earnings press releases hit IR sites on the day of the earnings call, weeks before
 the corresponding SEC 10-Q / 10-K / 20-F / 40-F / 6-K filing lands in EDGAR. This
@@ -6,11 +6,15 @@ script lets the dashboard pick up forward-looking signal same-day.
 
 Usage::
 
+    # Direct PDF (Alphabet, ASML, ...)
     python scripts/ingest_earnings_pr.py \\
         --url https://s206.q4cdn.com/.../2026q1-alphabet-earnings-release.pdf \\
-        --ticker GOOGL \\
-        --period-end 2026-03-31 \\
-        --release-date 2026-04-24
+        --ticker GOOGL --period-end 2026-03-31 --release-date 2026-04-29
+
+    # Server-rendered HTML page (Meta, ...)
+    python scripts/ingest_earnings_pr.py \\
+        --url https://investor.atmeta.com/investor-news/.../Meta-Reports-First-Quarter-2026-Results/default.aspx \\
+        --ticker META --period-end 2026-03-31 --release-date 2026-04-29
 
 The persisted row uses ``period-end`` as ``EarningsReport.date`` — matching the
 SEC ingestion convention (``EarningsReport.date == EDGAR reportDate == fiscal
@@ -31,30 +35,54 @@ from sqlalchemy import select
 
 from config import SEC_USER_AGENT, logger
 from models import EarningsReport, Instrument
-from scripts._earnings_common import DATA_DIR, PR_REPORT_TYPE, summarize_pdf_with_llm
+from scripts._earnings_common import (
+    DATA_DIR,
+    PR_REPORT_TYPE,
+    extract_text_from_html,
+    summarize_pdf_with_llm,
+    summarize_with_llm,
+)
 from scripts.update_data import get_session
 
+# Real press-release HTML runs 5-20k chars; below this is almost certainly
+# a JS-rendered shell with only nav/footer — bail before the Gemini call.
+MIN_HTML_BODY_CHARS = 2000
 
-def _download_pdf(url: str, cache_path: Path) -> bytes:
-    """Return the PDF bytes, fetching from ``url`` if not already cached on disk."""
-    if cache_path.exists():
-        logger.debug("Loading cached PDF from %s", cache_path)
-        return cache_path.read_bytes()
+
+def _download(url: str, cache_dir: Path, stem: str) -> tuple[bytes, str]:
+    """Return ``(content_bytes, kind)`` where ``kind`` is ``"pdf"`` or ``"html"``.
+
+    Cache file is ``cache_dir/{stem}.{pdf|html}``; subsequent calls reuse it.
+    Kind is sniffed from the response Content-Type header (with PDF magic-byte
+    fallback). Raises ValueError on anything that isn't PDF or HTML.
+    """
+    pdf_path = cache_dir / f"{stem}.pdf"
+    html_path = cache_dir / f"{stem}.html"
+    if pdf_path.exists():
+        logger.debug("Loading cached PDF from %s", pdf_path)
+        return pdf_path.read_bytes(), "pdf"
+    if html_path.exists():
+        logger.debug("Loading cached HTML from %s", html_path)
+        return html_path.read_bytes(), "html"
 
     logger.info("Downloading %s", url)
     resp = requests.get(url, timeout=60, headers={"User-Agent": SEC_USER_AGENT})
     resp.raise_for_status()
 
-    content_type = resp.headers.get("Content-Type", "")
-    if "pdf" not in content_type.lower() and not resp.content.startswith(b"%PDF"):
-        raise ValueError(
-            f"URL did not return a PDF (Content-Type={content_type!r}, "
-            f"first bytes={resp.content[:8]!r})"
-        )
+    content_type = resp.headers.get("Content-Type", "").lower()
+    is_pdf = "pdf" in content_type or resp.content.startswith(b"%PDF")
 
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
-    cache_path.write_bytes(resp.content)
-    return resp.content
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    if is_pdf:
+        pdf_path.write_bytes(resp.content)
+        return resp.content, "pdf"
+    if "html" in content_type:
+        html_path.write_bytes(resp.content)
+        return resp.content, "html"
+    raise ValueError(
+        f"URL did not return PDF or HTML (Content-Type={content_type!r}, "
+        f"first bytes={resp.content[:8]!r})"
+    )
 
 
 def ingest(
@@ -72,8 +100,7 @@ def ingest(
             logger.error("No instrument found for ticker %s — aborting", ticker)
             return
 
-        # PR and canonical SEC rows both key on period_end, so the
-        # UniqueConstraint(instrument_id, date) guarantees at most one row.
+        # Both PR and canonical rows key on period_end, so one row max per fiscal period.
         existing = session.execute(
             select(EarningsReport)
             .where(EarningsReport.instrument_id == instrument.id)
@@ -82,8 +109,7 @@ def ingest(
 
         existing_pr: EarningsReport | None = None
         if existing:
-            # Legacy SEC rows (pre-cce2a1f3) have metrics without "report_type".
-            # Treat any non-"PR" value (incl. legacy) as canonical and skip.
+            # pre-cce2a1f3 rows lack report_type; treat any non-"PR" as canonical.
             existing_type = existing.metrics.get("report_type")
             if existing_type != PR_REPORT_TYPE:
                 logger.info(
@@ -105,19 +131,37 @@ def ingest(
                 return
             existing_pr = existing
 
-        cache_path = DATA_DIR / ticker / f"{release_date.isoformat()}_PR.pdf"
+        cache_dir = DATA_DIR / ticker
+        stem = f"{release_date.isoformat()}_PR"
         try:
-            pdf_bytes = _download_pdf(url, cache_path)
+            content, kind = _download(url, cache_dir, stem)
         except (requests.RequestException, ValueError) as e:
-            logger.error("PDF download failed for %s (%s): %s", ticker, url, e)
+            logger.error("Download failed for %s (%s): %s", ticker, url, e)
             return
 
-        result = summarize_pdf_with_llm(
-            pdf_bytes=pdf_bytes,
-            ticker=ticker,
-            report_type=PR_REPORT_TYPE,
-            period=period_end.isoformat(),
-        )
+        if kind == "pdf":
+            result = summarize_pdf_with_llm(
+                pdf_bytes=content,
+                ticker=ticker,
+                report_type=PR_REPORT_TYPE,
+                period=period_end.isoformat(),
+            )
+        else:
+            text = extract_text_from_html(content.decode("utf-8", errors="replace"))
+            if len(text) < MIN_HTML_BODY_CHARS:
+                logger.warning(
+                    "%s: extracted only %d chars from %s — likely a JS-rendered shell. "
+                    "Find the underlying press-release URL (often /press/... or PR Newswire).",
+                    ticker, len(text), url,
+                )
+                return
+            result = summarize_with_llm(
+                text=text,
+                ticker=ticker,
+                report_type=PR_REPORT_TYPE,
+                period=period_end.isoformat(),
+            )
+
         if result is None:
             logger.error("LLM analysis failed for %s — not persisting", ticker)
             return
@@ -126,15 +170,14 @@ def ingest(
             logger.warning(
                 "%s: LLM flagged %s as a non-earnings disclosure — not persisting",
                 ticker,
-                cache_path.name,
+                url,
             )
             return
 
         summary = result["summary"]
         metrics = {k: v for k, v in result.items() if k != "summary"}
         metrics["report_type"] = PR_REPORT_TYPE
-        # Stored explicitly so _build_earnings_reports can surface the announcement
-        # without a Yahoo-match. EarningsReport.date already carries the period-end.
+        # Stored explicitly so _build_earnings_reports doesn't need a Yahoo-match.
         metrics["release_date"] = release_date.isoformat()
         metrics["source_url"] = url
 
@@ -175,19 +218,19 @@ def ingest(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Ingest a single earnings-release PDF as EarningsReport(report_type='PR').",
+        description="Ingest a single earnings-release (PDF or HTML) as EarningsReport(report_type='PR').",
     )
-    parser.add_argument("--url", required=True, help="HTTPS URL to the earnings-release PDF")
+    parser.add_argument("--url", required=True, help="HTTPS URL to the earnings-release PDF or HTML page")
     parser.add_argument("--ticker", required=True, help="Yahoo symbol (must match Instrument.yahoo_symbol)")
     parser.add_argument(
         "--period-end",
         required=True,
-        help="Fiscal period end date stated on the PDF cover (YYYY-MM-DD)",
+        help="Fiscal period end date stated on the press release (YYYY-MM-DD)",
     )
     parser.add_argument(
         "--release-date",
         required=True,
-        help="Press-release date stated on the PDF cover (YYYY-MM-DD)",
+        help="Press-release date stated on the press release (YYYY-MM-DD)",
     )
     parser.add_argument(
         "--force",

@@ -97,6 +97,7 @@ PYTHONPATH=/home/debian/sites/portfolio_tracker python scripts/update_data.py
 - **`scrape_13f.py`**: Scrape SEC 13F institutional holdings data
 - **`get_earnings_reports.py`**: Fetch SEC filings (10-Q/10-K/20-F/40-F/6-K) and generate structured LLM summaries
 - **`get_uk_earnings_reports.py`**: Fetch UK RNS earnings announcements from Investegate for `.L` tickers not routed via SEC, and generate the same structured LLM summaries
+- **`ingest_earnings_pr.py`**: One-shot ingest of a single earnings-release PDF or HTML page as a temporary `PR` row, intended for same-day signal weeks before the canonical SEC filing lands; replaced by `get_earnings_reports.py` once the official filing arrives
 
 ## Code Quality
 
