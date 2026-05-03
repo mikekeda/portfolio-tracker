@@ -27,7 +27,7 @@ from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 from backend.views._shared import PRICE_COLUMN, calculate_historical_trends, get_rates
-from config import BENCHES, TIMEZONE, VIX
+from config import BENCHES, SPY, TIMEZONE, VIX
 from data import QUICK_RATIO_THRESHOLDS
 from models import (
     EarningsReport,
@@ -511,8 +511,40 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
     # Max drawdown computed on a TWRR-derived wealth index so deposits and
     # withdrawals don't artificially shrink (or deepen) drawdowns.
     pf_twrr_res = await session.execute(select(PortfolioDaily.date, PortfolioDaily.twrr).order_by(PortfolioDaily.date))
-    pf_wealth = _twrr_wealth_index([(d, t) for d, t in pf_twrr_res.all()])
+    pf_twrr_rows = pf_twrr_res.all()
+    pf_wealth = _twrr_wealth_index([(d, t) for d, t in pf_twrr_rows])
     dd = compute_max_drawdown(pf_wealth)
+
+    first_date = pf_twrr_rows[0].date if pf_twrr_rows else None
+    latest_date = latest_snapshot.date if latest_snapshot else None
+
+    # Calculate Jensen's Alpha
+    alpha = None
+    if first_date and latest_date and latest_snapshot.beta is not None and latest_snapshot.twrr is not None:
+        bench_start_price = await session.execute(
+            select(PricesDaily.close_price)
+            .where(PricesDaily.symbol == SPY, PricesDaily.date >= first_date)
+            .order_by(PricesDaily.date)
+            .limit(1)
+        )
+        p_start = bench_start_price.scalar()
+
+        bench_end_price = await session.execute(
+            select(PricesDaily.close_price)
+            .where(PricesDaily.symbol == SPY, PricesDaily.date <= latest_date)
+            .order_by(PricesDaily.date.desc())
+            .limit(1)
+        )
+        p_end = bench_end_price.scalar()
+
+        if p_start and p_end and p_start > 0:
+            days_held = (latest_date - first_date).days
+            if days_held > 0:
+                bench_total_return = (p_end / p_start) - 1.0
+                bench_annualized = ((1.0 + bench_total_return) ** (365.25 / days_held) - 1.0) * 100.0
+                risk_free_rate = 4.0
+                expected_return = risk_free_rate + latest_snapshot.beta * (bench_annualized - risk_free_rate)
+                alpha = latest_snapshot.twrr - expected_return
 
     # Get holdings for the same date to calculate win rate
     async with aiohttp.ClientSession(
@@ -579,6 +611,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
         "yield_spread": yield_spread,
         "buffett_indicator": buffett_indicator,
         "consumer_sentiment": consumer_sentiment,
+        "alpha": alpha,
     }
 
 

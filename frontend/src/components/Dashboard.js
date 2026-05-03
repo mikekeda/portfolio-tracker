@@ -68,6 +68,35 @@ const getSortinoTooltip = (sortino) => {
   return `Sortino Ratio: ${sortino.toFixed(2)} (${level})\n\n${recommendation}\n\nScale: < 1.0 (Poor), 1.0-2.0 (Acceptable), > 2.0 (Excellent)`;
 };
 
+// Helper function to get Alpha color
+const getAlphaColor = (alpha) => {
+  if (alpha < 0) return 'negative';
+  if (alpha > 0) return 'positive';
+  return '';
+};
+
+// Helper function to generate Alpha tooltip
+const getAlphaTooltip = (alpha) => {
+  let recommendation = '';
+  let level = '';
+
+  if (alpha < -5) {
+    level = 'Significant Underperformance';
+    recommendation = 'Your active stock picking is significantly dragging down returns compared to a passive S&P 500 ETF. Consider reevaluating your strategy or moving to index funds.';
+  } else if (alpha < 0) {
+    level = 'Underperformance';
+    recommendation = 'Your portfolio is slightly underperforming the market on a risk-adjusted basis. Review your holdings.';
+  } else if (alpha < 5) {
+    level = 'Outperformance';
+    recommendation = 'Good job! You are generating positive excess returns above the market benchmark.';
+  } else {
+    level = 'Significant Outperformance';
+    recommendation = 'Excellent! Your stock picking strategy is generating massive excess returns compared to a passive index fund.';
+  }
+
+  return `Jensen's Alpha: ${alpha > 0 ? '+' : ''}${alpha.toFixed(2)}% (${level})\n\n${recommendation}\n\nAlpha measures your portfolio's risk-adjusted outperformance (or underperformance) relative to the S&P 500 benchmark.`;
+};
+
 // Helper function to generate Beta tooltip
 const getBetaTooltip = (beta) => {
   let recommendation = '';
@@ -855,6 +884,14 @@ const Dashboard = () => {
               <h3>Sortino</h3>
               <p className={`value ${getSortinoColor(summary.sortino_ratio)}`}>
                 {summary.sortino_ratio.toFixed(2)}
+              </p>
+            </div>
+          )}
+          {summary.alpha != null && (
+            <div className="card" title={getAlphaTooltip(summary.alpha)}>
+              <h3>Jensen&apos;s Alpha</h3>
+              <p className={`value ${getAlphaColor(summary.alpha)}`}>
+                {summary.alpha > 0 ? '+' : ''}{summary.alpha.toFixed(2)}%
               </p>
             </div>
           )}
