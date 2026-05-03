@@ -344,12 +344,18 @@ const PieCard = React.memo(({ pie, isExpanded, onToggle, hideAmounts }) => {
             <div className="pie-name">
               <h3>{pie.name || `Pie ${pie.id}`}</h3>
               {pie.goal && (
-                <span className="pie-goal">Goal: {hideAmounts ? MASK : formatCurrency(pie.goal)}</span>
+                <span className="pie-goal">
+                  Goal: {hideAmounts ? MASK : formatCurrency(pie.goal)}
+                  {pie.progress != null && ` · ${(pie.progress * 100).toFixed(1)}%`}
+                </span>
+              )}
+              {pie.cash > 0 && (
+                <span className="pie-cash">Cash: {hideAmounts ? MASK : formatCurrency(pie.cash)}</span>
               )}
             </div>
             <div className="pie-value-section">
               <span className="value">{hideAmounts ? MASK : formatCurrency(pie.result.priceAvgValue)}</span>
-              <span className="profit">
+              <span className={`profit ${pie.result.priceAvgResult < 0 ? 'negative' : ''}`}>
                 {hideAmounts ? MASK : formatCurrency(pie.result.priceAvgResult)} ({formatPercentage(pie.result.priceAvgResultCoef * 100)})
               </span>
             </div>
@@ -416,7 +422,7 @@ const PieCard = React.memo(({ pie, isExpanded, onToggle, hideAmounts }) => {
 
                 <div className="instrument-value">
                   <span className="value">{hideAmounts ? MASK : formatCurrency(instrument.result.priceAvgValue)}</span>
-                  <span className="profit">
+                  <span className={`profit ${instrument.result.priceAvgResult < 0 ? 'negative' : ''}`}>
                     {hideAmounts ? MASK : formatCurrency(instrument.result.priceAvgResult)} ({formatPercentage(instrument.result.priceAvgResultCoef * 100)})
                   </span>
                 </div>

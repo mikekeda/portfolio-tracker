@@ -93,6 +93,11 @@
   color: #28a745;
 }
 
+.pie-value-section .profit.negative,
+.instrument-value .profit.negative {
+  color: #dc3545;
+}
+
 .pie-name h3 {
   margin: 0;
   color: #333;
@@ -103,6 +108,15 @@
 .pie-goal {
   background: #e3f2fd;
   color: #1976d2;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.pie-cash {
+  background: #f1f3f5;
+  color: #495057;
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 0.85rem;
