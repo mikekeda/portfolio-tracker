@@ -19,8 +19,10 @@ def update_pies():
 
             logger.info("Found %s pies to update", len(pies))
 
+            api_pie_ids = set()
             for pie_data in pies:
                 pie_id = pie_data["id"]
+                api_pie_ids.add(pie_id)
                 logger.debug("Processing pie %s...", pie_id)
 
                 # Fetch detailed pie data
@@ -31,6 +33,12 @@ def update_pies():
                 # Store/update pie data
                 pie = store_pie_data(session, pie_data, detailed_data)
                 logger.debug("✓ Updated pie %s: %s", pie_id, pie.name)
+
+            # Drop pies the user removed in Trading212. Cascade on Pie.instruments handles removed pie_instruments.
+            stale_pies = session.query(Pie).filter(Pie.id.notin_(api_pie_ids)).all()
+            for pie in stale_pies:
+                logger.info("Deleting removed pie %s: %s", pie.id, pie.name)
+                session.delete(pie)
 
             session.commit()
             logger.debug("✓ All pies updated successfully!")
