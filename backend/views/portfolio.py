@@ -686,27 +686,28 @@ async def get_portfolio_underwater(
         return {"history": [], "days": days, "benchmark": list(BENCHES)}
 
     full_wealth = _twrr_wealth_index([(r.date, r.twrr) for r in snap_rows])
+    full_portfolio_uw = underwater_series(full_wealth)
 
     if days is not None:
         cutoff_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
-        sliced = [(r.date, w) for r, w in zip(snap_rows, full_wealth) if r.date >= cutoff_date]
+        sliced_data = [(r.date, uw) for r, uw in zip(snap_rows, full_portfolio_uw) if r.date >= cutoff_date]
     else:
-        sliced = [(r.date, w) for r, w in zip(snap_rows, full_wealth)]
+        sliced_data = [(r.date, uw) for r, uw in zip(snap_rows, full_portfolio_uw)]
 
-    if not sliced:
+    if not sliced_data:
         return {"history": [], "days": days, "benchmark": list(BENCHES)}
 
-    portfolio_dates = [d for d, _ in sliced]
-    portfolio_uw = underwater_series([w for _, w in sliced])
+    portfolio_dates = [d for d, _ in sliced_data]
+    portfolio_uw = [uw for _, uw in sliced_data]
 
     # Benchmark underwater is computed over each benchmark's own trading-day
-    # series (so weekends don't falsely reset the peak), then aligned to
-    # portfolio dates via forward-fill.
+    # series from portfolio inception (so the peak does not reset for shorter windows),
+    # then aligned to portfolio dates via forward-fill.
     bench_res = await session.execute(
         select(PricesDaily.date, PRICE_COLUMN, PricesDaily.symbol)
         .where(
             PricesDaily.symbol.in_(BENCHES),
-            PricesDaily.date >= portfolio_dates[0],
+            PricesDaily.date >= snap_rows[0].date,  # Start from inception
             PricesDaily.date <= portfolio_dates[-1],
         )
         .order_by(PricesDaily.date)
