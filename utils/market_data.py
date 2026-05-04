@@ -9,7 +9,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import FRED_API_KEY, logger, TIMEZONE, PRICE_FIELD
+from config import FRED_API_KEY, RISK_FREE_RATE, TIMEZONE, PRICE_FIELD, logger
 from data import SP500
 from models import PricesDaily
 
@@ -164,7 +164,7 @@ async def get_risk_free_rate(session: aiohttp.ClientSession) -> float:
     """
     obs = await gen_fred_latest(session, "DGS10", limit=1)
     if not obs:
-        return 0.04  # Fallback to 4% if API fails
+        return RISK_FREE_RATE  # Fallback to 4% if API fails
 
     # FRED returns percent (e.g., 4.5), we want decimal (0.045)
     return obs[0]["value"] / 100.0

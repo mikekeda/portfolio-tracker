@@ -37,6 +37,8 @@ from config import (
     REQUEST_RETRY,
     SPY,
     TIMEZONE,
+    DAYS_PER_YEAR,
+    RISK_FREE_RATE,
     TRADING212_API_KEY,
     logger,
 )
@@ -936,13 +938,11 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
 
     returns_s = pd.Series(portfolio_returns, index=pd.Index(portfolio_dates))
 
-    # 4. Sharpe / Sortino. Annualise over calendar days (matches TWRR's 365.25
+    # 4. Sharpe / Sortino. Annualise over calendar days (matches TWRR's DAYS_PER_YEAR
     #    convention) since the series covers every day, not just trading days.
-    calendar_days_per_year = 365.25
-    annualization_factor = np.sqrt(calendar_days_per_year) if len(returns_s) > 60 else 1.0
+    annualization_factor = np.sqrt(DAYS_PER_YEAR) if len(returns_s) > 60 else 1.0
 
-    risk_free_rate_annual = 0.04  # UK 1y gilt neighbourhood; same as before
-    risk_free_rate_daily = (1 + risk_free_rate_annual) ** (1 / calendar_days_per_year) - 1
+    risk_free_rate_daily = (1 + RISK_FREE_RATE) ** (1 / DAYS_PER_YEAR) - 1
     excess_returns = returns_s - risk_free_rate_daily
 
     sharpe_ratio: Optional[float] = (

@@ -27,7 +27,7 @@ from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 from backend.views._shared import PRICE_COLUMN, calculate_historical_trends, get_rates
-from config import BENCHES, SPY, TIMEZONE, VIX
+from config import BENCHES, DAYS_PER_YEAR, RISK_FREE_RATE, SPY, TIMEZONE, VIX
 from data import QUICK_RATIO_THRESHOLDS
 from models import (
     EarningsReport,
@@ -58,7 +58,7 @@ def _twrr_wealth_index(
     ``scripts/update_returns.py``). Inverting that annualisation recovers the
     cumulative growth factor on each day:
 
-        wealth_index[t] = (1 + twrr[t] / 100) ** (days_since_first / 365.25)
+        wealth_index[t] = (1 + twrr[t] / 100) ** (days_since_first / DAYS_PER_YEAR)
 
     This index is anchored at 1.0 on the first row and is unaffected by
     deposits or withdrawals — the correct series for drawdown analysis.
@@ -80,7 +80,7 @@ def _twrr_wealth_index(
         if factor <= 0:
             out.append(None)
             continue
-        out.append(factor ** (days / 365.25))
+        out.append(factor ** (days / DAYS_PER_YEAR))
     return out
 
 
@@ -541,9 +541,9 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             days_held = (latest_date - first_date).days
             if days_held > 0:
                 bench_total_return = (p_end / p_start) - 1.0
-                bench_annualized = ((1.0 + bench_total_return) ** (365.25 / days_held) - 1.0) * 100.0
-                risk_free_rate = 4.0
-                expected_return = risk_free_rate + latest_snapshot.beta * (bench_annualized - risk_free_rate)
+                bench_annualized = ((1.0 + bench_total_return) ** (DAYS_PER_YEAR / days_held) - 1.0) * 100.0
+                risk_free_rate_pct = RISK_FREE_RATE * 100
+                expected_return = risk_free_rate_pct + latest_snapshot.beta * (bench_annualized - risk_free_rate_pct)
                 alpha = latest_snapshot.twrr - expected_return
 
     # Get holdings for the same date to calculate win rate

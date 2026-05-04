@@ -13,6 +13,13 @@ this endpoint only returns the inputs.
 
 from typing import Any, Optional
 
+from config import (
+    DAYS_PER_YEAR,
+    PROJECTION_BENCHMARK_NOMINAL_RETURN,
+    PROJECTION_BENCHMARK_REAL_RETURN,
+    PROJECTION_BENCHMARK_VOLATILITY,
+)
+
 import aiohttp
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -23,13 +30,6 @@ from utils.market_data import gen_fred_latest
 from models import PortfolioDaily
 
 router = APIRouter()
-
-# MSCI World long-run reference figures (1970–present, rough long-term expectations).
-# Deliberately modest vs historical US-only to avoid over-optimism on the projection page.
-# Nominal 8.5% / inflation ~2.5% ≈ real 6.5%. σ ~16% p.a. from monthly returns.
-BENCHMARK_NOMINAL_RETURN = 0.085
-BENCHMARK_REAL_RETURN = 0.065
-BENCHMARK_VOLATILITY = 0.16
 
 # FRED series for UK CPI (All Items, monthly index, seasonally adjusted).
 UK_CPI_SERIES = "GBRCPIALLMINMEI"
@@ -82,7 +82,7 @@ async def get_projection_inputs(
     track_record_years: Optional[float] = None
     starting_value: Optional[float] = None
     if earliest_row and latest_row:
-        track_record_years = (latest_row.date - earliest_row.date).days / 365.25
+        track_record_years = (latest_row.date - earliest_row.date).days / DAYS_PER_YEAR
         # PortfolioDaily.twrr is stored as a percentage (16.17 = 16.17% annualised,
         # see scripts/update_returns.py). The frontend expects a decimal.
         twrr = latest_row.twrr / 100.0 if latest_row.twrr is not None else None
@@ -104,9 +104,9 @@ async def get_projection_inputs(
             "uk_cpi_10y_avg": cpi["cpi_10y"],
         },
         "benchmark": {
-            "nominal_return": BENCHMARK_NOMINAL_RETURN,
-            "real_return": BENCHMARK_REAL_RETURN,
-            "volatility": BENCHMARK_VOLATILITY,
+            "nominal_return": PROJECTION_BENCHMARK_NOMINAL_RETURN,
+            "real_return": PROJECTION_BENCHMARK_REAL_RETURN,
+            "volatility": PROJECTION_BENCHMARK_VOLATILITY,
             "label": "MSCI World long-run (1970–present)",
         },
     }

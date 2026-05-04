@@ -88,8 +88,29 @@ PATTERN_MULTI = re.compile(r"^(?P<sym>.+?)_(?P<tag>[A-Z]{2,3})$")
 SPY = "VUAG.L"
 BENCHES = (SPY, "XNAS.L")  # VUAG.L - S&P500, XNAS.L - QQQ
 VIX = "^VIX"  # VIX index
-# Equity Risk Premium (Historical average ~5%)
-EQUITY_RISK_PREMIUM = 0.05
+# Equity Risk Premium — extra return equity investors demand over risk-free.
+# Damodaran implied ERP (Jan 2025): ~4.6%. Historical arithmetic avg ~6.4%, geometric ~4.2%.
+# Reference: https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/implprem.html
+EQUITY_RISK_PREMIUM = 0.046
+# GBP risk-free rate — approximate UK 1yr gilt yield. Update when BoE base rate changes materially.
+# BoE cut base rate to 4.25% on 8 May 2025; 1yr gilt was ~4.1–4.2% at that time.
+# Verify current yield: https://www.bankofengland.co.uk/statistics/yield-curves (Short Sterling, 1Y row)
+RISK_FREE_RATE = 0.04  # ~4.0% — verify against current gilt yield
+# Terminal growth rate for DCF — long-run nominal GDP growth. Update if macro regime shifts.
+# Reference: https://www.imf.org/en/Publications/WEO (World Economic Outlook, long-run GDP)
+TERMINAL_GROWTH_RATE = 0.025  # 2.5%
+# MSCI World long-run reference figures used on the Projection page (1970–present, rough expectations).
+# Nominal 8.5% / inflation ~2.5% ≈ real 6.5%. σ ~16% p.a. from monthly returns.
+# Reference: https://www.msci.com/documents/10199/178e6643-6ae6-47b9-82be-e1fc565ededb
+PROJECTION_BENCHMARK_NOMINAL_RETURN = 0.085
+PROJECTION_BENCHMARK_REAL_RETURN = 0.065
+PROJECTION_BENCHMARK_VOLATILITY = 0.16
+# UK ISA annual subscription limit — set by HMRC each tax year.
+# Reference: https://www.gov.uk/individual-savings-accounts
+ISA_ANNUAL_ALLOWANCE = 20_000.0  # £20,000 for 2025/26 (frozen since 2017/18)
+# Days per year constants for annualisation
+DAYS_PER_YEAR = 365.25  # Gregorian calendar average; used for TWRR/MWRR/alpha annualisation
+TRADING_DAYS_PER_YEAR = 252  # US/UK equity market trading days; used for volatility scaling
 
 # Currency Configuration
 CURRENCIES = ("USD", "EUR", "CAD")

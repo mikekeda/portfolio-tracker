@@ -9,11 +9,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app import get_db_session
+from config import ISA_ANNUAL_ALLOWANCE
 from models import Instrument, TransactionAction, TransactionHistory
 
 router = APIRouter()
-
-ISA_ANNUAL_ALLOWANCE = 20_000.0
 
 
 def _isa_tax_year_start(today: date) -> date:

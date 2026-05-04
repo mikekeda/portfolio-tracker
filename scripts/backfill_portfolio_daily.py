@@ -22,7 +22,7 @@ import numpy as np
 from numpy_financial import irr
 from sqlalchemy import and_, func, or_, select
 
-from config import TIMEZONE, logger
+from config import DAYS_PER_YEAR, TIMEZONE, logger
 from models import CurrencyRateDaily, Instrument, PortfolioDaily, PricesDaily, TransactionAction, TransactionHistory
 from scripts.update_data import get_session
 
@@ -321,7 +321,7 @@ def backfill_portfolio_daily(rebuild: bool = True):
                 num_days = len(twrr_factors)
                 # Link all factors and annualize
                 total_return_factor = np.prod(twrr_factors)
-                annual_twrr_pct = ((total_return_factor ** (365.25 / num_days)) - 1) * 100.0
+                annual_twrr_pct = ((total_return_factor ** (DAYS_PER_YEAR / num_days)) - 1) * 100.0
 
             # Debug output
             logger.debug(

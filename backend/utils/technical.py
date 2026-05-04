@@ -11,10 +11,8 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import PRICE_FIELD, SPY, TIMEZONE, logger
+from config import PRICE_FIELD, SPY, TIMEZONE, TRADING_DAYS_PER_YEAR, logger
 from models import PricesDaily
-
-TRADING_DAYS_PER_YEAR = 252
 MIN_RETURNS_FOR_VOLATILITY = 60  # ~3 months — below this the estimate is too noisy
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")

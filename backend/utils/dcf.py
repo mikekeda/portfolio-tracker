@@ -5,14 +5,12 @@ import aiohttp
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import EQUITY_RISK_PREMIUM, TIMEZONE
+from config import EQUITY_RISK_PREMIUM, RISK_FREE_RATE, SPY, TERMINAL_GROWTH_RATE, TIMEZONE
 from models import Instrument, PricesDaily
 from utils.market_data import get_risk_free_rates
 from backend.utils.technical import PRICE_COLUMN, calculate_annualized_volatility
 
 # --- Constants ---
-TERMINAL_GROWTH_RATE = 0.025  # 2.5% — long-run nominal GDP growth
-
 # Plateau + fade projection: the first N years run at the initial growth rate,
 # then fade linearly to the terminal rate over the remaining horizon. This is
 # more honest than a straight linear fade from year 1 for quality compounders
@@ -45,7 +43,6 @@ SECTORS_WITHOUT_DCF: frozenset[str] = frozenset({"Financial Services"})
 EFFECTIVE_BETA_LO = 0.3  # floor — prevents non-US stocks ducking under realistic risk
 EFFECTIVE_BETA_HI = 2.5  # ceiling — prevents meme spikes dominating WACC
 REPORTED_BETA_TRUST_THRESHOLD = 0.3  # reported betas below this are treated as unreliable
-VOLATILITY_REFERENCE_SYMBOL = "VUAG.L"  # S&P 500 ETF — reference "market" vol
 # 420 calendar days ≈ 1 trading year plus buffer for holidays/missing days.
 EFFECTIVE_BETA_LOOKBACK_DAYS = 420
 
@@ -500,7 +497,7 @@ def _compute_dcf_full(
     currency = info.get("currency") or "USD"
     if currency.upper() in ("GBX", "GBP"):
         currency = "GBP"
-    risk_free_rate = risk_free_rates.get(currency, risk_free_rates.get("USD", 0.04))
+    risk_free_rate = risk_free_rates.get(currency, risk_free_rates.get("USD", RISK_FREE_RATE))
 
     est = _estimate_dcf_inputs(instrument, risk_free_rate, effective_beta_override=effective_beta_override)
 
@@ -631,7 +628,7 @@ async def get_effective_betas(
     if not eligible:
         return {}
 
-    query_symbols = list({*(inst.yahoo_symbol for inst, _ in eligible), VOLATILITY_REFERENCE_SYMBOL})
+    query_symbols = list({*(inst.yahoo_symbol for inst, _ in eligible), SPY})
     cutoff = datetime.now(TIMEZONE).date() - timedelta(days=lookback_days)
 
     price_rows = (
@@ -646,7 +643,7 @@ async def get_effective_betas(
     for row in price_rows:
         price_history.setdefault(row.symbol, []).append(row.price)
 
-    reference_vol = calculate_annualized_volatility(price_history.get(VOLATILITY_REFERENCE_SYMBOL, []))
+    reference_vol = calculate_annualized_volatility(price_history.get(SPY, []))
 
     result: dict[str, float] = {}
     for inst, reported in eligible:

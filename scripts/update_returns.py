@@ -21,7 +21,7 @@ import pandas as pd
 from numpy_financial import irr
 from sqlalchemy import case, func, select, update
 
-from config import SPY, logger
+from config import DAYS_PER_YEAR, RISK_FREE_RATE, SPY, logger
 from models import PortfolioDaily, TransactionAction, TransactionHistory, PricesDaily
 from scripts.update_data import get_session
 
@@ -135,7 +135,7 @@ def compute_returns(
                 try:
                     daily_rate = irr(irr_flows)
                     if daily_rate is not None and not np.isnan(daily_rate) and daily_rate > -1:
-                        annual_mwrr = ((1 + daily_rate) ** 365.25 - 1) * 100.0
+                        annual_mwrr = ((1 + daily_rate) ** DAYS_PER_YEAR - 1) * 100.0
                 except (ValueError, RuntimeError):
                     logger.debug("IRR did not converge for %s, storing 0.0", current_date)
                 # TWRR calculation
@@ -145,7 +145,7 @@ def compute_returns(
                 if twrr_factors and calendar_days > 0:
                     product = float(np.nanprod(twrr_factors))
                     if product > 0:
-                        annual_twrr = ((product ** (365.25 / calendar_days)) - 1) * 100.0
+                        annual_twrr = ((product ** (DAYS_PER_YEAR / calendar_days)) - 1) * 100.0
                 results.append((current_date, annual_mwrr, annual_twrr))
         current_date += timedelta(days=1)
     return results
@@ -212,8 +212,8 @@ def update_returns(rebuild: bool = False) -> None:
             if bench_start_price and beta is not None and snap_date > inception:
                 end_price = bench_df.iloc[bench_df.index.get_indexer([snap_date], method="nearest")[0]]["price"]
                 days = (snap_date - inception).days
-                bench_annual = ((end_price / bench_start_price) ** (365.25 / days)) - 1
-                alpha = float(((twrr / 100.0) - (0.04 + beta * (bench_annual - 0.04))) * 100.0)
+                bench_annual = ((end_price / bench_start_price) ** (DAYS_PER_YEAR / days)) - 1
+                alpha = float(((twrr / 100.0) - (RISK_FREE_RATE + beta * (bench_annual - RISK_FREE_RATE))) * 100.0)
 
             updates.append({"_date": snap_date, "_mwrr": float(mwrr), "_twrr": float(twrr), "_alpha": alpha})
 
