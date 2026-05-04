@@ -17,11 +17,12 @@ from datetime import date, timedelta
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 from numpy_financial import irr
 from sqlalchemy import case, func, select, update
 
-from config import logger
-from models import PortfolioDaily, TransactionAction, TransactionHistory
+from config import SPY, logger
+from models import PortfolioDaily, TransactionAction, TransactionHistory, PricesDaily
 from scripts.update_data import get_session
 
 
@@ -186,26 +187,58 @@ def update_returns(rebuild: bool = False) -> None:
         computed = compute_returns(snapshots, cash_flows, target_dates=None if rebuild else needs_update)
 
         # 4. Write results to DB (sequential UPDATEs, single commit at the end)
-        updates = [
-            {"_date": snap_date, "_mwrr": float(mwrr), "_twrr": float(twrr)} for snap_date, mwrr, twrr in computed
-        ]
+        bench_prices = session.execute(
+            select(PricesDaily.date, PricesDaily.adj_close_price)
+            .where(PricesDaily.symbol == SPY)
+            .where(PricesDaily.date >= snapshots[0][0])
+            .order_by(PricesDaily.date)
+        ).all()
+
+        bench_df = pd.DataFrame(bench_prices, columns=["date", "price"]).set_index("date") if bench_prices else None
+
+        betas = dict(session.execute(
+            select(PortfolioDaily.date, PortfolioDaily.beta)
+            .where(PortfolioDaily.date.in_([d for d, _, _ in computed]))
+        ).all())
+
+        inception = snapshots[0][0]
+        bench_start_price = bench_df.iloc[bench_df.index.get_indexer([inception], method="nearest")[0]]["price"] if bench_df is not None else None
+
+        updates = []
+        for snap_date, mwrr, twrr in computed:
+            alpha = None
+            beta = betas.get(snap_date)
+
+            if bench_start_price and beta is not None and snap_date > inception:
+                end_price = bench_df.iloc[bench_df.index.get_indexer([snap_date], method="nearest")[0]]["price"]
+                days = (snap_date - inception).days
+                bench_annual = ((end_price / bench_start_price) ** (365.25 / days)) - 1
+                alpha = float(((twrr / 100.0) - (0.04 + beta * (bench_annual - 0.04))) * 100.0)
+
+            updates.append({"_date": snap_date, "_mwrr": float(mwrr), "_twrr": float(twrr), "_alpha": alpha})
+
         written = len(updates)
 
         for row in updates:
+            update_values = {"mwrr": row["_mwrr"], "twrr": row["_twrr"]}
+            if row["_alpha"] is not None:
+                update_values["jensens_alpha"] = row["_alpha"]
+
             session.execute(
                 update(PortfolioDaily)
                 .where(PortfolioDaily.date == row["_date"])
-                .values(mwrr=row["_mwrr"], twrr=row["_twrr"])
+                .values(**update_values)
             )
         if updates:
             session.commit()
             last = updates[-1]
             logger.info(
-                "Done. Updated %d rows. Latest (%s): MWRR=%.2f%%, TWRR=%.2f%%",
+                "Done. Updated %d rows. Latest (%s): MWRR=%.2f%%, TWRR=%.2f%%, Alpha=%s",
                 written,
                 last["_date"],
                 last["_mwrr"],
                 last["_twrr"],
+                f"{last['_alpha']:.2f}%" if last["_alpha"] is not None else "None",
             )
         else:
             logger.info("Done. No rows updated.")

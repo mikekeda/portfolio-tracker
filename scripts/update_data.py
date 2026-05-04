@@ -827,6 +827,11 @@ def update_portfolio():
         allocations = get_portfolio_allocation(session, portfolio_from_api["total"] - cash, snapshot_date)
         risk_metrics = calculate_portfolio_risk_metrics(session, snapshot_date)
 
+        # Calculate positions stats
+        holdings = session.query(HoldingDaily).filter(HoldingDaily.date == snapshot_date).all()
+        positions_total = len(holdings)
+        positions_winning = sum(1 for h in holdings if h.ppl > 0)
+
         if existing_snapshot:
             # Update existing snapshot
             existing_snapshot.value = portfolio_from_api["total"]
@@ -841,6 +846,8 @@ def update_portfolio():
             existing_snapshot.sharpe_ratio = risk_metrics["sharpe"]
             existing_snapshot.sortino_ratio = risk_metrics["sortino"]
             existing_snapshot.beta = risk_metrics["beta"]
+            existing_snapshot.positions_total = positions_total
+            existing_snapshot.positions_winning = positions_winning
             existing_snapshot.updated_at = datetime.now(TIMEZONE)
         else:
             # Create new snapshot
@@ -858,6 +865,8 @@ def update_portfolio():
                 sharpe_ratio=risk_metrics["sharpe"],
                 sortino_ratio=risk_metrics["sortino"],
                 beta=risk_metrics["beta"],
+                positions_total=positions_total,
+                positions_winning=positions_winning,
             )
             session.add(snapshot)
 

@@ -315,6 +315,9 @@ class PortfolioDaily(Base):
     beta: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     mwrr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Money-Weighted Return (annualized)
     twrr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Time-Weighted Return (annualized)
+    jensens_alpha: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    positions_total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    positions_winning: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(

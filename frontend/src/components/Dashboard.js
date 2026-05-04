@@ -526,6 +526,15 @@ const PORTFOLIO_INDICATOR_CONFIGS = {
       { y: 1.3, label: 'High Beta', stroke: '#dc3545' },
     ],
   },
+  alpha: {
+    label: 'Jensen\'s Alpha',
+    yFormatter: v => `${v?.toFixed(1)}%`,
+    color: '#20c997',
+    area: true,
+    referenceLines: [
+      { y: 0.0, label: 'Market Match', stroke: '#6c757d' },
+    ],
+  },
   mwrr: {
     label: 'Money-Weighted Return',
     yFormatter: v => `${v?.toFixed(1)}%`,
@@ -542,6 +551,16 @@ const PORTFOLIO_INDICATOR_CONFIGS = {
     referenceLines: [
       { y: 0,  label: 'Breakeven', stroke: '#6c757d' },
       { y: 10, label: '10%',       stroke: '#28a745' },
+    ],
+  },
+  positions: {
+    label: 'Portfolio Positions',
+    yFormatter: v => v?.toFixed(0),
+    area: true,
+    stacked: true,
+    series: [
+      { dataKey: 'winning', name: 'Winning', color: '#28a745' },
+      { dataKey: 'losing', name: 'Losing', color: '#dc3545' },
     ],
   },
 };
@@ -573,9 +592,19 @@ const MacroTooltip = ({ active, payload, label, config }) => {
   return (
     <div className="macro-tooltip">
       <div className="macro-tooltip-date">{formatTickDate(label)}</div>
-      <div className="macro-tooltip-value" style={{ color: config.color }}>
-        {config.yFormatter(payload[0].value)}
-      </div>
+      {config.series ? (
+        <div className="macro-tooltip-series">
+          {payload.map((entry, idx) => (
+            <div key={idx} className="macro-tooltip-value" style={{ color: entry.color }}>
+              {entry.name}: {config.yFormatter(entry.value)}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="macro-tooltip-value" style={{ color: config.color }}>
+          {config.yFormatter(payload[0].value)}
+        </div>
+      )}
     </div>
   );
 };
@@ -668,7 +697,7 @@ const MacroChartModal = ({ config, currentValue, fetchHistory, onClose }) => {
                   width={60}
                 />
                 <Tooltip content={(props) => <MacroTooltip {...props} config={config} />} />
-                {config.referenceLines.map(ref => (
+                {config.referenceLines && config.referenceLines.map(ref => (
                   <ReferenceLine
                     key={ref.y}
                     y={ref.y}
@@ -683,15 +712,31 @@ const MacroChartModal = ({ config, currentValue, fetchHistory, onClose }) => {
                     }}
                   />
                 ))}
-                <SeriesEl
-                  type="monotone"
-                  dataKey="value"
-                  stroke={config.color}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                  {...(config.area ? { fill: config.color, fillOpacity: 0.12 } : {})}
-                />
+                {config.series ? config.series.map(s => (
+                  <SeriesEl
+                    key={s.dataKey}
+                    type="monotone"
+                    dataKey={s.dataKey}
+                    name={s.name}
+                    stroke={s.color}
+                    fill={s.color}
+                    stackId={config.stacked ? "1" : undefined}
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    fillOpacity={0.12}
+                  />
+                )) : (
+                  <SeriesEl
+                    type="monotone"
+                    dataKey="value"
+                    stroke={config.color}
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    {...(config.area ? { fill: config.color, fillOpacity: 0.12 } : {})}
+                  />
+                )}
               </ChartEl>
             </ResponsiveContainer>
           )}
@@ -822,7 +867,18 @@ const Dashboard = () => {
               {summary.total_return_pct >= 0 ? '+' : ''}{summary.total_return_pct.toFixed(2)}%
             </p>
           </div>
-          <div className="card">
+          <div className="card macro-card">
+            <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+              PORTFOLIO_INDICATOR_CONFIGS.positions,
+              summary.total_holdings,
+              async (days) => {
+                const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                return d.filter(r => r.positions_total > 0)
+                        .map(r => ({ date: r.date, winning: r.positions_winning, losing: r.positions_total - r.positions_winning }));
+              }
+            )}>
+              <ChartIcon />
+            </button>
             <h3>Positions</h3>
             <p className="value">
               {summary.total_holdings}
@@ -888,7 +944,17 @@ const Dashboard = () => {
             </div>
           )}
           {summary.alpha != null && (
-            <div className="card" title={getAlphaTooltip(summary.alpha)}>
+            <div className="card macro-card" title={getAlphaTooltip(summary.alpha)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                PORTFOLIO_INDICATOR_CONFIGS.alpha,
+                summary.alpha,
+                async (days) => {
+                  const d = await portfolioAPI.getPortfolioIndicatorsHistory(days);
+                  return d.filter(r => r.jensens_alpha != null).map(r => ({ date: r.date, value: r.jensens_alpha }));
+                }
+              )}>
+                <ChartIcon />
+              </button>
               <h3>Jensen&apos;s Alpha</h3>
               <p className={`value ${getAlphaColor(summary.alpha)}`}>
                 {summary.alpha > 0 ? '+' : ''}{summary.alpha.toFixed(2)}%

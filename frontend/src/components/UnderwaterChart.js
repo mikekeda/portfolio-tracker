@@ -98,6 +98,7 @@ const UnderwaterChart = ({ timeRange }) => {
           <YAxis
             tickFormatter={(v) => `${Math.round(v)}%`}
             domain={['auto', 0]}
+            tickCount={3}
           />
           <Tooltip
             content={(

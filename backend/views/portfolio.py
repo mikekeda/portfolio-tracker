@@ -829,6 +829,9 @@ async def get_portfolio_indicators_history(
         PortfolioDaily.invested,
         PortfolioDaily.sortino_ratio,
         PortfolioDaily.beta,
+        PortfolioDaily.jensens_alpha,
+        PortfolioDaily.positions_total,
+        PortfolioDaily.positions_winning,
         PortfolioDaily.mwrr,
         PortfolioDaily.twrr,
     )
@@ -850,6 +853,9 @@ async def get_portfolio_indicators_history(
             ),
             "sortino_ratio": row.sortino_ratio,
             "beta": row.beta,
+            "jensens_alpha": row.jensens_alpha,
+            "positions_total": row.positions_total,
+            "positions_winning": row.positions_winning,
             "mwrr": row.mwrr,
             "twrr": row.twrr,
         }
