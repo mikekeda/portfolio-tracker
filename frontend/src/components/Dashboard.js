@@ -558,6 +558,7 @@ const PORTFOLIO_INDICATOR_CONFIGS = {
     yFormatter: v => v?.toFixed(0),
     area: true,
     stacked: true,
+    winRate: true,
     series: [
       { dataKey: 'winning', name: 'Winning', color: '#28a745' },
       { dataKey: 'losing', name: 'Losing', color: '#dc3545' },
@@ -599,6 +600,15 @@ const MacroTooltip = ({ active, payload, label, config }) => {
               {entry.name}: {config.yFormatter(entry.value)}
             </div>
           ))}
+          {config.winRate && (() => {
+            const total = payload.reduce((s, e) => s + (e.value || 0), 0);
+            const winning = payload.find(e => e.dataKey === 'winning')?.value || 0;
+            return total > 0 ? (
+              <div className="macro-tooltip-value" style={{ color: '#aaa' }}>
+                Win rate: {(winning / total * 100).toFixed(1)}%
+              </div>
+            ) : null;
+          })()}
         </div>
       ) : (
         <div className="macro-tooltip-value" style={{ color: config.color }}>
