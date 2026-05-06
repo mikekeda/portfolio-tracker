@@ -29,11 +29,13 @@ deletes the PR row at the same ``(instrument_id, period_end)`` and inserts the
 import argparse
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlparse
 
-import requests
+from curl_cffi import requests as creq
+from curl_cffi.requests.exceptions import RequestException
 from sqlalchemy import select
 
-from config import SEC_USER_AGENT, logger
+from config import logger
 from models import EarningsReport, Instrument
 from scripts._earnings_common import (
     DATA_DIR,
@@ -47,6 +49,24 @@ from scripts.update_data import get_session
 # Real press-release HTML runs 5-20k chars; below this is almost certainly
 # a JS-rendered shell with only nav/footer — bail before the Gemini call.
 MIN_HTML_BODY_CHARS = 2000
+
+
+def _fetch(url: str) -> tuple[bytes, str]:
+    """GET ``url`` via curl_cffi impersonating Chrome.
+
+    IR sites commonly sit behind Cloudflare/Akamai TLS-fingerprint sniffing
+    (e.g. ADMA), where plain ``requests`` hangs. curl_cffi works for those and
+    for unprotected sites alike, so we use it uniformly.
+    """
+    parsed = urlparse(url)
+    resp = creq.get(
+        url,
+        impersonate="chrome131",
+        timeout=60,
+        headers={"Referer": f"{parsed.scheme}://{parsed.netloc}/"},
+    )
+    resp.raise_for_status()
+    return resp.content, resp.headers.get("Content-Type", "")
 
 
 def _download(url: str, cache_dir: Path, stem: str) -> tuple[bytes, str]:
@@ -66,22 +86,21 @@ def _download(url: str, cache_dir: Path, stem: str) -> tuple[bytes, str]:
         return html_path.read_bytes(), "html"
 
     logger.info("Downloading %s", url)
-    resp = requests.get(url, timeout=60, headers={"User-Agent": SEC_USER_AGENT})
-    resp.raise_for_status()
+    content, content_type_raw = _fetch(url)
 
-    content_type = resp.headers.get("Content-Type", "").lower()
-    is_pdf = "pdf" in content_type or resp.content.startswith(b"%PDF")
+    content_type = content_type_raw.lower()
+    is_pdf = "pdf" in content_type or content.startswith(b"%PDF")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     if is_pdf:
-        pdf_path.write_bytes(resp.content)
-        return resp.content, "pdf"
+        pdf_path.write_bytes(content)
+        return content, "pdf"
     if "html" in content_type:
-        html_path.write_bytes(resp.content)
-        return resp.content, "html"
+        html_path.write_bytes(content)
+        return content, "html"
     raise ValueError(
         f"URL did not return PDF or HTML (Content-Type={content_type!r}, "
-        f"first bytes={resp.content[:8]!r})"
+        f"first bytes={content[:8]!r})"
     )
 
 
@@ -135,7 +154,7 @@ def ingest(
         stem = f"{release_date.isoformat()}_PR"
         try:
             content, kind = _download(url, cache_dir, stem)
-        except (requests.RequestException, ValueError) as e:
+        except (RequestException, ValueError) as e:
             logger.error("Download failed for %s (%s): %s", ticker, url, e)
             return
 

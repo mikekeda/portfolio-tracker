@@ -227,6 +227,11 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     summary = result.get("summary", "")
     metrics = {k: v for k, v in result.items() if k != "summary"}
     metrics["report_type"] = form
+    metrics["source_url"] = SEC_ARCHIVES_URL.format(
+        cik=cik,
+        accession=metadata["accessionNumber"].replace("-", ""),
+        primary_document=metadata["primaryDocument"],
+    )
 
     # 7. Save
     earnings_report = EarningsReport(

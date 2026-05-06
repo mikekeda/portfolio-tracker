@@ -1657,13 +1657,25 @@ const Stock = () => {
                     {announcedFmt && <> · Announced {announcedFmt}</>}
                   </p>
                 </div>
-                <button
-                  className="earnings-report-link-btn"
-                  onClick={() => openReportModal(symbol, report.date)}
-                  title="Open full report"
-                >
-                  Full report ↗
-                </button>
+                {report.metrics?.source_url ? (
+                  <a
+                    className="earnings-report-link-btn"
+                    href={report.metrics.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="Open original filing/press release"
+                  >
+                    Full report ↗
+                  </a>
+                ) : (
+                  <button
+                    className="earnings-report-link-btn"
+                    onClick={() => openReportModal(symbol, report.date)}
+                    title="Open full report"
+                  >
+                    Full report ↗
+                  </button>
+                )}
               </div>
 
               {data.earnings_reports.length > 1 && (
