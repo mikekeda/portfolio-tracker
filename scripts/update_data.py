@@ -955,7 +955,7 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
     downside_std = downside_returns.std()
     sortino_ratio: Optional[float] = (
         float((excess_returns.mean() / downside_std) * annualization_factor)
-        if downside_std != 0 and downside_std is not np.nan
+        if downside_std != 0 and not np.isnan(downside_std)
         else None
     )
 

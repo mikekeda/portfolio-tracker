@@ -4,7 +4,7 @@ scripts/update_returns.py
 Fast incremental MWRR/TWRR calculation.
 
 Algorithm:
-  TWRR: chain-links daily sub-period return factors, annualises over trading days
+  TWRR: chain-links daily sub-period return factors, annualises over calendar days
   MWRR: IRR of all net deposits/withdrawals + terminal portfolio value, annualised
 
 Usage:
@@ -202,18 +202,44 @@ def update_returns(rebuild: bool = False) -> None:
         ).all())
 
         inception = snapshots[0][0]
-        bench_start_price = bench_df.iloc[bench_df.index.get_indexer([inception], method="nearest")[0]]["price"] if bench_df is not None else None
+
+        # Build a complete TWRR series (DB history + newly computed) for trailing-window lookback.
+        existing_twrr = dict(session.execute(
+            select(PortfolioDaily.date, PortfolioDaily.twrr)
+            .where(PortfolioDaily.twrr.isnot(None))
+        ).all())
+        all_twrr = {**existing_twrr, **{d: tw for d, _, tw in computed}}
+        twrr_series = pd.Series(all_twrr).sort_index()
 
         updates = []
         for snap_date, mwrr, twrr in computed:
             alpha = None
             beta = betas.get(snap_date)
+            days_from_inception = (snap_date - inception).days
 
-            if bench_start_price and beta is not None and snap_date > inception:
-                end_price = bench_df.iloc[bench_df.index.get_indexer([snap_date], method="nearest")[0]]["price"]
-                days = (snap_date - inception).days
-                bench_annual = ((end_price / bench_start_price) ** (DAYS_PER_YEAR / days)) - 1
-                alpha = float(((twrr / 100.0) - (RISK_FREE_RATE + beta * (bench_annual - RISK_FREE_RATE))) * 100.0)
+            if bench_df is not None and beta is not None and days_from_inception >= 365:
+                lookback_target = snap_date - timedelta(days=365)
+                lb_idx = twrr_series.index.get_indexer([lookback_target], method="nearest")[0]
+                lookback_date = twrr_series.index[lb_idx]
+                lookback_twrr = float(twrr_series.iloc[lb_idx])
+                lookback_days = (lookback_date - inception).days
+
+                if lookback_days > 0:
+                    cum_now = (1 + twrr / 100) ** (days_from_inception / DAYS_PER_YEAR)
+                    cum_lb = (1 + lookback_twrr / 100) ** (lookback_days / DAYS_PER_YEAR)
+                    actual_window = days_from_inception - lookback_days
+
+                    if actual_window > 0 and cum_lb > 0:
+                        trailing_portfolio = (cum_now / cum_lb) ** (DAYS_PER_YEAR / actual_window) - 1
+
+                        bench_now = float(bench_df.iloc[bench_df.index.get_indexer([snap_date], method="nearest")[0]]["price"])
+                        bench_lb = float(bench_df.iloc[bench_df.index.get_indexer([lookback_date], method="nearest")[0]]["price"])
+
+                        if bench_lb > 0:
+                            bench_annual = (bench_now / bench_lb) ** (DAYS_PER_YEAR / actual_window) - 1
+                            alpha = float(
+                                (trailing_portfolio - (RISK_FREE_RATE + beta * (bench_annual - RISK_FREE_RATE))) * 100.0
+                            )
 
             updates.append({"_date": snap_date, "_mwrr": float(mwrr), "_twrr": float(twrr), "_alpha": alpha})
 
