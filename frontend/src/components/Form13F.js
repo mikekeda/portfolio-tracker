@@ -941,6 +941,7 @@ const PortfolioTable = ({ portfolio }) => {
     const q = search.toLowerCase();
     let rows = q
       ? portfolio.filter(p =>
+          (p.cusip || '').toLowerCase().includes(q) ||
           (p.yahoo_symbol || '').toLowerCase().includes(q) ||
           (p.name || '').toLowerCase().includes(q) ||
           (p.issuer || '').toLowerCase().includes(q)
@@ -977,6 +978,7 @@ const PortfolioTable = ({ portfolio }) => {
             <tr>
               <SortHeader label="#"          field="rank"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="Ticker"     field="yahoo_symbol"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="CUSIP"      field="cusip"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="Company"    field="name"            sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="Value"      field="value"           sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="% Fund"     field="pct_of_portfolio" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
@@ -996,6 +998,7 @@ const PortfolioTable = ({ portfolio }) => {
                     </Link>
                   ) : <span className="pt-ticker-none">—</span>}
                 </td>
+                <td className="pt-cusip">{p.cusip || '—'}</td>
                 <td className="pt-name" title={p.issuer}>
                   {p.yahoo_symbol ? (
                     <Link to={`/stock/${encodeURIComponent(p.yahoo_symbol)}`} className="pt-name-link">
