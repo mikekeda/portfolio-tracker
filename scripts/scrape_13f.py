@@ -96,6 +96,8 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "GB0007980591": "055622104",  # BP
     "GB0002374006": "25243Q205",  # Diageo
     "GB00BM8PJY71": "639057207",  # NatWest
+    "GB0008706128": "539439109",  # Lloyds
+    "IL0010811243": "M3760D101",  # Elbit Systems
 }
 
 
