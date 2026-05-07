@@ -132,14 +132,15 @@ class ScrapedFiling(TypedDict):
 # fundamental analysis. 21 investors across value, quality growth, activist, and macro.
 #
 # Removed: Greenlight (underperformed since 2015), Icahn (short-term activist),
-#          Soros (macro bets not visible in 13F).
+#          Soros (macro bets not visible in 13F),
+#          Scion (fund deregistered 2025-11-10; Burry liquidated and returned capital),
+#          Tiger Global (high turnover; redundant tech-growth signal vs Coatue/Lone Pine).
 INVESTORS: list[dict[str, str]] = [
     # Value / long-term
     {"name": "Berkshire Hathaway", "cik": "1067983"},
     {"name": "Baupost Group", "cik": "1061768"},
     {"name": "Pershing Square", "cik": "1336528"},
-    {"name": "Pabrai Investment Funds", "cik": "1173334"},
-    {"name": "Scion Asset Management", "cik": "1649339"},  # Contrarian; small AUM but high-conviction buys
+    {"name": "Pabrai Investment Funds", "cik": "1549575"},  # Filed under "Dalal Street, LLC"; personal CIK 1173334 stopped filing after 2011
     {
         "name": "Yacktman Asset Management",
         "cik": "905567",
@@ -152,6 +153,15 @@ INVESTORS: list[dict[str, str]] = [
         "name": "Harris Associates",
         "cik": "813917",
     },  # Oakmark funds; concentrated value with margin of safety; mid/large cap coverage
+    # International value (UK/EU and global non-US coverage)
+    {
+        "name": "Causeway Capital Management",
+        "cik": "1165797",
+    },  # International value, $7B AUM; UK/EU large caps (Deutsche Bank, Barclays, AZN, Smurfit Westrock)
+    {
+        "name": "First Eagle Investment Management",
+        "cik": "1325447",
+    },  # Global value/quality (Eveillard/Crystal lineage); $57B AUM; gold as tail-risk hedge
     # Quality compounders (strong alignment with buy-and-hold, 5-10y horizon)
     {"name": "Akre Capital Management", "cik": "1112520"},  # "Triple-double" compounders, 10y+ holds
     {"name": "Polen Capital Management", "cik": "1034524"},  # Concentrated quality growth, low turnover
@@ -160,7 +170,6 @@ INVESTORS: list[dict[str, str]] = [
     {"name": "Baillie Gifford", "cik": "1088875"},  # 5-10y growth horizon, $120B AUM
     {"name": "Lone Pine Capital", "cik": "1061165"},
     {"name": "Coatue Management", "cik": "1135730"},
-    {"name": "Tiger Global", "cik": "1167483"},  # Volatile but tracks quality tech compounders
     {
         "name": "Artisan Partners",
         "cik": "1466153",
