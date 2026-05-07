@@ -92,6 +92,10 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "GB0009895292": "046353108",  # AstraZeneca PLC (LSE line vs US ADR CUSIP AZN)
     "IL0011762130": "M7S64H106",  # monday.com Ltd (Israeli ISIN vs Nasdaq CUSIP MNDY)
     "NL0000687663": "N00985106",  # AerCap Holdings N.V. (Dutch ISIN vs NYSE CUSIP AER)
+    "GB0031348658": "06738E204",  # Barclays
+    "GB0007980591": "055622104",  # BP
+    "GB0002374006": "25243Q205",  # Diageo
+    "GB00BM8PJY71": "639057207",  # NatWest
 }
 
 
