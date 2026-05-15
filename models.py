@@ -7,7 +7,7 @@ Defines the database schema using SQLAlchemy ORM.
 
 import enum
 from datetime import date, datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional, TypedDict
 
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import (
@@ -29,6 +29,21 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from config import TIMEZONE
+
+
+ThesisConviction = Literal["low", "medium", "high"]
+
+
+class InstrumentThesis(TypedDict, total=False):
+    """User-authored thesis JSON stored on Instrument.thesis (JSONB)."""
+
+    summary: str
+    target_weight_min_pct: float
+    target_weight_max_pct: float
+    buy_triggers: list[str]
+    sell_triggers: list[str]
+    horizon_years: int
+    conviction: ThesisConviction | None
 
 
 class TransactionAction(enum.Enum):
@@ -111,6 +126,7 @@ class Instrument(Base):
     yahoo_symbol: Mapped[str] = mapped_column(String(20), nullable=True, index=True)
     isin: Mapped[str] = mapped_column(String(12), nullable=True, index=True, unique=True)
     cik: Mapped[str] = mapped_column(String(10), nullable=True)
+    thesis: Mapped[Optional[InstrumentThesis]] = mapped_column(JSONB, nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))

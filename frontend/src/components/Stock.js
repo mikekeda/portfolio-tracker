@@ -710,6 +710,8 @@ const Stock = () => {
   const i = data.instrument;
   const f = data.fundamentals || {};
 
+  const thesisSummary = i?.thesis?.summary ?? null;
+
   const fcfYield = (f.freeCashflow && f.marketCap && f.marketCap > 0)
     ? (f.freeCashflow / f.marketCap) * 100 : null;
 
@@ -1173,6 +1175,13 @@ const Stock = () => {
             <button className="summary-toggle" onClick={toggleSummary}>
               {showFullSummary ? 'Show less' : 'Show more'}
             </button>
+          </div>
+        )}
+
+        {thesisSummary && (
+          <div className="panel">
+            <h3>Thesis</h3>
+            <p style={{ whiteSpace: 'pre-line' }}>{thesisSummary}</p>
           </div>
         )}
 

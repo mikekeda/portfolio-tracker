@@ -532,15 +532,6 @@
   opacity: 0.85;
 }
 
-/* Responsive adjustments for asset allocation */
-@media (max-width: 768px) {
-  .asset-allocation-section {
-    margin-top: 20px;
-    padding-top: 20px;
-  }
-
-}
-
 /* Treemap Legend - finviz-style horizontal colour strip */
 .treemap-legend-container {
   display: flex;
@@ -563,6 +554,18 @@
   text-align: center;
   min-width: 56px;
   white-space: nowrap;
+}
+
+/* Responsive adjustments for asset allocation */
+@media (max-width: 768px) {
+  .asset-allocation-section {
+    margin-top: 20px;
+    padding-top: 20px;
+  }
+
+  .treemap-legend-swatch {
+    min-width: 25px;
+  }
 }
 
 /* Generic legend item used elsewhere (Projection, UnderwaterChart). */

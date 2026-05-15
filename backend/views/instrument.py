@@ -382,6 +382,7 @@ async def get_instrument(
             "sector": yd.get("sector"),
             "country": yd.get("country"),
             "business_summary": yd.get("longBusinessSummary"),
+            "thesis": instrument.thesis,
             "quote_type": yd.get("quoteType"),
         },
         "fundamentals": fundamentals,
