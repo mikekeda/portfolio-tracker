@@ -98,6 +98,9 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "GB00BM8PJY71": "639057207",  # NatWest
     "GB0008706128": "539439109",  # Lloyds
     "IL0010811243": "M3760D101",  # Elbit Systems
+    "AU0000185993": "Q4982L109",  # IREN
+    "IL0011974909": "M7518J104",  # Oddity
+    "MU0295S00016": "V5633W109",  # MakeMyTrip
 }
 
 
