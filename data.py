@@ -85,6 +85,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "WWE": "TKO",
     "XPOA": "QBTS",
     "YNDX": "NBIS",
+    "FLY1": "FLY",
 }
 
 

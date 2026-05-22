@@ -1,8 +1,8 @@
 """
 Populate CIK Script
 ===================
-Fetches the official SEC company tickers JSON and maps CIKs to existing Instruments in the database.
-Primarily targets US stocks (matching logic is simple).
+Fetches the official SEC company tickers JSON and fills missing CIKs on Instruments.
+US tickers only (yahoo_symbol matched to SEC tickers; UK .L symbols stay NULL).
 """
 
 import requests
@@ -38,20 +38,15 @@ def fetch_sec_ticker_map() -> dict[str, str]:
 
 
 def populate_ciks():
-    """Populates the CIK field for all instruments using data from the SEC."""
+    """Fill missing CIKs on instruments using SEC ticker data."""
     ticker_map = fetch_sec_ticker_map()
 
     with get_session() as session:
-        instruments = session.scalars(select(Instrument)).all()
+        instruments = session.scalars(select(Instrument).where(Instrument.cik.is_(None))).all()
         updated_count = 0
-        no_yahoo_symbol = 0
         no_sec_match = 0
 
         for inst in instruments:
-            if not inst.yahoo_symbol:
-                no_yahoo_symbol += 1
-                continue
-
             # Yahoo format: "AAPL", "BRK-B" or "BRK.B"
             # SEC format: "AAPL", "BRK-B"
             candidate = inst.yahoo_symbol.upper()
@@ -70,10 +65,10 @@ def populate_ciks():
                 updated_count += 1
 
         logger.info(
-            "CIK populate: updated=%s, no SEC ticker match=%s, no yahoo_symbol=%s",
+            "CIK populate: candidates=%s, updated=%s, no SEC ticker match=%s",
+            len(instruments),
             updated_count,
             no_sec_match,
-            no_yahoo_symbol,
         )
 
 
