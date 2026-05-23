@@ -28,18 +28,42 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from backend.schemas.instrument_thesis import ThesisConviction
 from config import TIMEZONE
 
+InstrumentTag = Literal[
+    "semiconductor",
+    "ai",
+    "software",
+    "cloud",
+    "defense",
+    "space",
+    "healthcare",
+    "financial",
+    "growth",
+    "speculative",
+    "EU",
+]
 
-ThesisConviction = Literal["low", "medium", "high"]
+
+class ThesisRuleTypedDict(TypedDict, total=False):
+    """Screener-style rule in thesis buy_rules / sell_rules."""
+
+    field: str
+    operator: str
+    op: str
+    value: float | int | str | dict[str, str]
+    description: str
 
 
-class InstrumentThesis(TypedDict, total=False):
+class InstrumentThesisTypedDict(TypedDict, total=False):
     """User-authored thesis JSON stored on Instrument.thesis (JSONB)."""
 
     summary: str
     target_weight_min_pct: float
     target_weight_max_pct: float
+    buy_rules: list[ThesisRuleTypedDict]
+    sell_rules: list[ThesisRuleTypedDict]
     buy_triggers: list[str]
     sell_triggers: list[str]
     horizon_years: int
@@ -126,7 +150,8 @@ class Instrument(Base):
     yahoo_symbol: Mapped[str] = mapped_column(String(20), nullable=True, index=True)
     isin: Mapped[str] = mapped_column(String(12), nullable=True, index=True, unique=True)
     cik: Mapped[str] = mapped_column(String(10), nullable=True)
-    thesis: Mapped[Optional[InstrumentThesis]] = mapped_column(JSONB, nullable=True)
+    thesis: Mapped[Optional[InstrumentThesisTypedDict]] = mapped_column(JSONB, nullable=True)
+    tags: Mapped[Optional[list[InstrumentTag]]] = mapped_column(JSONB, nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
@@ -562,7 +587,6 @@ class EarningsReport(Base):
     # Relationships
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="earnings_reports")
 
-    # Constraints
     __table_args__ = (
         UniqueConstraint("instrument_id", "date", name="uq_earnings_reports_instrument_date"),
         Index("idx_earnings_reports_instrument_date", "instrument_id", "date"),

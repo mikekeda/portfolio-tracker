@@ -383,6 +383,7 @@ async def get_instrument(
             "country": yd.get("country"),
             "business_summary": yd.get("longBusinessSummary"),
             "thesis": instrument.thesis,
+            "tags": instrument.tags,
             "quote_type": yd.get("quoteType"),
         },
         "fundamentals": fundamentals,

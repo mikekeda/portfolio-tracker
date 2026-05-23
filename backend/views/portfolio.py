@@ -25,6 +25,7 @@ from utils.market_data import (
 from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.roic import get_roic
 from backend.utils.screener import calculate_screener_results
+from backend.utils.thesis_rules import attach_thesis_rule_eval
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 from backend.views._shared import PRICE_COLUMN, calculate_historical_trends, get_rates
 from config import BENCHES, DAYS_PER_YEAR, TIMEZONE, VIX
@@ -34,6 +35,7 @@ from models import (
     HoldingDaily,
     Instrument,
     InstrumentMetricsDaily,
+    InstrumentThesisTypedDict,
     PortfolioDaily,
     PricesDaily,
     TransactionAction,
@@ -258,13 +260,7 @@ async def get_current_portfolio(
             .options(selectinload(Instrument.yahoo))
         )
         instruments = list(instruments_result.scalars().all())
-        if not instruments:
-            return {
-                "holdings": [],
-                "total_holdings": 0,
-                "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS,
-                "last_updated": None,
-            }
+
         holdings_result = await session.execute(
             select(HoldingDaily)
             .join(Instrument)
@@ -272,7 +268,7 @@ async def get_current_portfolio(
             .options(selectinload(HoldingDaily.instrument).selectinload(Instrument.yahoo))
         )
         holdings_list = holdings_result.scalars().all()
-        holding_by_symbol = {(h.instrument.yahoo_symbol or h.instrument.t212_code): h for h in holdings_list}
+        holding_by_symbol = {h.instrument.yahoo_symbol: h for h in holdings_list}
         symbols_held = set(holding_by_symbol.keys())
         currency_rates = await get_rates(session)
         total_portfolio_value = sum(
@@ -304,13 +300,6 @@ async def get_current_portfolio(
         symbols_for_technical = [i.yahoo_symbol for i in instruments if i.yahoo_symbol]
         instruments_for_dcf = instruments
     else:
-        if not latest_date:
-            return {
-                "holdings": [],
-                "total_holdings": 0,
-                "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS,
-                "last_updated": None,
-            }
         # Query holdings with instrument data in the same session
         holdings_result = await session.execute(
             select(HoldingDaily)
@@ -342,7 +331,8 @@ async def get_current_portfolio(
     earnings_signals = await _get_earnings_signals(session, items)
     insider_signals = await _get_insider_signals(session, instrument_ids)
 
-    portfolio_data = []
+    portfolio_data: list[dict[str, Any]] = []
+    thesis_by_symbol: dict[str, InstrumentThesisTypedDict] = {}
     for holding in items:
         market_value_native = holding.quantity * holding.current_price
         market_value_gbp = market_value_native * currency_rates.get(holding.instrument.currency, 1.0)
@@ -365,6 +355,9 @@ async def get_current_portfolio(
         profit = holding.ppl if holding.ppl is not None else 0
         cost_basis = (market_value_gbp - holding.ppl) if holding.ppl is not None else 0
         return_pct = (holding.ppl / cost_basis * 100.0) if holding.ppl is not None and cost_basis > 0 else 0.0
+
+        if holding.instrument.thesis:
+            thesis_by_symbol[holding.instrument.yahoo_symbol] = holding.instrument.thesis
 
         portfolio_data.append(
             {
@@ -489,12 +482,15 @@ async def get_current_portfolio(
     # Calculate screener results for each holding
     calculate_screener_results(portfolio_data)
 
+    rule_recommendations = attach_thesis_rule_eval(portfolio_data, thesis_by_symbol)
+
     last_updated = latest_date.isoformat() if latest_date else datetime.now(TIMEZONE).date().isoformat()
     return {
         "holdings": portfolio_data,
         "total_holdings": len(portfolio_data),
         "quick_ratio_thresholds": QUICK_RATIO_THRESHOLDS,
         "last_updated": last_updated,
+        "rule_recommendations": rule_recommendations,
     }
 
 

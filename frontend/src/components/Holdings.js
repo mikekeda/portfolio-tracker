@@ -19,6 +19,53 @@ import './Holdings.css';
 
 const POSITION_ONLY_COLUMN_IDS = ['portfolio_pct', 'market_value', 'profit', 'return_pct'];
 
+function thesisRuleTooltip(eval_, side) {
+  if (!side && eval_.buy_signal && eval_.sell_signal) {
+    const buy = thesisRuleTooltip(eval_, 'buy');
+    const sell = thesisRuleTooltip(eval_, 'sell');
+    return [buy && `Buy: ${buy}`, sell && `Sell: ${sell}`].filter(Boolean).join('\n');
+  }
+  if (!side) {
+    if (eval_.buy_signal) return thesisRuleTooltip(eval_, 'buy');
+    if (eval_.sell_signal) return thesisRuleTooltip(eval_, 'sell');
+    return '';
+  }
+  const lines = [];
+  if (side === 'buy') {
+    eval_.buy_rules_met.forEach((r) => lines.push(r.description));
+    if (eval_.allocation_status === 'below_min') {
+      lines.push(eval_.allocation_reason);
+    }
+  }
+  if (side === 'sell') {
+    eval_.sell_rules_met.forEach((r) => lines.push(r.description));
+    if (eval_.allocation_status === 'above_max') {
+      lines.push(eval_.allocation_reason);
+    }
+  }
+  return lines.join('\n');
+}
+
+function recommendationTooltip(rec) {
+  return rec.reasons.join('\n');
+}
+
+function ThesisRuleSignal({ eval_ }) {
+  if (!eval_.buy_signal && !eval_.sell_signal) return null;
+  const tooltip = thesisRuleTooltip(eval_);
+  if (eval_.conflict) {
+    return (
+      <span className="thesis-rule-pill conflict" title={tooltip}>
+        Buy+Sell
+      </span>
+    );
+  }
+  if (eval_.buy_signal) {
+    return <span className="thesis-rule-pill buy" title={thesisRuleTooltip(eval_, 'buy')}>Buy</span>;
+  }
+  return <span className="thesis-rule-pill sell" title={thesisRuleTooltip(eval_, 'sell')}>Sell</span>;
+}
+
 // Screener score normalisation baseline (see computeComposite).
 // 50 ≈ sum of the 5 highest screener weights (9+9+9+8+8 = 43) plus a typical
 // cross-category combination bonus (~6 pts).  A round number, easy to reason
@@ -362,6 +409,7 @@ const Holdings = () => {
   const [quickRatioThresholds, setQuickRatioThresholds] = useState({});
   const [selectedStocks, setSelectedStocks] = useState(new Set());
   const [showOnlySelected, setShowOnlySelected] = useState(false);
+  const [ruleRecommendations, setRuleRecommendations] = useState({ buy: [], sell: [] });
 
   // Calculate min/max values for bar columns
   const barRanges = useMemo(() => {
@@ -492,6 +540,7 @@ const Holdings = () => {
           return (
             <span className="symbol-cell">
               <Link className="symbol" to={`/stock/${encodeURIComponent(symbol)}`}>{symbol}</Link>
+              <ThesisRuleSignal eval_={info.row.original.thesis_rule_eval} />
               {isEtf && <span className="etf-badge">ETF</span>}
             </span>
           );
@@ -1474,8 +1523,9 @@ const Holdings = () => {
         setLoading(true);
         setError(null);
         const data = await portfolioAPI.getCurrentHoldings(showAll);
-        setHoldings(data.holdings || []);
+        setHoldings(data.holdings);
         setQuickRatioThresholds(data.quick_ratio_thresholds || {});
+        setRuleRecommendations(data.rule_recommendations);
       } catch (err) {
         const msg = err.response?.data?.detail;
         setError(
@@ -1662,6 +1712,47 @@ const Holdings = () => {
       {error && (
         <div className="holdings-error" role="alert">
           {error}
+        </div>
+      )}
+
+      {(ruleRecommendations.buy.length > 0 || ruleRecommendations.sell.length > 0) && (
+        <div className="thesis-rule-panels">
+          {ruleRecommendations.buy.length > 0 && (
+            <div className="thesis-rule-panel buy-panel">
+              <span className="thesis-rule-panel-label">Suggested buys</span>
+              <div className="thesis-rule-chips">
+                {ruleRecommendations.buy.map((rec) => (
+                  <Link
+                    key={`buy-${rec.symbol}`}
+                    className={`thesis-rule-chip buy${rec.conflict ? ' conflict' : ''}`}
+                    to={`/stock/${encodeURIComponent(rec.symbol)}`}
+                    title={recommendationTooltip(rec)}
+                  >
+                    {rec.symbol}
+                    {rec.conflict && <span className="thesis-rule-chip-flag">Buy & sell</span>}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+          {ruleRecommendations.sell.length > 0 && (
+            <div className="thesis-rule-panel sell-panel">
+              <span className="thesis-rule-panel-label">Suggested sells</span>
+              <div className="thesis-rule-chips">
+                {ruleRecommendations.sell.map((rec) => (
+                  <Link
+                    key={`sell-${rec.symbol}`}
+                    className={`thesis-rule-chip sell${rec.conflict ? ' conflict' : ''}`}
+                    to={`/stock/${encodeURIComponent(rec.symbol)}`}
+                    title={recommendationTooltip(rec)}
+                  >
+                    {rec.symbol}
+                    {rec.conflict && <span className="thesis-rule-chip-flag">Buy & sell</span>}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

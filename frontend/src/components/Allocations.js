@@ -220,7 +220,7 @@ const Allocations = () => {
           portfolioAPI.getCurrentHoldings(false),
         ]);
         setAllocations(allocationsData);
-        setHoldings(holdingsData.holdings || []);
+        setHoldings(holdingsData.holdings);
         setError(null);
       } catch (err) {
         setError('Failed to fetch allocation data');
