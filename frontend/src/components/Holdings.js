@@ -19,11 +19,24 @@ import './Holdings.css';
 
 const POSITION_ONLY_COLUMN_IDS = ['portfolio_pct', 'market_value', 'profit', 'return_pct'];
 
+/** Unique tags present on holdings, sorted by frequency desc then name. */
+function tagsFromHoldings(holdings) {
+  const counts = new Map();
+  for (const h of holdings) {
+    for (const tag of h.tags || []) {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([id]) => id);
+}
+
 function thesisRuleTooltip(eval_, side) {
   if (!side && eval_.buy_signal && eval_.sell_signal) {
     const buy = thesisRuleTooltip(eval_, 'buy');
     const sell = thesisRuleTooltip(eval_, 'sell');
-    return [buy && `Buy: ${buy}`, sell && `Sell: ${sell}`].filter(Boolean).join('\n');
+    return [buy && `Buy: ${buy}`, sell && `Trim: ${sell}`].filter(Boolean).join('\n');
   }
   if (!side) {
     if (eval_.buy_signal) return thesisRuleTooltip(eval_, 'buy');
@@ -56,14 +69,14 @@ function ThesisRuleSignal({ eval_ }) {
   if (eval_.conflict) {
     return (
       <span className="thesis-rule-pill conflict" title={tooltip}>
-        Buy+Sell
+        Buy+Trim
       </span>
     );
   }
   if (eval_.buy_signal) {
     return <span className="thesis-rule-pill buy" title={thesisRuleTooltip(eval_, 'buy')}>Buy</span>;
   }
-  return <span className="thesis-rule-pill sell" title={thesisRuleTooltip(eval_, 'sell')}>Sell</span>;
+  return <span className="thesis-rule-pill trim" title={thesisRuleTooltip(eval_, 'sell')}>Trim</span>;
 }
 
 // Screener score normalisation baseline (see computeComposite).
@@ -404,6 +417,7 @@ const Holdings = () => {
   const [globalFilter, setGlobalFilter] = useState('');
   const [sorting, setSorting] = useState([]);
   const [selectedScreeners, setSelectedScreeners] = useState([]);
+  const [selectedTags, setSelectedTags] = useState([]);
   const [availableScreeners, setAvailableScreeners] = useState([]);
   const [screenersLoading, setScreenersLoading] = useState(true);
   const [quickRatioThresholds, setQuickRatioThresholds] = useState({});
@@ -453,6 +467,39 @@ const Holdings = () => {
     });
   }, []);
 
+  const handleTagChange = useCallback((tagId) => {
+    setSelectedTags(prev => {
+      if (tagId === '') return [];
+      if (prev.includes(tagId)) return prev.filter(id => id !== tagId);
+      return [...prev, tagId];
+    });
+  }, []);
+
+  const availableTags = useMemo(() => tagsFromHoldings(holdings), [holdings]);
+
+  const holdingsAfterTags = useMemo(() => {
+    if (selectedTags.length === 0) return holdings;
+    return holdings.filter(h =>
+      selectedTags.some(tagId => (h.tags || []).includes(tagId))
+    );
+  }, [holdings, selectedTags]);
+
+  const holdingsAfterScreeners = useMemo(() => {
+    if (selectedScreeners.length === 0) return holdings;
+    return holdings.filter(h =>
+      h.passedScreeners &&
+      selectedScreeners.every(id => h.passedScreeners.includes(id))
+    );
+  }, [holdings, selectedScreeners]);
+
+  const tagCounts = useMemo(() => {
+    const counts = {};
+    for (const tag of availableTags) {
+      counts[tag] = holdingsAfterScreeners.filter(h => (h.tags || []).includes(tag)).length;
+    }
+    return counts;
+  }, [availableTags, holdingsAfterScreeners]);
+
   // Get filtered holdings based on screener selection and stock selection
   const filteredHoldings = useMemo(() => {
     let result = holdings;
@@ -467,13 +514,19 @@ const Holdings = () => {
       );
     }
 
+    if (selectedTags.length > 0) {
+      result = result.filter(holding =>
+        selectedTags.some(tagId => (holding.tags || []).includes(tagId))
+      );
+    }
+
     // Apply selection filter - only when actually showing selected stocks
     if (showOnlySelected && selectedStocks.size > 0) {
       result = result.filter(h => selectedStocks.has(h.yahoo_symbol || h.t212_code));
     }
 
     return result;
-  }, [holdings, selectedScreeners, showOnlySelected, selectedStocks]);
+  }, [holdings, selectedScreeners, selectedTags, showOnlySelected, selectedStocks]);
 
   // Toggle select all based on currently filtered/visible rows
   const toggleSelectAll = useCallback(() => {
@@ -1210,6 +1263,32 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 50,
       }),
+      columnHelper.accessor(
+        (row) => (row.tags || []).join(' '),
+        {
+        id: 'tags',
+        header: 'Tags',
+        cell: (info) => {
+          const tags = info.row.original.tags;
+          if (!tags || !tags.length) return null;
+          return (
+            <div className="instrument-tag-badges">
+              {tags.map((tagId) => (
+                <span
+                  key={tagId}
+                  className={`instrument-tag-badge${selectedTags.includes(tagId) ? ' active' : ''}`}
+                >
+                  {tagId}
+                </span>
+              ))}
+            </div>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: true,
+        size: 110,
+        sortingFn: (rowA, rowB) => (rowA.original.tags?.length || 0) - (rowB.original.tags?.length || 0),
+      }),
       columnHelper.accessor('screener_score', {
         header: 'Screener',
         cell: (info) => {
@@ -1514,7 +1593,7 @@ const Holdings = () => {
     ];
     return showAll ? cols.filter(col => !POSITION_ONLY_COLUMN_IDS.includes(col.id)) : cols;
   },
-  [barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners, showAll, handleScreenerChange]
+  [barRanges, quickRatioThresholds, selectedStocks, toggleSelectAll, toggleStockSelection, availableScreeners, selectedScreeners, selectedTags, showAll, handleScreenerChange]
   );
 
   useEffect(() => {
@@ -1559,33 +1638,24 @@ const Holdings = () => {
     fetchScreeners();
   }, []);
 
-  // Calculate screener counts considering active screeners
   const screenerCounts = useMemo(() => {
-    if (!holdings.length || !availableScreeners.length) {
-      return {};
-    }
-
-    // Calculate counts for each screener considering AND logic with active screeners
+    if (!holdingsAfterTags.length || !availableScreeners.length) return {};
     const counts = {};
     availableScreeners.forEach(screener => {
       if (selectedScreeners.length === 0) {
-        // No active screeners: count all holdings that pass this screener
-        counts[screener.id] = holdings.filter(holding =>
-          holding.passedScreeners && holding.passedScreeners.includes(screener.id)
+        counts[screener.id] = holdingsAfterTags.filter(h =>
+          h.passedScreeners && h.passedScreeners.includes(screener.id)
         ).length;
       } else {
-        // Active screeners: count holdings that pass this screener AND all active screeners
-        counts[screener.id] = holdings.filter(holding =>
-          holding.passedScreeners &&
-          holding.passedScreeners.includes(screener.id) &&
-          selectedScreeners.every(activeScreenerId =>
-            holding.passedScreeners.includes(activeScreenerId)
-          )
+        counts[screener.id] = holdingsAfterTags.filter(h =>
+          h.passedScreeners &&
+          h.passedScreeners.includes(screener.id) &&
+          selectedScreeners.every(id => h.passedScreeners.includes(id))
         ).length;
       }
     });
     return counts;
-  }, [holdings, availableScreeners, selectedScreeners]);
+  }, [holdingsAfterTags, availableScreeners, selectedScreeners]);
 
   const table = useReactTable({
     data: filteredHoldings,
@@ -1645,6 +1715,7 @@ const Holdings = () => {
       'short_percent_of_float': 'Short',
       'rsi': 'RSI',
       'screener_score': 'Screener',
+      'tags': 'Tags',
       'passedScreeners': 'Screeners',
       'form13f_score': '13F Score',
       'form13f_holders': '13F Holders',
@@ -1729,25 +1800,25 @@ const Holdings = () => {
                     title={recommendationTooltip(rec)}
                   >
                     {rec.symbol}
-                    {rec.conflict && <span className="thesis-rule-chip-flag">Buy & sell</span>}
+                    {rec.conflict && <span className="thesis-rule-chip-flag">Buy & trim</span>}
                   </Link>
                 ))}
               </div>
             </div>
           )}
           {ruleRecommendations.sell.length > 0 && (
-            <div className="thesis-rule-panel sell-panel">
-              <span className="thesis-rule-panel-label">Suggested sells</span>
+            <div className="thesis-rule-panel trim-panel">
+              <span className="thesis-rule-panel-label">Suggested trims</span>
               <div className="thesis-rule-chips">
                 {ruleRecommendations.sell.map((rec) => (
                   <Link
                     key={`sell-${rec.symbol}`}
-                    className={`thesis-rule-chip sell${rec.conflict ? ' conflict' : ''}`}
+                    className={`thesis-rule-chip trim${rec.conflict ? ' conflict' : ''}`}
                     to={`/stock/${encodeURIComponent(rec.symbol)}`}
                     title={recommendationTooltip(rec)}
                   >
                     {rec.symbol}
-                    {rec.conflict && <span className="thesis-rule-chip-flag">Buy & sell</span>}
+                    {rec.conflict && <span className="thesis-rule-chip-flag">Buy & trim</span>}
                   </Link>
                 ))}
               </div>
@@ -1762,7 +1833,7 @@ const Holdings = () => {
         <div className="search-box">
           <input
             type="text"
-            placeholder="Search by symbol, name, sector, country, or currency..."
+            placeholder="Search by symbol, name, sector, country, currency, or tag..."
             value={globalFilter ?? ''}
             onChange={(e) => setGlobalFilter(e.target.value)}
             className="search-input"
@@ -1787,9 +1858,37 @@ const Holdings = () => {
             </svg>
           </button>
         </div>
+        </div>
+
+        {availableTags.length > 0 && (
+        <div className="instrument-tags-section">
+          <label>Tags:</label>
+          <div className="instrument-tags-container">
+            <button
+              type="button"
+              className={`instrument-tag-filter all-tags ${selectedTags.length === 0 ? 'active' : ''}`}
+              onClick={() => handleTagChange('')}
+              title="Clear tag filters"
+            >
+              All ({holdings.length})
+            </button>
+            {availableTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className={`instrument-tag-filter ${selectedTags.includes(tag) ? 'active' : ''}`}
+                  onClick={() => handleTagChange(tag)}
+                  title={`Filter by ${tag}`}
+                >
+                  {tag} ({tagCounts[tag] || 0})
+                </button>
+            ))}
+          </div>
+        </div>
+        )}
 
         <div className="screener-badges-section">
-          <label>Available Screeners:</label>
+          <label>Screeners:</label>
           <div className="screener-badges-container">
             {screenersLoading ? (
               <span className="loading-indicator">Loading screeners...</span>
@@ -1836,7 +1935,6 @@ const Holdings = () => {
               </>
             )}
           </div>
-          </div>
         </div>
 
         <div className="table-info">
@@ -1847,6 +1945,12 @@ const Holdings = () => {
                 {' '}(filtered by {selectedScreeners.length === 1
                   ? availableScreeners.find(s => s.id === selectedScreeners[0])?.name
                   : `${selectedScreeners.length} screeners`})
+              </span>
+            )}
+            {selectedTags.length > 0 && (
+              <span className="filter-status">
+                {' '}(tags:{' '}
+                {selectedTags.join(', ')})
               </span>
             )}
           </span>

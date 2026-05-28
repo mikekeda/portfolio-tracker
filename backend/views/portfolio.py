@@ -367,6 +367,7 @@ async def get_current_portfolio(
                 "currency": holding.instrument.currency,
                 "sector": info.get("sector"),
                 "country": info.get("country"),
+                "tags": holding.instrument.tags or [],
                 "quantity": holding.quantity,
                 "avg_price": holding.avg_price,
                 "current_price": holding.current_price,
