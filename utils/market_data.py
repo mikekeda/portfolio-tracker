@@ -144,6 +144,22 @@ async def get_yield_spread(session: aiohttp.ClientSession) -> Optional[float]:
     return obs[0]["value"]
 
 
+async def get_real_yield_10y(session: aiohttp.ClientSession) -> Optional[float]:
+    """10-year TIPS yield (FRED DFII10, percent)."""
+    obs = await gen_fred_latest(session, "DFII10", limit=1)
+    if not obs:
+        return None
+    return obs[0]["value"]
+
+
+async def get_hy_oas(session: aiohttp.ClientSession) -> Optional[float]:
+    """US high yield OAS (FRED BAMLH0A0HYM2, percent)."""
+    obs = await gen_fred_latest(session, "BAMLH0A0HYM2", limit=1)
+    if not obs:
+        return None
+    return obs[0]["value"]
+
+
 async def get_consumer_sentiment(session: aiohttp.ClientSession) -> Optional[float]:
     """
     University of Michigan Consumer Sentiment Index via FRED.
@@ -281,16 +297,16 @@ async def gen_sp500_symbols(session: aiohttp.ClientSession) -> list[str]:
     return results
 
 
-async def gen_market_breadth_indicator(db_session: AsyncSession, session: aiohttp.ClientSession) -> float:
-    """Calculate a simple market breadth indicator for S&P 500 constituents."""
-    start_date = datetime.now(TIMEZONE).date() - timedelta(days=4)  # 4 to cover weekends (2 days) + 2 days
+async def gen_market_breadth_indicator(db_session: AsyncSession) -> float:
+    """Daily S&P 500 breadth: fraction of names up minus fraction down vs the prior session."""
+    start_date = datetime.now(TIMEZONE).date() - timedelta(days=4)
 
     prices_result = await db_session.execute(
         select(PricesDaily.symbol, PRICE_COLUMN)
         .where(PricesDaily.symbol.in_(SP500), PricesDaily.date >= start_date)
-        .order_by(PricesDaily.date.desc())
+        .order_by(PricesDaily.symbol, PricesDaily.date.desc())
     )
-    prices = defaultdict(list)
+    prices: defaultdict[str, list[float]] = defaultdict(list)
     for row in prices_result:
         prices[row.symbol].append(row.price)
 
@@ -299,14 +315,14 @@ async def gen_market_breadth_indicator(db_session: AsyncSession, session: aiohtt
     missing = []
 
     for ticker in SP500:
-        if not prices.get(ticker) or len(prices[ticker]) < 2:
+        series = prices.get(ticker, [])
+        if len(series) < 2:
             missing.append(ticker)
             continue
 
-        # prices[ticker][0] is latest (desc order), prices[ticker][1] is previous
-        if prices[ticker][0] > prices[ticker][1]:
+        if series[0] > series[1]:
             advance += 1
-        elif prices[ticker][0] < prices[ticker][1]:
+        elif series[0] < series[1]:
             decline += 1
 
     if missing:

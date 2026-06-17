@@ -313,10 +313,10 @@ const getBuffettIndicatorTooltip = (buffettIndicator) => {
   return `Buffett Indicator: ${buffettIndicator.toFixed(1)}% (${level})\n\n${recommendation}\n\nThis measures total market cap as % of GDP, indicating overall market valuation.`;
 };
 
-// Helper function to get Market Breadth Indicator color
+// Helper function to get Market Breadth Indicator color (7-day rolling mean)
 const getMarketBreadthColor = (breadth) => {
-  if (breadth < -0.2) return 'negative'; // Bearish (more than 20% more decliners)
-  if (breadth > 0.2) return 'positive'; // Bullish (more than 20% more advancers)
+  if (breadth < -0.15) return 'negative';
+  if (breadth > 0.15) return 'positive';
   return '';
 };
 
@@ -324,31 +324,79 @@ const getMarketBreadthColor = (breadth) => {
 const getMarketBreadthTooltip = (breadth) => {
   let recommendation = '';
   let level = '';
+  const pct = breadth * 100;
 
-  if (breadth < -0.3) {
-    level = 'Strongly Bearish';
-    recommendation = '🔴 STRONG SELL SIGNAL - Very weak market breadth. More than 30% more stocks declined than advanced. Consider defensive positioning and reducing exposure to high-beta stocks.';
-  } else if (breadth < -0.2) {
-    level = 'Bearish';
-    recommendation = '⚠️ CAUTION - Weak market breadth. More stocks declining than advancing suggests underlying weakness. Review your portfolio for defensive opportunities.';
+  if (breadth < -0.25) {
+    level = 'Weak';
+    recommendation = 'On average over the last week, more S&P 500 names fell than rose day-to-day. Participation is narrow or defensive.';
   } else if (breadth < -0.1) {
-    level = 'Slightly Bearish';
-    recommendation = '📊 SLIGHTLY BEARISH - Market breadth is weak but not extreme. Monitor closely and consider reducing risk exposure.';
-  } else if (breadth < 0.1) {
+    level = 'Slightly weak';
+    recommendation = 'Mild negative breadth. Underlying participation is soft but not extreme.';
+  } else if (breadth <= 0.1) {
     level = 'Neutral';
-    recommendation = '📊 NEUTRAL - Market breadth is balanced. Standard risk management and stock selection practices apply.';
-  } else if (breadth < 0.2) {
-    level = 'Slightly Bullish';
-    recommendation = '📈 SLIGHTLY BULLISH - Market breadth is positive. More stocks advancing suggests underlying strength. Consider quality growth opportunities.';
-  } else if (breadth < 0.3) {
-    level = 'Bullish';
-    recommendation = '✅ BULLISH - Strong market breadth. More stocks advancing indicates broad market participation. Good environment for diversified growth.';
+    recommendation = 'Participation is mixed. Advancers and decliners are roughly balanced over the rolling week.';
+  } else if (breadth <= 0.25) {
+    level = 'Healthy';
+    recommendation = 'More names are up than down on average over the rolling week. Broad participation is supportive.';
   } else {
-    level = 'Strongly Bullish';
-    recommendation = '🟢 STRONG BUY SIGNAL - Very strong market breadth. More than 30% more stocks advanced than declined. Broad market participation suggests healthy market conditions.';
+    level = 'Strong';
+    recommendation = 'Very broad advance on average. Many names contributing to the move, not just a handful of leaders.';
   }
 
-  return `Market Breadth: ${(breadth * 100).toFixed(1)}% (${level})\n\n${recommendation}\n\nThis measures the ratio of advancing to declining S&P 500 stocks compared with the previous trading session. A positive value indicates more stocks advanced (bullish), while a negative value indicates more stocks declined (bearish). Range: -100% to +100%.\n\nFormula: (Advancers - Decliners) / Total S&P 500 Stocks`;
+  return `7-Day Breadth: ${pct >= 0 ? '+' : ''}${pct.toFixed(1)}% (${level})\n\n${recommendation}\n\n7-day average of daily (Advancers − Decliners) / 503 — how many more S&P names rose vs fell each session, smoothed over the last week.`;
+};
+
+const getRealYield10yColor = (value) => {
+  if (value > 2) return 'negative';
+  if (value < 0.5) return 'positive';
+  return '';
+};
+
+const getRealYield10yTooltip = (value) => {
+  let level = '';
+  let recommendation = '';
+
+  if (value > 2.5) {
+    level = 'Restrictive';
+    recommendation = 'Real rates are high — a headwind for long-duration growth multiples. Favour quality and avoid overpaying for hype.';
+  } else if (value > 1.5) {
+    level = 'Elevated';
+    recommendation = 'Above-average real yields. Discount rates are less supportive for high-multiple growth.';
+  } else if (value > 0.5) {
+    level = 'Normal';
+    recommendation = 'Real yields in a normal range. No extreme macro tailwind or headwind from rates.';
+  } else {
+    level = 'Low';
+    recommendation = 'Low or negative real yields support higher equity multiples. Favourable backdrop for growth.';
+  }
+
+  return `10Y Real Yield (TIPS): ${value.toFixed(2)}% (${level})\n\n${recommendation}\n\nFRED DFII10. Real return on 10-year inflation-protected Treasuries — a proxy for the discount rate on long-duration cash flows.`;
+};
+
+const getHyOasColor = (value) => {
+  if (value > 5.5) return 'negative';
+  return '';
+};
+
+const getHyOasTooltip = (value) => {
+  let level = '';
+  let recommendation = '';
+
+  if (value > 8) {
+    level = 'Stressed';
+    recommendation = 'Credit spreads are wide — risk-off conditions. Historically a contrarian backdrop for long-term equity adds if fundamentals hold.';
+  } else if (value > 5.5) {
+    level = 'Elevated';
+    recommendation = 'HY spreads are elevated. Credit markets are pricing stress — confirm with VIX and Fear & Greed before adding.';
+  } else if (value > 4) {
+    level = 'Normal';
+    recommendation = 'Spreads in a typical range. No acute credit stress signal.';
+  } else {
+    level = 'Tight';
+    recommendation = 'HY spreads are compressed — complacent credit conditions. Less margin of safety if risk-off arrives.';
+  }
+
+  return `HY OAS: ${value.toFixed(2)}% (${level})\n\n${recommendation}\n\nFRED BAMLH0A0HYM2. ICE BofA US High Yield option-adjusted spread — credit risk premium over Treasuries.`;
 };
 
 // Helper function to get SMA200 color
@@ -411,26 +459,35 @@ const getConsumerSentimentTooltip = (value) => {
 
 // ── Macro / Portfolio indicator history chart ──────────────────────────────────
 
+const INDICATOR_CLUSTERS = {
+  tactical: {
+    label: 'Tactical',
+    className: 'cluster-tactical',
+    legendClass: 'legend-tactical',
+    tooltip: 'Short-term sentiment and volatility. Mood context — not a long-term thesis signal.',
+  },
+  structure: {
+    label: 'Structure',
+    className: 'cluster-structure',
+    legendClass: 'legend-structure',
+    tooltip: 'Market breadth and participation — whether moves are broad or driven by a narrow set of names.',
+  },
+  valuation: {
+    label: 'Valuation',
+    className: 'cluster-valuation',
+    legendClass: 'legend-valuation',
+    tooltip: 'How expensive the market is vs fundamentals. Slow-moving backdrop, not a timing tool.',
+  },
+  macro: {
+    label: 'Macro',
+    className: 'cluster-macro',
+    legendClass: 'legend-macro',
+    tooltip: 'Rates, credit, and economic conditions — discount rates and risk appetite for growth assets.',
+  },
+};
+
 // Market indicators (stored in MarketMetricsDaily)
 const MARKET_INDICATOR_CONFIGS = {
-  buffett_indicator: {
-    label: 'Buffett Indicator',
-    yFormatter: v => `${v?.toFixed(1)}%`,
-    color: '#e74c3c',
-    referenceLines: [
-      { y: 75,  label: 'Undervalued', stroke: '#28a745' },
-      { y: 100, label: '100%',        stroke: '#ffc107' },
-      { y: 150, label: 'Overvalued',  stroke: '#dc3545' },
-    ],
-  },
-  yield_spread: {
-    label: 'Yield Spread (10Y–2Y)',
-    yFormatter: v => `${v?.toFixed(2)}%`,
-    color: '#3498db',
-    referenceLines: [
-      { y: 0, label: 'Inverted', stroke: '#dc3545' },
-    ],
-  },
   fear_greed_index: {
     label: 'Fear & Greed Index',
     yFormatter: v => v?.toFixed(1),
@@ -451,14 +508,6 @@ const MARKET_INDICATOR_CONFIGS = {
       { y: 35, label: 'High',     stroke: '#dc3545' },
     ],
   },
-  market_breadth_indicator: {
-    label: 'Market Breadth',
-    yFormatter: v => `${v >= 0 ? '+' : ''}${v?.toFixed(1)}%`,
-    color: '#2ecc71',
-    referenceLines: [
-      { y: 0, label: 'Neutral', stroke: '#6c757d' },
-    ],
-  },
   sp500_above_sma200: {
     label: '% S&P 500 > SMA200',
     yFormatter: v => `${v?.toFixed(1)}%`,
@@ -466,6 +515,50 @@ const MARKET_INDICATOR_CONFIGS = {
     referenceLines: [
       { y: 40, label: 'Bear Zone', stroke: '#dc3545' },
       { y: 60, label: 'Bull Zone', stroke: '#28a745' },
+    ],
+  },
+  market_breadth_indicator: {
+    label: '7-Day Market Breadth',
+    yFormatter: v => `${v >= 0 ? '+' : ''}${v?.toFixed(1)}%`,
+    color: '#2ecc71',
+    referenceLines: [
+      { y: 0, label: 'Neutral', stroke: '#6c757d' },
+    ],
+  },
+  buffett_indicator: {
+    label: 'Buffett Indicator',
+    yFormatter: v => `${v?.toFixed(1)}%`,
+    color: '#e74c3c',
+    referenceLines: [
+      { y: 75,  label: 'Undervalued', stroke: '#28a745' },
+      { y: 100, label: '100%',        stroke: '#ffc107' },
+      { y: 150, label: 'Overvalued',  stroke: '#dc3545' },
+    ],
+  },
+  real_yield_10y: {
+    label: '10Y Real Yield (TIPS)',
+    yFormatter: v => `${v?.toFixed(2)}%`,
+    color: '#34495e',
+    referenceLines: [
+      { y: 0.5, label: 'Low',         stroke: '#28a745' },
+      { y: 2.0, label: 'Restrictive', stroke: '#dc3545' },
+    ],
+  },
+  hy_oas: {
+    label: 'HY OAS',
+    yFormatter: v => `${v?.toFixed(2)}%`,
+    color: '#c0392b',
+    referenceLines: [
+      { y: 3.5, label: 'Tight',    stroke: '#ffc107' },
+      { y: 5.5, label: 'Elevated', stroke: '#dc3545' },
+    ],
+  },
+  yield_spread: {
+    label: 'Yield Spread (10Y–2Y)',
+    yFormatter: v => `${v?.toFixed(2)}%`,
+    color: '#3498db',
+    referenceLines: [
+      { y: 0, label: 'Inverted', stroke: '#dc3545' },
     ],
   },
 };
@@ -626,7 +719,7 @@ const MacroTooltip = ({ active, payload, label, config }) => {
  * fetchHistory – async (days: number) => { date: string, value: number }[]
  *                days=0 means "all available"
  */
-const MacroChartModal = ({ config, currentValue, fetchHistory, onClose }) => {
+const MacroChartModal = ({ config, currentValue, fetchHistory, clusterKey, onClose }) => {
   const [range, setRange] = useState(365);
   const [history, setHistory] = useState([]);
   const [loadingChart, setLoadingChart] = useState(true);
@@ -657,12 +750,16 @@ const MacroChartModal = ({ config, currentValue, fetchHistory, onClose }) => {
 
   const ChartEl = config.area ? AreaChart : LineChart;
   const SeriesEl = config.area ? Area : Line;
+  const cluster = clusterKey ? INDICATOR_CLUSTERS[clusterKey] : null;
 
   return (
     <div className="macro-modal-overlay" onClick={onClose}>
       <div className="macro-modal" onClick={e => e.stopPropagation()}>
         <div className="macro-modal-header">
           <div>
+            {cluster && (
+              <span className={`macro-modal-cluster ${cluster.legendClass}`}>{cluster.label}</span>
+            )}
             <h3 className="macro-modal-title">{config.label}</h3>
             {currentValue != null && (
               <span className="macro-modal-current">
@@ -764,10 +861,10 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState('1d');
-  // { config, currentValue, fetchHistory } | null
+  // { config, currentValue, fetchHistory, clusterKey } | null
   const [macroModal, setMacroModal] = useState(null);
-  const openMacroModal = useCallback((config, currentValue, fetchHistory) => {
-    setMacroModal({ config, currentValue, fetchHistory });
+  const openMacroModal = useCallback((config, currentValue, fetchHistory, clusterKey = null) => {
+    setMacroModal({ config, currentValue, fetchHistory, clusterKey });
   }, []);
   const closeMacroModal = useCallback(() => setMacroModal(null), []);
 
@@ -1006,56 +1103,26 @@ const Dashboard = () => {
       {/* Market Indicators Section */}
       <div className="indicators-section">
         <h2 className="section-heading">Market Indicators</h2>
+        <p className="indicators-cluster-legend">
+          <span className={`${INDICATOR_CLUSTERS.tactical.legendClass} legend-item`} title={INDICATOR_CLUSTERS.tactical.tooltip}>Tactical</span>
+          <span className="legend-sep"> · </span>
+          <span className={`${INDICATOR_CLUSTERS.structure.legendClass} legend-item`} title={INDICATOR_CLUSTERS.structure.tooltip}>Structure</span>
+          <span className="legend-sep"> · </span>
+          <span className={`${INDICATOR_CLUSTERS.valuation.legendClass} legend-item`} title={INDICATOR_CLUSTERS.valuation.tooltip}>Valuation</span>
+          <span className="legend-sep"> · </span>
+          <span className={`${INDICATOR_CLUSTERS.macro.legendClass} legend-item`} title={INDICATOR_CLUSTERS.macro.tooltip}>Macro</span>
+        </p>
         <div className="summary-cards">
-          {summary.buffett_indicator != null && (
-            <div className="card macro-card" title={getBuffettIndicatorTooltip(summary.buffett_indicator)}>
-              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
-                MARKET_INDICATOR_CONFIGS.buffett_indicator,
-                summary.buffett_indicator,
-                async (days) => {
-                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
-                  return d.filter(r => r.buffett_indicator != null).map(r => ({ date: r.date, value: r.buffett_indicator }));
-                }
-              )}>
-                <ChartIcon />
-              </button>
-              <h3>Buffett Indicator</h3>
-              <a href="https://currentmarketvaluation.com/models/buffett-indicator.php" target="_blank" rel="noopener noreferrer" className="value-link">
-                <p className={`value ${getBuffettIndicatorColor(summary.buffett_indicator)}`}>
-                  {summary.buffett_indicator.toFixed(1)}%
-                </p>
-              </a>
-            </div>
-          )}
-          {summary.yield_spread != null && (
-            <div className="card macro-card" title={getYieldSpreadTooltip(summary.yield_spread)}>
-              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
-                MARKET_INDICATOR_CONFIGS.yield_spread,
-                summary.yield_spread,
-                async (days) => {
-                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
-                  return d.filter(r => r.yield_spread != null).map(r => ({ date: r.date, value: r.yield_spread }));
-                }
-              )}>
-                <ChartIcon />
-              </button>
-              <h3>Yield Spread</h3>
-              <a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank" rel="noopener noreferrer" className="value-link">
-                <p className={`value ${getYieldSpreadColor(summary.yield_spread)}`}>
-                  {summary.yield_spread.toFixed(2)}%
-                </p>
-              </a>
-            </div>
-          )}
           {summary.fear_greed_index && (
-            <div className="card macro-card" title={getFearGreedTooltip(summary.fear_greed_index)}>
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.tactical.className}`} title={getFearGreedTooltip(summary.fear_greed_index)}>
               <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
                 MARKET_INDICATOR_CONFIGS.fear_greed_index,
                 summary.fear_greed_index.value,
                 async (days) => {
                   const d = await portfolioAPI.getMarketIndicatorsHistory(days);
                   return d.filter(r => r.fear_greed_index != null).map(r => ({ date: r.date, value: r.fear_greed_index }));
-                }
+                },
+                'tactical'
               )}>
                 <ChartIcon />
               </button>
@@ -1068,14 +1135,15 @@ const Dashboard = () => {
             </div>
           )}
           {summary.vix != null && (
-            <div className="card macro-card" title={getVixTooltip(summary.vix)}>
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.tactical.className}`} title={getVixTooltip(summary.vix)}>
               <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
                 MARKET_INDICATOR_CONFIGS.vix,
                 summary.vix,
                 async (days) => {
                   const d = await portfolioAPI.getMarketIndicatorsHistory(days);
                   return d.filter(r => r.vix != null).map(r => ({ date: r.date, value: r.vix }));
-                }
+                },
+                'tactical'
               )}>
                 <ChartIcon />
               </button>
@@ -1083,34 +1151,16 @@ const Dashboard = () => {
               <p className={`value ${getVIXColor(summary.vix)}`}>{summary.vix.toFixed(2)}</p>
             </div>
           )}
-          {summary.market_breadth_indicator != null && (
-            <div className="card macro-card" title={getMarketBreadthTooltip(summary.market_breadth_indicator)}>
-              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
-                MARKET_INDICATOR_CONFIGS.market_breadth_indicator,
-                summary.market_breadth_indicator * 100,
-                async (days) => {
-                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
-                  return d.filter(r => r.market_breadth_indicator != null).map(r => ({ date: r.date, value: r.market_breadth_indicator }));
-                }
-              )}>
-                <ChartIcon />
-              </button>
-              <h3>Market Breadth</h3>
-              <p className={`value ${getMarketBreadthColor(summary.market_breadth_indicator)}`}>
-                {(summary.market_breadth_indicator * 100 >= 0 ? '+' : '')}
-                {(summary.market_breadth_indicator * 100).toFixed(1)}%
-              </p>
-            </div>
-          )}
           {summary.sp500_above_sma200 != null && (
-            <div className="card macro-card" title={getSma200Tooltip(summary.sp500_above_sma200)}>
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.structure.className}`} title={getSma200Tooltip(summary.sp500_above_sma200)}>
               <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
                 MARKET_INDICATOR_CONFIGS.sp500_above_sma200,
                 summary.sp500_above_sma200,
                 async (days) => {
                   const d = await portfolioAPI.getMarketIndicatorsHistory(days);
                   return d.filter(r => r.sp500_above_sma200 != null).map(r => ({ date: r.date, value: r.sp500_above_sma200 }));
-                }
+                },
+                'structure'
               )}>
                 <ChartIcon />
               </button>
@@ -1122,8 +1172,112 @@ const Dashboard = () => {
               </a>
             </div>
           )}
+          {summary.market_breadth_indicator != null && (
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.structure.className}`} title={getMarketBreadthTooltip(summary.market_breadth_indicator)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.market_breadth_indicator,
+                summary.market_breadth_indicator * 100,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.market_breadth_indicator != null).map(r => ({ date: r.date, value: r.market_breadth_indicator }));
+                },
+                'structure'
+              )}>
+                <ChartIcon />
+              </button>
+              <h3>7-Day Breadth</h3>
+              <p className={`value ${getMarketBreadthColor(summary.market_breadth_indicator)}`}>
+                {(summary.market_breadth_indicator * 100 >= 0 ? '+' : '')}
+                {(summary.market_breadth_indicator * 100).toFixed(1)}%
+              </p>
+            </div>
+          )}
+          {summary.buffett_indicator != null && (
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.valuation.className}`} title={getBuffettIndicatorTooltip(summary.buffett_indicator)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.buffett_indicator,
+                summary.buffett_indicator,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.buffett_indicator != null).map(r => ({ date: r.date, value: r.buffett_indicator }));
+                },
+                'valuation'
+              )}>
+                <ChartIcon />
+              </button>
+              <h3>Buffett Indicator</h3>
+              <a href="https://currentmarketvaluation.com/models/buffett-indicator.php" target="_blank" rel="noopener noreferrer" className="value-link">
+                <p className={`value ${getBuffettIndicatorColor(summary.buffett_indicator)}`}>
+                  {summary.buffett_indicator.toFixed(1)}%
+                </p>
+              </a>
+            </div>
+          )}
+          {summary.real_yield_10y != null && (
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.macro.className}`} title={getRealYield10yTooltip(summary.real_yield_10y)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.real_yield_10y,
+                summary.real_yield_10y,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.real_yield_10y != null).map(r => ({ date: r.date, value: r.real_yield_10y }));
+                },
+                'macro'
+              )}>
+                <ChartIcon />
+              </button>
+              <h3>10Y Real Yield</h3>
+              <a href="https://fred.stlouisfed.org/series/DFII10" target="_blank" rel="noopener noreferrer" className="value-link">
+                <p className={`value ${getRealYield10yColor(summary.real_yield_10y)}`}>
+                  {summary.real_yield_10y.toFixed(2)}%
+                </p>
+              </a>
+            </div>
+          )}
+          {summary.hy_oas != null && (
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.macro.className}`} title={getHyOasTooltip(summary.hy_oas)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.hy_oas,
+                summary.hy_oas,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.hy_oas != null).map(r => ({ date: r.date, value: r.hy_oas }));
+                },
+                'macro'
+              )}>
+                <ChartIcon />
+              </button>
+              <h3>HY OAS</h3>
+              <a href="https://fred.stlouisfed.org/series/BAMLH0A0HYM2" target="_blank" rel="noopener noreferrer" className="value-link">
+                <p className={`value ${getHyOasColor(summary.hy_oas)}`}>
+                  {summary.hy_oas.toFixed(2)}%
+                </p>
+              </a>
+            </div>
+          )}
+          {summary.yield_spread != null && (
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.macro.className}`} title={getYieldSpreadTooltip(summary.yield_spread)}>
+              <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
+                MARKET_INDICATOR_CONFIGS.yield_spread,
+                summary.yield_spread,
+                async (days) => {
+                  const d = await portfolioAPI.getMarketIndicatorsHistory(days);
+                  return d.filter(r => r.yield_spread != null).map(r => ({ date: r.date, value: r.yield_spread }));
+                },
+                'macro'
+              )}>
+                <ChartIcon />
+              </button>
+              <h3>Yield Spread</h3>
+              <a href="https://fred.stlouisfed.org/series/T10Y2Y" target="_blank" rel="noopener noreferrer" className="value-link">
+                <p className={`value ${getYieldSpreadColor(summary.yield_spread)}`}>
+                  {summary.yield_spread.toFixed(2)}%
+                </p>
+              </a>
+            </div>
+          )}
           {summary.consumer_sentiment != null && (
-            <div className="card macro-card" title={getConsumerSentimentTooltip(summary.consumer_sentiment)}>
+            <div className={`card macro-card ${INDICATOR_CLUSTERS.macro.className}`} title={getConsumerSentimentTooltip(summary.consumer_sentiment)}>
               <button className="macro-chart-btn" title="View history" onClick={() => openMacroModal(
                 CS_CONFIG,
                 summary.consumer_sentiment,
@@ -1137,7 +1291,8 @@ const Dashboard = () => {
                   if (dbData.length > 0) return dbData;
                   const months = days === 0 ? 0 : Math.max(3, Math.ceil(days / 30));
                   return portfolioAPI.getConsumerSentimentHistory(months);
-                }
+                },
+                'macro'
               )}>
                 <ChartIcon />
               </button>
@@ -1168,6 +1323,7 @@ const Dashboard = () => {
           config={macroModal.config}
           currentValue={macroModal.currentValue}
           fetchHistory={macroModal.fetchHistory}
+          clusterKey={macroModal.clusterKey}
           onClose={closeMacroModal}
         />
       )}

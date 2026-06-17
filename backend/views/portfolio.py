@@ -14,12 +14,15 @@ from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.drawdown import compute_max_drawdown, underwater_series
 from backend.utils.form13f import _get_form13f_for_instruments
+from backend.utils.market_breadth import compute_live_rolling_breadth
 from utils.market_data import (
     gen_buffett_indicator,
     gen_fear_greed_index,
     gen_market_breadth_indicator,
     gen_sp500_above_sma200,
     get_consumer_sentiment,
+    get_hy_oas,
+    get_real_yield_10y,
     get_yield_spread,
 )
 from backend.utils.piotroski import get_piotroski_f_score
@@ -528,6 +531,8 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             market_breadth_indicator,
             sp500_above_sma200,
             consumer_sentiment,
+            real_yield_10y,
+            hy_oas,
         ) = await asyncio.gather(
             session.execute(select(HoldingDaily).filter(HoldingDaily.date == latest_snapshot.date)),
             session.execute(
@@ -541,10 +546,14 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
             gen_fear_greed_index(aiohttp_session),
             get_yield_spread(aiohttp_session),
             gen_buffett_indicator(aiohttp_session),
-            gen_market_breadth_indicator(session, aiohttp_session),
+            gen_market_breadth_indicator(session),
             gen_sp500_above_sma200(session),
             get_consumer_sentiment(aiohttp_session),
+            get_real_yield_10y(aiohttp_session),
+            get_hy_oas(aiohttp_session),
         )
+
+    market_breadth_indicator = await compute_live_rolling_breadth(session, market_breadth_indicator)
 
     holdings = holdings_result.scalars().all()
 
@@ -580,6 +589,8 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
         "yield_spread": yield_spread,
         "buffett_indicator": buffett_indicator,
         "consumer_sentiment": consumer_sentiment,
+        "real_yield_10y": real_yield_10y,
+        "hy_oas": hy_oas,
         "alpha": alpha,
     }
 

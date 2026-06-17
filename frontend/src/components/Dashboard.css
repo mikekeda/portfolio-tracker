@@ -64,6 +64,40 @@
   margin: 0 0 20px 0;
 }
 
+.indicators-cluster-legend {
+  margin: -12px 0 16px 0;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.indicators-cluster-legend .legend-sep {
+  color: #adb5bd;
+}
+
+.indicators-cluster-legend .legend-item {
+  cursor: help;
+}
+
+.indicators-cluster-legend .legend-tactical {
+  color: #9b59b6;
+  font-weight: 600;
+}
+
+.indicators-cluster-legend .legend-structure {
+  color: #1abc9c;
+  font-weight: 600;
+}
+
+.indicators-cluster-legend .legend-valuation {
+  color: #6c757d;
+  font-weight: 600;
+}
+
+.indicators-cluster-legend .legend-macro {
+  color: #3498db;
+  font-weight: 600;
+}
+
 /* Summary Cards */
 .summary-cards {
   display: grid;
@@ -295,6 +329,32 @@
   position: relative;
 }
 
+.macro-card[class*="cluster-"]::after {
+  content: '';
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.macro-card.cluster-tactical::after {
+  background: #9b59b6;
+}
+
+.macro-card.cluster-structure::after {
+  background: #1abc9c;
+}
+
+.macro-card.cluster-valuation::after {
+  background: #6c757d;
+}
+
+.macro-card.cluster-macro::after {
+  background: #3498db;
+}
+
 .macro-chart-btn {
   position: absolute;
   top: 8px;
@@ -361,6 +421,31 @@
   font-size: 17px;
   font-weight: 600;
   color: #212529;
+}
+
+.macro-modal-cluster {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.macro-modal-cluster.legend-tactical {
+  color: #9b59b6;
+}
+
+.macro-modal-cluster.legend-structure {
+  color: #1abc9c;
+}
+
+.macro-modal-cluster.legend-valuation {
+  color: #6c757d;
+}
+
+.macro-modal-cluster.legend-macro {
+  color: #3498db;
 }
 
 .macro-modal-current {

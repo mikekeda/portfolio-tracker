@@ -22,6 +22,8 @@ from utils.market_data import (
     gen_market_breadth_indicator,
     gen_sp500_above_sma200,
     get_consumer_sentiment,
+    get_hy_oas,
+    get_real_yield_10y,
     get_yield_spread,
 )
 from config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER, TIMEZONE, VIX, logger
@@ -58,11 +60,13 @@ async def update_market_metrics():
 
                 # 1. Fetch external API data concurrently
                 logger.info("Fetching external data...")
-                buffett, yield_spread, fear_greed_data, consumer_sentiment = await asyncio.gather(
+                buffett, yield_spread, fear_greed_data, consumer_sentiment, real_yield_10y, hy_oas = await asyncio.gather(
                     gen_buffett_indicator(http_session),
                     get_yield_spread(http_session),
                     gen_fear_greed_index(http_session),
                     get_consumer_sentiment(http_session),
+                    get_real_yield_10y(http_session),
+                    get_hy_oas(http_session),
                 )
 
                 # 2. Fetch/Calculate DB-dependent metrics
@@ -70,14 +74,14 @@ async def update_market_metrics():
                 # and SQLAlchemy AsyncSession is not concurrency-safe for parallel operations.
                 logger.info("Calculating DB metrics...")
                 vix = await get_vix(db_session)
-                breadth = await gen_market_breadth_indicator(db_session, http_session)
+                breadth = await gen_market_breadth_indicator(db_session)
                 sma200_pct = await gen_sp500_above_sma200(db_session)
 
                 # Extract value from Fear & Greed result
                 fear_greed = fear_greed_data["value"] if fear_greed_data else None
 
                 logger.info(
-                    "Metrics: Buffett=%s, Yield=%s, F&G=%s, VIX=%s, Breadth=%s, SMA200%%=%s, CS=%s",
+                    "Metrics: Buffett=%s, Yield=%s, F&G=%s, VIX=%s, Breadth=%s, SMA200%%=%s, CS=%s, Real10Y=%s, HY OAS=%s",
                     buffett,
                     yield_spread,
                     fear_greed,
@@ -85,6 +89,8 @@ async def update_market_metrics():
                     breadth,
                     sma200_pct,
                     consumer_sentiment,
+                    real_yield_10y,
+                    hy_oas,
                 )
 
                 # Upsert into DB
@@ -102,6 +108,8 @@ async def update_market_metrics():
                 metric.market_breadth_indicator = breadth
                 metric.sp500_above_sma200 = sma200_pct
                 metric.consumer_sentiment = consumer_sentiment
+                metric.real_yield_10y = real_yield_10y
+                metric.hy_oas = hy_oas
                 metric.updated_at = datetime.now(TIMEZONE).replace(tzinfo=None)
 
                 await db_session.commit()

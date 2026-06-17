@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
+from backend.utils.market_breadth import rolled_breadth_series
 from utils.market_data import gen_fred_latest
 from backend.views._shared import get_rates
 from config import TIMEZONE
@@ -126,9 +127,8 @@ async def get_market_indicators_history(
     """
     Returns historical market metrics for charting.
     days=0 returns all available history.
-    market_breadth_indicator is returned pre-multiplied by 100 (as a percent).
-    consumer_sentiment is included when stored (nullable until the migration is applied and the
-    script has run at least once).
+    market_breadth_indicator is a 7-day rolling mean of stored daily raw breadth,
+    returned pre-multiplied by 100 (as a percent). Other fields are stored as-is.
     """
     if days == 0:
         query = select(MarketMetricsDaily).order_by(MarketMetricsDaily.date)
@@ -138,21 +138,25 @@ async def get_market_indicators_history(
 
     result = await session.execute(query)
     rows = result.scalars().all()
-    return [
-        {
-            "date": row.date.isoformat(),
-            "buffett_indicator": row.buffett_indicator,
-            "yield_spread": row.yield_spread,
-            "fear_greed_index": row.fear_greed_index,
-            "vix": row.vix,
-            "market_breadth_indicator": (
-                round(row.market_breadth_indicator * 100, 2) if row.market_breadth_indicator is not None else None
-            ),
-            "sp500_above_sma200": row.sp500_above_sma200,
-            "consumer_sentiment": row.consumer_sentiment,
-        }
-        for row in rows
-    ]
+    breadth_rolled = rolled_breadth_series(rows)
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(rows):
+        rolled = breadth_rolled[i]
+        out.append(
+            {
+                "date": row.date.isoformat(),
+                "buffett_indicator": row.buffett_indicator,
+                "yield_spread": row.yield_spread,
+                "fear_greed_index": row.fear_greed_index,
+                "vix": row.vix,
+                "market_breadth_indicator": round(rolled * 100, 2) if rolled is not None else None,
+                "sp500_above_sma200": row.sp500_above_sma200,
+                "consumer_sentiment": row.consumer_sentiment,
+                "real_yield_10y": row.real_yield_10y,
+                "hy_oas": row.hy_oas,
+            }
+        )
+    return out
 
 
 @router.get("/api/market/indicators/consumer-sentiment/history")
