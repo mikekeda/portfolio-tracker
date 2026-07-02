@@ -19,7 +19,7 @@ import pandas as pd
 import requests
 import yfinance as yf  # type: ignore[import-untyped]
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import case, create_engine, select
+from sqlalchemy import case, create_engine, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert  # Added for bulk upsert
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 from sqlalchemy.sql import func
@@ -302,14 +302,23 @@ def update_holdings() -> list[HoldingDaily]:
             .scalars()
             .all()
         )
+        # Freshness is tracked in profile_fetched_at, NOT updated_at: the nightly
+        # PE scrapers bump updated_at without fetching, which starved every
+        # PE-covered instrument out of this queue for two months (metrics frozen
+        # since 2026-04-29). NULL = never fetched since the column was added.
         cutoff = datetime.now(TIMEZONE) - timedelta(days=YAHOO_UPDATE_INTERVAL_DAYS)
         stale_yahoo_ids: list[int] = list(
             session.execute(
                 select(InstrumentYahoo.instrument_id)
                 .join(Instrument, Instrument.id == InstrumentYahoo.instrument_id)
-                .where(InstrumentYahoo.updated_at < cutoff)
+                .where(
+                    or_(
+                        InstrumentYahoo.profile_fetched_at.is_(None),
+                        InstrumentYahoo.profile_fetched_at < cutoff,
+                    )
+                )
                 .where(Instrument.yahoo_symbol.notin_(STOCKS_DELISTED))
-                .order_by(InstrumentYahoo.updated_at)
+                .order_by(InstrumentYahoo.profile_fetched_at.asc().nulls_first())
             )
             .scalars()
             .all()
@@ -368,7 +377,9 @@ def update_holdings() -> list[HoldingDaily]:
                 # would break quoteType lookups downstream).
                 logger.warning("Empty Yahoo info for %s — keeping cached data", yahoo_symbol)
                 if yahoo_row:
-                    yahoo_row.updated_at = datetime.now(TIMEZONE)
+                    # Count the failed attempt as a fetch so one dead symbol
+                    # doesn't hog the front of the queue every run.
+                    yahoo_row.profile_fetched_at = datetime.now(TIMEZONE)
                 continue
             if yahoo_row:
                 yahoo_row.info = yahoo_data
@@ -393,7 +404,7 @@ def update_holdings() -> list[HoldingDaily]:
                     yahoo_row.balance_sheet = payload["balance_sheet"]
                 if payload["income_stmt"]:
                     yahoo_row.income_stmt = payload["income_stmt"]
-                yahoo_row.updated_at = datetime.now(TIMEZONE)
+                yahoo_row.profile_fetched_at = datetime.now(TIMEZONE)
             else:
                 session.add(
                     InstrumentYahoo(
@@ -408,6 +419,7 @@ def update_holdings() -> list[HoldingDaily]:
                         pes={},  # Populated by scrape_wisesheets_pe / scrape_macrotrends_pe
                         balance_sheet=payload["balance_sheet"],
                         income_stmt=payload["income_stmt"],
+                        profile_fetched_at=datetime.now(TIMEZONE),
                     )
                 )
 

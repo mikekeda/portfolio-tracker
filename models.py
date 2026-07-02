@@ -240,7 +240,12 @@ class InstrumentYahoo(Base):
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Bumped by ANY writer (onupdate) — including the nightly PE scrapers that
+    # only touch `pes`. Never use it to decide profile freshness.
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+    # When update_data last fetched the Yahoo profile (info & friends).
+    # Drives the staleness queue; only the fetch path may set it.
+    profile_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Relationship back to instrument
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="yahoo")
