@@ -1,6 +1,7 @@
 import asyncio
 from celery_tasks.celery_app import app
 from scripts.update_returns import update_returns
+from scripts.fix_split_prices import fix_split_prices
 from scripts.get_earnings_reports import get_earnings_reports
 from scripts.get_uk_earnings_reports import get_uk_earnings_reports
 from scripts.scrape_13f import main as scrape_13f_main
@@ -19,6 +20,17 @@ def calculate_portfolio_returns_task():
 @app.task
 def update_data_task():
     update_data()
+
+
+@app.task
+def fix_split_prices_task():
+    """Repair split-adjustment discontinuities in PricesDaily.
+
+    Incremental price appends leave pre-split rows on the old price scale.
+    Detects affected symbols via InstrumentYahoo.splits and re-downloads
+    their history. No-op when all series are consistent — safe to re-run.
+    """
+    fix_split_prices()
 
 
 @app.task

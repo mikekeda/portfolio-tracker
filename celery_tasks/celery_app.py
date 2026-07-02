@@ -67,6 +67,15 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour="0,12", day_of_week="sat-sun"),
         "args": (),
     },
+    # Repair split discontinuities in price history: Daily at 1:30 AM UTC.
+    # Runs after the midnight update_data (00:00) which appends the previous
+    # day's closes, so a split cliff introduced there is fixed before the
+    # next market open. No-op when price series are already consistent.
+    "fix_split_prices_nightly": {
+        "task": "celery_tasks.tasks.fix_split_prices_task",
+        "schedule": crontab(minute=30, hour=1),
+        "args": (),
+    },
     # Update PE data from Macrotrends: Daily at 2 AM UTC (night time)
     # Runs every day at 2:00 AM UTC to update PE history for instruments with oldest data
     "update_pe_data_nightly": {

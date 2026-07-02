@@ -122,7 +122,11 @@ class YahooData(TypedDict):
 
 TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
 
-YAHOO_UPDATE_LIMIT = 100
+# Sized so the weekday schedule covers the whole universe daily:
+# 9 runs/day x 150 = 1350 refreshes vs ~1035 tracked instruments. Each profile
+# is ~8 Yahoo endpoints, so bigger batches raise the 429/rate-limit risk —
+# watch for "Empty Yahoo info" warnings before raising further.
+YAHOO_UPDATE_LIMIT = 150
 YAHOO_UPDATE_INTERVAL_DAYS = 1
 
 _BAD_NUMERIC_STRINGS = frozenset({"infinity", "-infinity", "inf", "-inf", "nan"})
@@ -310,6 +314,11 @@ def update_holdings() -> list[HoldingDaily]:
             .scalars()
             .all()
         )
+        # ~20x more instruments are tracked than held, so with a budget of
+        # YAHOO_UPDATE_LIMIT per run current holdings go first (stable sort
+        # keeps oldest-first order within each group).
+        held_instrument_ids = {i.id for i in instruments if i.t212_code in holdings}
+        stale_yahoo_ids.sort(key=lambda inst_id: inst_id not in held_instrument_ids)
 
         id_to_yahoo_symbol: dict[int, str] = {i.id: i.yahoo_symbol for i in instruments if i.yahoo_symbol}
         symbols_to_fetch: list[str] = []
@@ -348,45 +357,63 @@ def update_holdings() -> list[HoldingDaily]:
                 # This stock was recently updated or wasn't selected for update because of the limit
                 continue
 
-            yahoo_data = yahoo_datas[yahoo_symbol]["info"]
+            payload = yahoo_datas[yahoo_symbol]
+            yahoo_data = payload["info"]
 
             # Upsert InstrumentYahoo (detached Yahoo blobs)
             yahoo_row = session.get(InstrumentYahoo, instrument.id)
+            if not yahoo_data:
+                # A transient yfinance failure returns empty payloads — keep the
+                # cached blobs (and don't create a row with an empty info, which
+                # would break quoteType lookups downstream).
+                logger.warning("Empty Yahoo info for %s — keeping cached data", yahoo_symbol)
+                if yahoo_row:
+                    yahoo_row.updated_at = datetime.now(TIMEZONE)
+                continue
             if yahoo_row:
                 yahoo_row.info = yahoo_data
-                yahoo_row.cashflow = yahoo_datas[yahoo_symbol]["cashflow"]
-                yahoo_row.earnings = yahoo_datas[yahoo_symbol]["earnings"]
+                # Fetch failures past the info stage (e.g. the flaky
+                # get_earnings_dates) return empty dicts — don't wipe cached data.
+                if payload["cashflow"]:
+                    yahoo_row.cashflow = payload["cashflow"]
+                if payload["earnings"]:
+                    yahoo_row.earnings = payload["earnings"]
                 # TODO: Keep only 12 - 24 recommendations
                 yahoo_row.recommendations = {
                     **yahoo_row.recommendations,
-                    **yahoo_datas[yahoo_symbol]["recommendations"],
+                    **payload["recommendations"],
                 }
-                yahoo_row.analyst_price_targets = yahoo_datas[yahoo_symbol]["analyst_price_targets"]
-                yahoo_row.splits = yahoo_datas[yahoo_symbol]["splits"]
-                yahoo_row.news = yahoo_datas[yahoo_symbol]["news"]  # TODO: Keep old news?
-                yahoo_row.balance_sheet = yahoo_datas[yahoo_symbol]["balance_sheet"]
-                yahoo_row.income_stmt = yahoo_datas[yahoo_symbol]["income_stmt"]
+                if payload["analyst_price_targets"]:
+                    yahoo_row.analyst_price_targets = payload["analyst_price_targets"]
+                if payload["splits"]:
+                    yahoo_row.splits = payload["splits"]
+                if payload["news"]:
+                    yahoo_row.news = payload["news"]  # TODO: Keep old news?
+                if payload["balance_sheet"]:
+                    yahoo_row.balance_sheet = payload["balance_sheet"]
+                if payload["income_stmt"]:
+                    yahoo_row.income_stmt = payload["income_stmt"]
                 yahoo_row.updated_at = datetime.now(TIMEZONE)
             else:
                 session.add(
                     InstrumentYahoo(
                         instrument_id=instrument.id,
                         info=yahoo_data,
-                        cashflow=yahoo_datas[yahoo_symbol]["cashflow"],
-                        earnings=yahoo_datas[yahoo_symbol]["earnings"],
-                        recommendations=yahoo_datas[yahoo_symbol]["recommendations"],
-                        analyst_price_targets=yahoo_datas[yahoo_symbol]["analyst_price_targets"],
-                        splits=yahoo_datas[yahoo_symbol]["splits"],
-                        news=yahoo_datas[yahoo_symbol]["news"],
+                        cashflow=payload["cashflow"],
+                        earnings=payload["earnings"],
+                        recommendations=payload["recommendations"],
+                        analyst_price_targets=payload["analyst_price_targets"],
+                        splits=payload["splits"],
+                        news=payload["news"],
                         pes={},  # Populated by scrape_wisesheets_pe / scrape_macrotrends_pe
-                        balance_sheet=yahoo_datas[yahoo_symbol]["balance_sheet"],
-                        income_stmt=yahoo_datas[yahoo_symbol]["income_stmt"],
+                        balance_sheet=payload["balance_sheet"],
+                        income_stmt=payload["income_stmt"],
                     )
                 )
 
             # Upsert InstrumentMetricsDaily for this date (market facts)
             insider_signal = compute_insider_signal(
-                yahoo_datas[yahoo_symbol].get("insider_transactions"),
+                payload.get("insider_transactions"),
                 current_date,
             )
             metrics_row = (
