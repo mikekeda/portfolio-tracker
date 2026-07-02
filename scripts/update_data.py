@@ -733,7 +733,7 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
 
         # Fetch and store news
         yahoo_data["news"] = ticker.get_news()
-    except ValueError as e:
+    except (ValueError, AttributeError) as e:
         logger.warning("Problem with parsing DataFrame %s: %s", ticker.ticker, e)
 
     return ticker.ticker, yahoo_data

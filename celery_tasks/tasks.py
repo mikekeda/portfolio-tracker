@@ -24,11 +24,11 @@ def update_data_task():
 
 @app.task
 def fix_split_prices_task():
-    """Repair split-adjustment discontinuities in PricesDaily.
+    """Repair split-adjustment discontinuities in PricesDaily and HoldingDaily.
 
-    Incremental price appends leave pre-split rows on the old price scale.
-    Detects affected symbols via InstrumentYahoo.splits and re-downloads
-    their history. No-op when all series are consistent — safe to re-run.
+    Pre-split rows keep the old price scale after a split. Detects affected
+    instruments via InstrumentYahoo.splits, re-downloads price history and
+    rescales holdings snapshots. No-op when consistent — safe to re-run.
     """
     fix_split_prices()
 
