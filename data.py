@@ -37,6 +37,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "ASHTY": "SUNB",  # Ashtead ADR → Sunbelt Rentals Holdings, NYSE primary since Mar 2026
     "ASPI1": "ASPI",
     "BDEV": "BTRW",
+    "BK": "BNY",      # BNY Mellon ticker rebrand on NYSE, May 2026
     "BMRG": "EOSE",
     "BRK/A": "BRK-A",
     "BRK_B": "BRK-B",
@@ -91,6 +92,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "SV": "SMR",     # NuScale Power - SPAC rename (Spring Valley → NuScale)
     "SVFC": "SYM",
     "SYMC": "GEN",
+    "TLNE": "TLN",    # Talen Energy OTC line → Nasdaq TLN; Yahoo froze TLNE Jun 2026
     "TMK": "GL",
     "UTX": "RTX",
     "VACQ": "RKLB",
@@ -194,7 +196,7 @@ SP500 = [
     "BLK",
     "BX",
     "XYZ",
-    "BK",
+    "BNY",
     "BA",
     "BKNG",
     "BSX",
