@@ -96,12 +96,16 @@ STOCKS_ALIASES: dict[str, str] = {
 # halted shells, SPACs that no longer trade under the old symbol, or bad T212 lines to hide.
 STOCKS_DELISTED: set[str] = {
     "8GC.DE",    # legacy Xetra entry, no Yahoo price feed
-    "AGR.L",     # legacy LSE entry, no Yahoo price feed
+    "AGR.L",     # Assura - delisted from LSE after PHP takeover, Oct 2025
     "ALCC1",     # AltC Acquisition - merged into Oklo (OKLO)
     "BSAQ",      # Black Spade Acquisition - SPAC, no longer trading
+    "CRH.L",     # CRH cancelled its LSE line Apr 2026; NYSE-only now (USD line is a separate instrument)
+    "CTRA",      # Coterra Energy - merged into Devon Energy (DVN), May 2026
     "DEAC",      # Diamond Eagle Acquisition - merged into DraftKings (DKNG)
     "DMYQ",      # dMY Squared Technology - SPAC, no longer trading
+    "HOLX",      # Hologic - taken private by Blackstone/TPG, Apr 2026
     "HYUDl_EQ",  # raw T212 code (rejected by convert_ticker, filtered in fetch_holdings)
+    "MASI",      # Masimo - acquired by Danaher, Jun 2026
 }
 
 SP500 = [
