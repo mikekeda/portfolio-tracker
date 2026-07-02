@@ -63,6 +63,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "JEC": "J",
     "KCAC": "QS",
     "LSE": "LSEG",
+    "MMC": "MRSH",
     "MYL": "VTRS",
     "NPA": "ASTS",
     "OAC": "HIMS",
