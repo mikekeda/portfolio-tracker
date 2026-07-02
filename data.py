@@ -34,7 +34,10 @@ STOCKS_ALIASES: dict[str, str] = {
     "AI1": "AI",
     "ANTM": "ELV",
     "ARNC": "HWM",
+    "ASHTY": "SUNB",  # Ashtead ADR → Sunbelt Rentals Holdings, NYSE primary since Mar 2026
+    "ASPI1": "ASPI",
     "BDEV": "BTRW",
+    "BMRG": "EOSE",
     "BRK/A": "BRK-A",
     "BRK_B": "BRK-B",
     "BT": "BT-A",
@@ -42,6 +45,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "CBG": "CBRE",
     "CCIR": "KYIV",
     "CCIV": "LCID",
+    "CECE": "CECO",
     "CHKK": "EXE",
     "CNHI": "CNH",
     "DAI": "MBG",
@@ -54,25 +58,33 @@ STOCKS_ALIASES: dict[str, str] = {
     "GARENA": "SE",
     "GNPK": "RDW",
     "GVC": "ENT",
+    "GWAC": "CIFR",
     "HCN": "WELL",
     "HCP": "DOC",
+    "HUTMF": "HUT",   # Hut 8 OTC line → Nasdaq HUT after US Bitcoin Corp merger
     "ICP": "ICG",
+    "IIVI": "COHR",
+    "IKNX": "WULF",
     "IPAX": "LUNR",
     "IPOB": "OPEN",
     "IPOE": "SOFI",
     "JEC": "J",
     "KCAC": "QS",
+    "LOKB": "NVTS",
     "LSE": "LSEG",
     "MMC": "MRSH",
     "MYL": "VTRS",
     "NPA": "ASTS",
     "OAC": "HIMS",
+    "PALAF1": "PALAF",
     "PCLN": "BKNG",
     "PKI": "RVTY",
     "RBS": "NWG",
     "RE": "EG",
     "RTP": "JOBY",
+    "SFTW": "BKSY",
     "SL": "ABDN",
+    "SNDK1": "SNDK",
     "SNE": "SONY",
     "SQ": "XYZ",
     "SRNG": "DNA",
@@ -96,8 +108,13 @@ STOCKS_ALIASES: dict[str, str] = {
 # Prefer STOCKS_ALIASES for simple renames so new syncs get a live Yahoo symbol; use this for
 # halted shells, SPACs that no longer trade under the old symbol, or bad T212 lines to hide.
 STOCKS_DELISTED: set[str] = {
+    "11C.DE",    # 11 bit studios - Xetra line dead on Yahoo; primary 11B.WA is PLN (unsupported)
     "8GC.DE",    # legacy Xetra entry, no Yahoo price feed
     "AGR.L",     # Assura - delisted from LSE after PHP takeover, Oct 2025
+    "DKI.DE",    # Daikin - Xetra line dead on Yahoo; primary 6367.T is JPY (unsupported)
+    "FJK.DE",    # Fujikura - Xetra line dead on Yahoo; primary 5803.T is JPY (unsupported)
+    "KEE.DE",    # Keyence - Xetra line dead on Yahoo; primary 6861.T is JPY (unsupported)
+    "KGHA.DE",   # KGHM Polska Miedz - Xetra line dead on Yahoo; primary KGH.WA is PLN (unsupported)
     "ALCC1",     # AltC Acquisition - merged into Oklo (OKLO)
     "BSAQ",      # Black Spade Acquisition - SPAC, no longer trading
     "CRH.L",     # CRH cancelled its LSE line Apr 2026; NYSE-only now (USD line is a separate instrument)
