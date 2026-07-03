@@ -18,7 +18,6 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from numpy_financial import irr
 from sqlalchemy import case, func, select, update
 
 from config import DAYS_PER_YEAR, RISK_FREE_RATE, SPY, logger
@@ -66,6 +65,54 @@ def load_daily_cash_flows(session) -> dict[date, float]:
 # ──────────────────────────────────────────────────────────────────────────────
 # Return calculations (pure Python / numpy, no further DB access)
 # ──────────────────────────────────────────────────────────────────────────────
+
+
+def _daily_irr(flows: list[float]) -> Optional[float]:
+    """IRR of a uniform daily cash-flow series via bracketed bisection on NPV.
+
+    Drop-in replacement for numpy_financial.irr, which root-solves the NPV
+    polynomial via a companion-matrix eigendecomposition — cubic in series
+    length (~0.4 s at 800 days, ~5 min per rebuild). Vectorised NPV is linear,
+    so 100 bisection steps cost well under a millisecond.
+
+    Returns None when no root can be bracketed (IRR undefined for the series).
+    """
+    cf = np.asarray(flows, dtype=float)
+    t = np.arange(cf.size, dtype=float)
+
+    def npv(rate: float) -> float:
+        return float(np.sum(cf * (1.0 + rate) ** -t))
+
+    npv_zero = npv(0.0)  # == sum(flows) == lifetime profit
+    if npv_zero == 0.0:
+        return 0.0
+
+    # NPV is decreasing in rate around the economically meaningful root, so
+    # bracket [lo, hi] with npv(lo) > 0 > npv(hi) and bisect.
+    if npv_zero > 0:
+        # Positive IRR: NPV → cf[0] (< 0, the first deposit) as rate grows.
+        lo, hi = 0.0, 0.1
+        while npv(hi) > 0:
+            hi *= 2.0
+            if hi > 1e6:
+                return None
+    else:
+        # Negative IRR: NPV → +inf as rate → -1 (terminal value dominates).
+        lo, hi = -0.5, 0.0
+        while npv(lo) < 0:
+            lo = (lo - 1.0) / 2.0
+            if lo <= -1.0 + 1e-12:
+                return None
+
+    for _ in range(100):
+        mid = (lo + hi) / 2.0
+        if npv(mid) > 0:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < 1e-13:
+            break
+    return (lo + hi) / 2.0
 
 
 def compute_returns(
@@ -133,12 +180,11 @@ def compute_returns(
                 annual_mwrr = 0.0
                 irr_flows = mwrr_daily_flows.copy()
                 irr_flows[-1] += value  # terminal value back to investor
-                try:
-                    daily_rate = irr(irr_flows)
-                    if daily_rate is not None and not np.isnan(daily_rate) and daily_rate > -1:
-                        annual_mwrr = ((1 + daily_rate) ** DAYS_PER_YEAR - 1) * 100.0
-                except (ValueError, RuntimeError):
-                    logger.debug("IRR did not converge for %s, storing 0.0", current_date)
+                daily_rate = _daily_irr(irr_flows)
+                if daily_rate is None:
+                    logger.debug("IRR root not bracketed for %s, storing 0.0", current_date)
+                else:
+                    annual_mwrr = ((1 + daily_rate) ** DAYS_PER_YEAR - 1) * 100.0
                 # TWRR calculation
                 annual_twrr = 0.0
                 # True calendar days span tracked precisely from the first portfolio snapshot
