@@ -950,7 +950,8 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
             func.sum(
                 case(
                     (TransactionHistory.action == TransactionAction.DEPOSIT, TransactionHistory.total),
-                    else_=-TransactionHistory.total,
+                    # abs(): CSV-imported withdrawals store Total negative, API-synced ones positive.
+                    else_=-func.abs(TransactionHistory.total),
                 )
             ).label("net_flow"),
         )
@@ -992,8 +993,9 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
         else None
     )
 
-    downside_returns = excess_returns[excess_returns < 0]
-    downside_std = downside_returns.std()
+    # Target semideviation (Sortino & Price): RMS of below-target excess returns
+    # over ALL days, not the std of the negative subset around its own mean.
+    downside_std = float(np.sqrt((excess_returns.clip(upper=0.0) ** 2).mean()))
     sortino_ratio: Optional[float] = (
         float((excess_returns.mean() / downside_std) * annualization_factor)
         if downside_std != 0 and not np.isnan(downside_std)

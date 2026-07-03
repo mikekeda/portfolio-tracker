@@ -52,7 +52,8 @@ def load_daily_cash_flows(session) -> dict[date, float]:
             func.sum(
                 case(
                     (TransactionHistory.action == TransactionAction.DEPOSIT, TransactionHistory.total),
-                    else_=-TransactionHistory.total,
+                    # abs(): CSV-imported withdrawals store Total negative, API-synced ones positive.
+                    else_=-func.abs(TransactionHistory.total),
                 )
             ).label("net_flow"),
         )
