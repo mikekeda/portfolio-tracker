@@ -111,8 +111,9 @@ CHECKS: list[tuple[str, str, str, str]] = [
         "1-day moves beyond split-like bounds in the last 30 days (missed split?)",
         "Check the company news for that date. Real crash/spike (biotech, leveraged ETF) "
         "= no action. Split Yahoo didn't record = run scripts/fix_split_prices.py; if it "
-        "doesn't detect it, delete the symbol's price rows and let update_data re-download "
-        "the full range on one scale.",
+        "doesn't detect it (e.g. breadth-only symbol with no instrument), re-download the "
+        "stored range in place: _update_prices(session, [sym], min_stored_date) — don't "
+        "delete first, breadth-only symbols are never re-added from scratch.",
         f"""
         SELECT symbol, date, round(prev_close::numeric, 2) AS prev_close,
                round(adj_close_price::numeric, 2) AS close,
@@ -153,7 +154,7 @@ CHECKS: list[tuple[str, str, str, str]] = [
         """
         SELECT i.t212_code, i.yahoo_symbol
         FROM instruments i
-        JOIN holdings_daily h ON h.instrument_id = i.id AND h.date = CURRENT_DATE
+        JOIN holdings_daily h ON h.instrument_id = i.id AND h.date = (SELECT max(date) FROM holdings_daily)
         LEFT JOIN prices_daily p ON p.symbol = i.yahoo_symbol
         WHERE p.symbol IS NULL
         GROUP BY i.t212_code, i.yahoo_symbol
@@ -169,7 +170,7 @@ CHECKS: list[tuple[str, str, str, str]] = [
         f"""
         SELECT i.yahoo_symbol, y.profile_fetched_at,
                i.id IN (SELECT instrument_id FROM holdings_daily
-                        WHERE date = CURRENT_DATE) AS held
+                        WHERE date = (SELECT max(date) FROM holdings_daily)) AS held
         FROM instruments i
         JOIN instruments_yahoo y ON y.instrument_id = i.id
         WHERE i.yahoo_symbol != ALL(:delisted)
@@ -210,7 +211,7 @@ CHECKS: list[tuple[str, str, str, str]] = [
         f"""
         SELECT i.yahoo_symbol, max(m.date) AS latest_metrics
         FROM instruments i
-        JOIN holdings_daily h ON h.instrument_id = i.id AND h.date = CURRENT_DATE
+        JOIN holdings_daily h ON h.instrument_id = i.id AND h.date = (SELECT max(date) FROM holdings_daily)
         LEFT JOIN instruments_metrics_daily m ON m.instrument_id = i.id
         GROUP BY i.yahoo_symbol
         HAVING max(m.date) < CURRENT_DATE - {STALE_METRICS_DAYS} OR max(m.date) IS NULL
@@ -316,7 +317,7 @@ CHECKS: list[tuple[str, str, str, str]] = [
         SELECT i.t212_code, h.quantity AS held,
                round(sum(t.quantity)::numeric, 4) AS from_txns
         FROM instruments i
-        JOIN holdings_daily h ON h.instrument_id = i.id AND h.date = CURRENT_DATE
+        JOIN holdings_daily h ON h.instrument_id = i.id AND h.date = (SELECT max(date) FROM holdings_daily)
         JOIN transaction_history t ON t.ticker = i.t212_code
         WHERE t.action IN ('MARKET_BUY', 'LIMIT_BUY', 'MARKET_SELL', 'LIMIT_SELL',
                            'STOCK_SPLIT_OPEN', 'STOCK_SPLIT_CLOSE')
