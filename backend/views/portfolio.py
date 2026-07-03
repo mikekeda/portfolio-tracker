@@ -324,7 +324,10 @@ async def get_current_portfolio(
         instruments_for_dcf = [h.instrument for h in holdings]
 
     # Calculate technical indicators using centralized function
-    rsi_data, technical_data = await calculate_technical_indicators_for_symbols(symbols_for_technical, session)
+    currencies_for_technical = {i.yahoo_symbol: i.currency for i in instruments_for_dcf if i.yahoo_symbol}
+    rsi_data, technical_data = await calculate_technical_indicators_for_symbols(
+        symbols_for_technical, session, currencies=currencies_for_technical
+    )
     effective_betas = await get_effective_betas(instruments_for_dcf, session)
     dcf_analyses = await get_dcf_analyses(instruments_for_dcf, effective_betas=effective_betas)
     dcf_analyses_dict = dict(zip(symbols_for_technical, dcf_analyses))
@@ -419,7 +422,7 @@ async def get_current_portfolio(
                 "return_on_equity": info["returnOnEquity"] * 100.0
                 if info.get("returnOnEquity")
                 else None,  # Keep full precision for screener evaluation
-                "roic": get_roic(info),
+                "roic": get_roic(info, yh.balance_sheet, yh.income_stmt) if yh else None,
                 "f_score": f_score_result["score"] if f_score_result else None,
                 "f_score_details": f_score_result["details"] if f_score_result else None,
                 "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100
@@ -431,9 +434,9 @@ async def get_current_portfolio(
                 "recommendation_key": info.get("recommendationKey"),
                 "recommendations": holding.instrument.yahoo.recommendations if holding.instrument.yahoo else None,
                 "number_of_analyst_opinions": info.get("numberOfAnalystOpinions"),
-                "fifty_two_week_high_distance": round(info["fiftyTwoWeekHighChangePercent"] * 100)
-                if info.get("fiftyTwoWeekHighChangePercent")
-                else None,  # Distance from 52-week high (negative = below high)
+                "fifty_two_week_high_distance": round(info["fiftyTwoWeekHighChangePercent"] * 100, 2)
+                if info.get("fiftyTwoWeekHighChangePercent") is not None
+                else None,  # Distance from 52-week high (negative = below high, 0 = at the high)
                 "fifty_two_week_change": round(info.get("52WeekChange", 0) * 100)
                 if info.get("52WeekChange") is not None
                 else None,

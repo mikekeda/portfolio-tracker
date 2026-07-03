@@ -92,7 +92,7 @@ async def get_chart_fundamentals(symbols: str, session: AsyncSession = Depends(g
             "pe": info.get("trailingPE"),
             "fwd_pe": info.get("forwardPE"),
             "peg": info.get("trailingPegRatio"),
-            "roic": get_roic(info),
+            "roic": get_roic(info, instrument.yahoo.balance_sheet, instrument.yahoo.income_stmt) if instrument.yahoo else None,
             "revenue_growth": _scale_pct(info.get("revenueGrowth")),
             "profit_margins": _scale_pct(info.get("profitMargins")),
             "fifty_two_week_high_distance": _scale_pct(info.get("fiftyTwoWeekHighChangePercent")),

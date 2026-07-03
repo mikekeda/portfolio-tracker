@@ -5,23 +5,26 @@ Helper functions for technical analysis calculations.
 """
 
 import math
-from datetime import datetime, timedelta
+from bisect import bisect_right
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import PRICE_FIELD, SPY, TIMEZONE, TRADING_DAYS_PER_YEAR, logger
-from models import PricesDaily
+from config import CURRENCIES, PRICE_FIELD, SPY, TIMEZONE, TRADING_DAYS_PER_YEAR, logger
+from models import CurrencyRateDaily, PricesDaily
 MIN_RETURNS_FOR_VOLATILITY = 60  # ~3 months — below this the estimate is too noisy
 
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
 
 
-def calculate_rsi(prices: list[float], period: int = 14) -> float:
+def calculate_rsi(prices: list[float], period: int = 14) -> Optional[float]:
     """Calculate RSI (Relative Strength Index) for a series of prices."""
     if len(prices) <= period:
-        return 50.0  # Return neutral if not enough data
+        # None, not a fake-neutral 50: a fabricated 50 silently passes
+        # "RSI <= 50/55" screener gates for young listings.
+        return None
 
     # Calculate price changes
     deltas = [prices[i] - prices[i - 1] for i in range(1, len(prices))]
@@ -266,8 +269,14 @@ async def calculate_volume_contraction_from_db(symbol: str, session: AsyncSessio
         return None
 
 
-def calculate_relative_strength_vs_spy(symbol_prices: list[float], spy_prices: list[float]) -> Optional[float]:
-    """Calculate 6-month relative strength vs SPY using growth factors."""
+def calculate_relative_strength_vs_spy(
+    symbol_prices: list[float], spy_prices: list[float], fx_factor: float = 1.0
+) -> Optional[float]:
+    """Calculate 6-month relative strength vs SPY using growth factors.
+
+    ``fx_factor`` converts the stock's native-currency growth to the benchmark
+    currency (GBP): rate_to_gbp(end) / rate_to_gbp(start) over the same window.
+    """
     if not spy_prices or len(symbol_prices) < 126 or len(spy_prices) < 126:
         return None
     try:
@@ -279,7 +288,7 @@ def calculate_relative_strength_vs_spy(symbol_prices: list[float], spy_prices: l
             return None
 
         # Calculate 6-month growth factors (126 trading days)
-        symbol_growth = symbol_period[-1] / symbol_period[0]
+        symbol_growth = (symbol_period[-1] / symbol_period[0]) * fx_factor
         spy_growth = spy_period[-1] / spy_period[0]
 
         if spy_growth == 0:
@@ -294,11 +303,63 @@ def calculate_relative_strength_vs_spy(symbol_prices: list[float], spy_prices: l
         return None
 
 
+async def _load_fx_series(
+    session: AsyncSession, currencies: Optional[dict[str, str]]
+) -> dict[str, tuple[list[date], list[float]]]:
+    """Load to-GBP rate series (sorted dates + rates) per needed currency."""
+    fx_series: dict[str, tuple[list[date], list[float]]] = {}
+    needed = {c for c in (currencies or {}).values() if c in CURRENCIES}
+    if not needed:
+        return fx_series
+
+    fx_result = await session.execute(
+        select(CurrencyRateDaily.from_currency, CurrencyRateDaily.date, CurrencyRateDaily.rate)
+        .filter(
+            CurrencyRateDaily.from_currency.in_(needed),
+            CurrencyRateDaily.to_currency == "GBP",
+            CurrencyRateDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420),
+        )
+        .order_by(CurrencyRateDaily.date)
+    )
+    for row in fx_result.all():
+        fx_series.setdefault(row.from_currency, ([], []))
+        fx_series[row.from_currency][0].append(row.date)
+        fx_series[row.from_currency][1].append(row.rate)
+    return fx_series
+
+
+def _fx_growth_factor(series: Optional[tuple[list[date], list[float]]], symbol_dates: list[date]) -> float:
+    """FX growth over the 6-month RS window: rate(end) / rate(start).
+
+    1.0 when no conversion applies (GBP/GBX stocks — the pence factor cancels
+    in the growth ratio — or missing rate data).
+    """
+    if not series or len(symbol_dates) < 126:
+        return 1.0
+
+    dates, rates = series
+
+    def rate_on(target: date) -> Optional[float]:
+        idx = bisect_right(dates, target) - 1  # nearest rate at or before target
+        return rates[idx] if idx >= 0 else None
+
+    start_rate = rate_on(symbol_dates[-126])
+    end_rate = rate_on(symbol_dates[-1])
+    if not start_rate or not end_rate:
+        return 1.0
+    return end_rate / start_rate
+
+
 async def calculate_technical_indicators_for_symbols(
-    symbols: list[str], session: AsyncSession
-) -> tuple[dict[str, float], dict[str, dict[str, Any]]]:
-    """Calculate technical indicators for a list of symbols using available database data."""
-    rsi_data: dict[str, float] = {}
+    symbols: list[str], session: AsyncSession, currencies: Optional[dict[str, str]] = None
+) -> tuple[dict[str, Optional[float]], dict[str, dict[str, Any]]]:
+    """Calculate technical indicators for a list of symbols using available database data.
+
+    ``currencies`` maps yahoo_symbol -> instrument currency; when provided,
+    rs_6m_vs_spy converts each stock's return to GBP so it is compared against
+    the GBP benchmark (VUAG.L) on equal footing.
+    """
+    rsi_data: dict[str, Optional[float]] = {}
     technical_data: dict[str, dict[str, Any]] = {}
 
     if not symbols:
@@ -309,6 +370,7 @@ async def calculate_technical_indicators_for_symbols(
         price_result = await session.execute(
             select(
                 PricesDaily.symbol,
+                PricesDaily.date,
                 PRICE_COLUMN,
             )
             .filter(
@@ -319,8 +381,10 @@ async def calculate_technical_indicators_for_symbols(
         price_data = price_result.all()
 
         price_history: dict[str, list[float]] = {}
+        price_dates: dict[str, list[date]] = {}
         for row in price_data:
             price_history.setdefault(row.symbol, []).append(row.price)
+            price_dates.setdefault(row.symbol, []).append(row.date)
 
         # Get SPY data
         spy_result = await session.execute(
@@ -330,6 +394,8 @@ async def calculate_technical_indicators_for_symbols(
         )
         spy_prices = [row.price for row in spy_result.all()]
 
+        fx_series = await _load_fx_series(session, currencies)
+
         # Calculate technical indicators
         for symbol, symbol_prices in price_history.items():
             rsi_data[symbol] = calculate_rsi(symbol_prices)
@@ -337,7 +403,10 @@ async def calculate_technical_indicators_for_symbols(
             # Calculate other indicators
             volume_ratio = await calculate_volume_ratio_from_db(symbol, session)
             vol20_lt_vol60 = await calculate_volume_contraction_from_db(symbol, session)
-            rs_6m_vs_spy = calculate_relative_strength_vs_spy(symbol_prices, spy_prices)
+            fx_factor = _fx_growth_factor(
+                fx_series.get((currencies or {}).get(symbol, "")), price_dates[symbol]
+            )
+            rs_6m_vs_spy = calculate_relative_strength_vs_spy(symbol_prices, spy_prices, fx_factor)
 
             # Use the updated flexible golden cross function
             gc_days_since = find_golden_cross_in_last_n_days(symbol_prices, 60)

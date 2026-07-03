@@ -457,9 +457,9 @@
 }
 
 .screener-badges-section .screener-badge.category-quality {
-  background: #fce4ec;
-  color: #c2185b;
-  border-color: #f8bbd9;
+  background: #eceff1;
+  color: #37474f;
+  border-color: #b0bec5;
 }
 
 .screener-badges-section .screener-badge.category-growth {
@@ -494,15 +494,29 @@
 }
 
 .screener-badges-section .screener-badge.category-quality.active {
-  background: #c2185b;
+  background: #37474f;
   color: white;
-  border-color: #c2185b;
+  border-color: #37474f;
 }
 
 .screener-badges-section .screener-badge.category-growth.active {
   background: #00695c;
   color: white;
   border-color: #00695c;
+}
+
+/* Negative-weight screeners (red flags, death cross) are always red,
+   overriding their category color — must stay below the category rules. */
+.screener-badges-section .screener-badge.negative {
+  background: #fdecea;
+  color: #c62828;
+  border-color: #ef9a9a;
+}
+
+.screener-badges-section .screener-badge.negative.active {
+  background: #c62828;
+  color: white;
+  border-color: #c62828;
 }
 
 .screener-badges-section .screener-name {
@@ -685,9 +699,9 @@
 }
 
 .screener-badge.clickable.category-quality {
-  background: #fce4ec;
-  color: #c2185b;
-  border-color: #f8bbd9;
+  background: #eceff1;
+  color: #37474f;
+  border-color: #b0bec5;
 }
 
 .screener-badge.clickable.category-growth {
@@ -722,15 +736,28 @@
 }
 
 .screener-badge.clickable.category-quality.active {
-  background: #c2185b;
+  background: #37474f;
   color: white;
-  border-color: #c2185b;
+  border-color: #37474f;
 }
 
 .screener-badge.clickable.category-growth.active {
   background: #00695c;
   color: white;
   border-color: #00695c;
+}
+
+/* Negative-weight screeners in the table column — red regardless of category */
+.screener-badge.clickable.negative {
+  background: #fdecea;
+  color: #c62828;
+  border-color: #ef9a9a;
+}
+
+.screener-badge.clickable.negative.active {
+  background: #c62828;
+  color: white;
+  border-color: #c62828;
 }
 
 .no-screeners {

@@ -743,6 +743,10 @@ const Chart = () => {
                   strokeWidth={2}
                   dot={false}
                   name={symbol}
+                  // Mixed exchanges = mismatched holiday calendars (e.g. US stocks
+                  // have no row on Juneteenth while LSE trades) — bridge the null
+                  // instead of breaking the line.
+                  connectNulls
                 />
               ))}
             </LineChart>

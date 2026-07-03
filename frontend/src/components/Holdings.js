@@ -1344,7 +1344,7 @@ const Holdings = () => {
                 return (
                   <button
                     key={screenerId}
-                    className={`screener-badge clickable category-${screener.category} ${isActive ? 'active' : ''}`}
+                    className={`screener-badge clickable category-${screener.category} ${screener.weight < 0 ? 'negative' : ''} ${isActive ? 'active' : ''}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleScreenerChange(screenerId);
@@ -1923,7 +1923,7 @@ const Holdings = () => {
                   return (
                     <button
                       key={screener.id}
-                      className={`screener-badge category-${screener.category} ${isActive ? 'active' : ''}`}
+                      className={`screener-badge category-${screener.category} ${screener.weight < 0 ? 'negative' : ''} ${isActive ? 'active' : ''}`}
                       onClick={() => handleScreenerChange(screener.id)}
                       title={`${screener.description}\n\nCriteria: ${criteriaText}\n\nCategory: ${screener.category}\nWeight: ${screener.weight || 5}/10${combineWithText}`}
                     >

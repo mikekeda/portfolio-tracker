@@ -227,7 +227,7 @@ class ScreenerConfig:
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,
-                weight=7,
+                weight=5,
                 combine_with=[
                     "r40_momentum",
                     "qarp",
@@ -253,7 +253,9 @@ class ScreenerConfig:
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,
-                weight=4,
+                # Deliberately low: squeeze setups are drill-down candidates, not a
+                # quality endorsement — short interest >= 10% cuts both ways.
+                weight=1,
                 combine_with=["golden_cross", "breakout_quiet_base", "momentum_pullback"],
             ),
             # Momentum Pullback
@@ -272,7 +274,7 @@ class ScreenerConfig:
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,
-                weight=8,
+                weight=6,
                 combine_with=[
                     "r40_momentum",
                     "qarp",
@@ -292,15 +294,18 @@ class ScreenerConfig:
                 description="SMA(50) crossed above SMA(200) within 60d & Close within -2%..+1% of SMA(50)",
                 category=ScreenerCategory.TECHNICAL,
                 criteria=[
-                    ScreenerCriteria("gc_days_since", "<=", 60, "SMA50>200 crossed within 60d"),
+                    ScreenerCriteria("gc_days_since", "<=", 60, "SMA50/200 crossed within 60d"),
                     ScreenerCriteria("gc_days_since", ">=", 0, "Cross exists"),
+                    # gc_days_since fires on crosses in BOTH directions; without this
+                    # direction check a recent death cross would also pass.
+                    ScreenerCriteria("sma_50", ">", FieldRef("sma_200"), "Cross was bullish (SMA50 above SMA200)"),
                     ScreenerCriteria("gc_within_sma50_frac", ">=", -0.02, "Close near SMA50"),
                     ScreenerCriteria("gc_within_sma50_frac", "<=", 0.01, "Close not extended past SMA50"),
                 ],
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,
-                weight=6,
+                weight=4,
                 combine_with=[
                     "momentum_pullback",
                     "r40_momentum",
@@ -324,7 +329,7 @@ class ScreenerConfig:
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,
-                weight=6,
+                weight=5,
                 combine_with=["breakout_quiet_base", "r40_momentum"],
             ),
             # Rule-of-40 + Momentum
@@ -373,7 +378,7 @@ class ScreenerConfig:
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,
-                weight=8,
+                weight=6,
                 combine_with=[
                     "volatility_contraction",
                     "r40_momentum",
@@ -412,10 +417,12 @@ class ScreenerConfig:
             "improving_sentiment": ScreenerDefinition(
                 id="improving_sentiment",
                 name="Improving Analyst Sentiment",
-                description="Analyst 'Buy' ratio has improved over the last 3-6 months while PE remains reasonable.",
+                description="Analyst sentiment has been steadily improving over recent months while PE remains reasonable.",
                 category=ScreenerCategory.FUNDAMENTALS,
                 criteria=[
-                    ScreenerCriteria("recommendation_trend", ">=", 5, "Buy Ratio improved by at least 5pp"),
+                    # recommendation_trend is a correlation in [-1, 1] (see
+                    # calculate_historical_trends); 0.5 = consistent improvement.
+                    ScreenerCriteria("recommendation_trend", ">=", 0.5, "Sentiment trend consistently positive"),
                     ScreenerCriteria("pe_ratio", "<=", 40, "Valuation is not excessive"),
                     ScreenerCriteria("pe_ratio", ">", 0, "Company is profitable"),
                 ],
