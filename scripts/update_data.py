@@ -582,7 +582,9 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
     # Bulk upsert
     all_price_data = []
     for ticker in df.columns.get_level_values(0).unique():
-        tdf = df[ticker].dropna(how="all")  # Open/High/Low/Close/Adj Close/Volume
+        # Yahoo pads non-traded days on thin lines with NaN prices but Volume=0,
+        # so dropna(how="all") let them through and stored NaN closes.
+        tdf = df[ticker].dropna(subset=["Close", "Adj_Close"])
         for dt, row in tdf.iterrows():
             all_price_data.append(
                 {
