@@ -19,6 +19,7 @@ import argparse
 from sqlalchemy import text
 
 from config import BENCHES, VIX, logger
+from data import QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED
 from scripts.update_data import get_session
 
 # Findings shown per check before truncating — keeps logs readable when a
@@ -60,9 +61,11 @@ CHECKS: list[tuple[str, str, str, str]] = [
         "rows (BK->BNY playbook); dead line -> add to STOCKS_DELISTED. Rows returned but "
         "old = thin line, leave it a week before delisting.",
         f"""
-        SELECT p.symbol, max(p.date) AS last_price
+        SELECT p.symbol, max(p.date) AS last_price,
+               p.symbol = ANY(:alias_old) AS old_alias_symbol
         FROM prices_daily p
         JOIN instruments i ON i.yahoo_symbol = p.symbol
+        WHERE p.symbol != ALL(:delisted)
         GROUP BY p.symbol
         HAVING max(p.date) < CURRENT_DATE - {STALE_PRICE_DAYS}
         ORDER BY max(p.date)
@@ -70,13 +73,16 @@ CHECKS: list[tuple[str, str, str, str]] = [
     ),
     (
         "orphan_prices",
-        "price rows for symbols with no instrument (excluding SP500/bench/VIX)",
-        "Usually leftovers from a deleted/renamed instrument. If the symbol is a rename "
-        "target, UPDATE prices_daily SET symbol = <new> instead of deleting history. "
-        "True orphans: DELETE FROM prices_daily WHERE symbol = ... (see Jul 2026 cleanup "
-        "that removed 369k rows across 165 symbols).",
+        "price rows for symbols with no instrument (excluding SP500/QQQ/bench/VIX)",
+        "old_alias_symbol = rows under a pre-rename ticker: rename them to the new symbol "
+        "(UPDATE prices_daily SET symbol = <new>), don't delete. renamed_ticker = some "
+        "instrument likely still points at the old symbol: fix instruments.yahoo_symbol. "
+        "Neither flag = true orphan: DELETE FROM prices_daily WHERE symbol = ... "
+        "(see Jul 2026 cleanup that removed 369k rows across 165 symbols).",
         """
-        SELECT p.symbol, count(*) AS rows, max(p.date) AS last_price
+        SELECT p.symbol, count(*) AS rows, max(p.date) AS last_price,
+               p.symbol = ANY(:alias_old) AS old_alias_symbol,
+               p.symbol = ANY(:alias_new) AS renamed_ticker
         FROM prices_daily p
         LEFT JOIN instruments i ON i.yahoo_symbol = p.symbol
         WHERE i.id IS NULL AND p.symbol != ALL(:allowed)
@@ -116,6 +122,9 @@ CHECKS: list[tuple[str, str, str, str]] = [
               FROM prices_daily
               WHERE date > CURRENT_DATE - 35) t
         WHERE date > CURRENT_DATE - 30 AND prev_close > 0
+          -- Postgres treats NaN as greater than any number, so NaN closes
+          -- (junk_prices territory) would flag here as fake spikes.
+          AND adj_close_price != 'NaN'::float8 AND prev_close != 'NaN'::float8
           AND (adj_close_price / prev_close > {MOVE_UPPER}
                OR adj_close_price / prev_close < {MOVE_LOWER})
         ORDER BY date DESC
@@ -163,8 +172,9 @@ CHECKS: list[tuple[str, str, str, str]] = [
                         WHERE date = CURRENT_DATE) AS held
         FROM instruments i
         JOIN instruments_yahoo y ON y.instrument_id = i.id
-        WHERE y.profile_fetched_at IS NULL
-           OR y.profile_fetched_at < now() - interval '{STALE_PROFILE_DAYS} days'
+        WHERE i.yahoo_symbol != ALL(:delisted)
+          AND (y.profile_fetched_at IS NULL
+               OR y.profile_fetched_at < now() - interval '{STALE_PROFILE_DAYS} days')
         ORDER BY held DESC, y.profile_fetched_at NULLS FIRST
         """,
     ),
@@ -185,6 +195,7 @@ CHECKS: list[tuple[str, str, str, str]] = [
         JOIN LATERAL (SELECT close_price FROM prices_daily
                       WHERE symbol = i.yahoo_symbol ORDER BY date DESC LIMIT 1) p ON true
         WHERE y.info ? 'regularMarketPrice' AND p.close_price > 0
+          AND p.close_price != 'NaN'::float8
           AND abs((y.info->>'regularMarketPrice')::float / p.close_price - 1) > 0.15
         ORDER BY drift_pct DESC
         """,
@@ -291,7 +302,8 @@ CHECKS: list[tuple[str, str, str, str]] = [
         FROM (SELECT from_currency, date,
                      lag(date) OVER (PARTITION BY from_currency ORDER BY date) AS prev_date
               FROM currency_rates_daily WHERE to_currency = 'GBP') t
-        WHERE date - prev_date > 4
+        -- > 5 so a long-weekend cluster (Good Friday + Easter Monday) stays quiet
+        WHERE date - prev_date > 5
         """,
     ),
     (
@@ -317,7 +329,18 @@ CHECKS: list[tuple[str, str, str, str]] = [
 
 def run_check(session, name: str, description: str, fix: str, sql: str) -> int:
     """Run one audit query and log its findings. Returns the finding count."""
-    params = {"allowed": list(BENCHES) + [VIX]} if ":allowed" in sql else {}
+    params = {}
+    if ":allowed" in sql:
+        # SP500/QQQ constituents are tracked for breadth metrics without instruments.
+        params["allowed"] = SP500 + QQQ + list(BENCHES) + [VIX]
+    if ":delisted" in sql:
+        params["delisted"] = list(STOCKS_DELISTED)
+    if ":alias_old" in sql:
+        # Known renames: a finding on an old symbol means rows/instruments still
+        # need migrating; one on a new symbol means an instrument likely still
+        # points at the pre-rename ticker.
+        params["alias_old"] = list(STOCKS_ALIASES.keys())
+        params["alias_new"] = list(STOCKS_ALIASES.values())
     rows = session.execute(text(sql), params).all()
     if not rows:
         logger.info("PASS  %s", name)
