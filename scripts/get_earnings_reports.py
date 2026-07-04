@@ -16,7 +16,11 @@ Coverage model — "latest-only, forward-looking":
     permanently unprocessed. If you need historical coverage you'd add an
     opt-in ``--backfill-history N`` mode; this script does not provide one.
 
-Selection priority:
+Selection:
+  * Work-pending gate: an instrument is a candidate only while its newest
+    canonical (non-PR) summary predates its latest Yahoo earnings date.
+    Once the post-announcement filing is summarised it leaves the queue,
+    so a fixed ORDER BY + LIMIT cannot starve the remaining instruments.
   1. Instruments with zero ``EarningsReport`` rows ("never-seen") first,
      so brand-new instruments in the portfolio get their current filing
      summarised before we refresh existing ones.
@@ -33,7 +37,7 @@ from datetime import date
 from time import perf_counter, sleep
 
 import requests
-from sqlalchemy import func, select
+from sqlalchemy import Date, cast, func, or_, select
 from sqlalchemy.sql import text as sql_text
 
 from config import SEC_USER_AGENT, logger
@@ -169,27 +173,22 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     report_date = metadata["reportDate"]
     form = metadata["form"]
 
-    # 2. DB check — skip if a canonical row already exists; supersede a PR row
+    # 2. DB check — skip if a canonical row already exists. A PR placeholder is
+    # superseded at save time (step 7), not here: deleting it now would leak an
+    # uncommitted delete into the shared session when the download/LLM step bails.
     existing_report = session.execute(
         select(EarningsReport).filter(
             EarningsReport.instrument_id == instrument_id, EarningsReport.date == date.fromisoformat(report_date)
         )
     ).scalar_one_or_none()
 
+    pr_placeholder = None
     if existing_report:
         # PR rows are placeholders ingested via ingest_earnings_pr.py; replace
         # them with the canonical SEC filing. Legacy rows (pre-cce2a1f3) lack
         # report_type → fall into the else branch and are kept as-is.
         if existing_report.metrics.get("report_type") == PR_REPORT_TYPE:
-            logger.info(
-                "[supersede] %s: replacing PR row %d with canonical %s (period %s)",
-                ticker,
-                existing_report.id,
-                form,
-                report_date,
-            )
-            session.delete(existing_report)
-            session.flush()
+            pr_placeholder = existing_report
         else:
             logger.debug("[skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
             return existing_report
@@ -233,7 +232,18 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
         primary_document=metadata["primaryDocument"],
     )
 
-    # 7. Save
+    # 7. Save — replace the PR placeholder first to free the (instrument_id, date) slot
+    if pr_placeholder is not None:
+        logger.info(
+            "[supersede] %s: replacing PR row %d with canonical %s (period %s)",
+            ticker,
+            pr_placeholder.id,
+            form,
+            report_date,
+        )
+        session.delete(pr_placeholder)
+        session.flush()
+
     earnings_report = EarningsReport(
         instrument_id=instrument_id,
         date=date.fromisoformat(report_date),
@@ -302,6 +312,18 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
             .scalar_subquery()
         )
 
+        # Newest canonical (non-PR) summary per instrument. PR placeholders must
+        # not count here — they'd mask the still-missing SEC filing they stand in for.
+        last_canonical_created = (
+            select(func.max(EarningsReport.created_at))
+            .where(
+                EarningsReport.instrument_id == Instrument.id,
+                func.coalesce(EarningsReport.metrics["report_type"].astext, "") != PR_REPORT_TYPE,
+            )
+            .correlate(Instrument)
+            .scalar_subquery()
+        )
+
         query = (
             select(
                 Instrument.id,
@@ -315,9 +337,19 @@ def get_earnings_reports(limit: int = 100, only_holdings: bool = False):
                 Instrument.cik.is_not(None),
                 InstrumentYahoo.earnings != "{}",
                 max_earnings_date_expr.is_not(None),
+                # Work-pending gate: drop instruments whose newest canonical summary
+                # already postdates their last Yahoo announcement. Without it a fixed
+                # ORDER BY + LIMIT re-selects the same instruments every night and the
+                # rest starve (holdings sat on PR placeholders for months, 2026-07).
+                or_(
+                    last_canonical_created.is_(None),
+                    cast(last_canonical_created, Date) < cast(max_earnings_date_expr, Date),
+                ),
             )
             .order_by(
-                has_reports.asc(),
+                # Boolean never-seen flag, NOT the raw count: ordering by count keeps
+                # low-count instruments permanently ahead of multi-report holdings.
+                (has_reports == 0).desc(),
                 max_earnings_date_expr.desc().nulls_last(),
             )
             .limit(limit)
