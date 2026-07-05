@@ -80,8 +80,12 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
             past_pe = pes[past_pe_date]["pe_ratio"]
             trends["pe_1y_trend_pct"] = (current_pe / past_pe - 1) * 100
 
-        # PE vs 5Y Average
-        pe_values_5y = [v["pe_ratio"] for k, v in pes.items() if k >= five_years_ago and v.get("pe_ratio", 0) > 0]
+        # PE vs 5Y Average. k <= today excludes Wisesheets forward year-end
+        # estimates — a historical average must not contain forecasts.
+        today = datetime.now().strftime("%Y-%m-%d")
+        pe_values_5y = [
+            v["pe_ratio"] for k, v in pes.items() if five_years_ago <= k <= today and v.get("pe_ratio", 0) > 0
+        ]
         if pe_values_5y:
             avg_pe_5y = sum(pe_values_5y) / len(pe_values_5y)
             trends["pe_5y_avg_vs_current_pct"] = (avg_pe_5y / current_pe - 1) * 100

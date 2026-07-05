@@ -17,12 +17,12 @@ from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import selectinload
 
 from config import TIMEZONE, logger
-from models import InstrumentYahoo
+from models import Instrument, InstrumentYahoo
 from scripts.update_data import get_session
 
 HEADERS = {
@@ -241,10 +241,21 @@ def update_pe_data(limit: int = 100) -> None:
             .scalar_subquery()
         )
 
+        # Onboarding: equities with no PE history yet are eligible too, but only
+        # dot-free symbols (Wisesheets covers US listings; LSE/Euronext suffixed
+        # tickers would fail the scrape every night). nulls_last so seeding only
+        # uses capacity left after every existing history has been refreshed.
+        onboarding = and_(
+            func.coalesce(InstrumentYahoo.info["quoteType"].astext, "EQUITY") == "EQUITY",
+            Instrument.yahoo_symbol.is_not(None),
+            Instrument.yahoo_symbol.not_like("%.%"),
+        )
+
         query = (
             select(InstrumentYahoo)
-            .where(InstrumentYahoo.pes != {})
-            .order_by(last_pe_date_expr.nulls_first(), InstrumentYahoo.updated_at.nulls_first())
+            .join(InstrumentYahoo.instrument)
+            .where(or_(InstrumentYahoo.pes != {}, onboarding))
+            .order_by(last_pe_date_expr.asc().nulls_last(), InstrumentYahoo.updated_at.nulls_first())
             .limit(limit)
             .options(selectinload(InstrumentYahoo.instrument))
         )
@@ -271,11 +282,20 @@ def update_pe_data(limit: int = 100) -> None:
                             "pe_ratio": pe_value,
                         }
 
+                    # Merge, never replace: past keys are append-only history (a
+                    # short scrape response must not truncate years of data), while
+                    # future-dated keys are forward estimates that mirror only the
+                    # newest scrape — stale estimates drop out, and actuals
+                    # overwrite the estimate as soon as the period end passes.
                     now = datetime.now(TIMEZONE)
+                    today_iso = now.date().isoformat()
+                    merged = {k: v for k, v in (row.pes or {}).items() if k <= today_iso}
+                    merged.update(formatted_data)
+
                     result = session.execute(
                         update(InstrumentYahoo)
                         .where(InstrumentYahoo.instrument_id == row.instrument_id)
-                        .values(pes=formatted_data, updated_at=now)
+                        .values(pes=merged, updated_at=now)
                     )
                     session.commit()
                     logger.info(

@@ -260,13 +260,16 @@ class InstrumentYahoo(Base):
         if not self.pes:
             return None
 
-        start = datetime.now(TIMEZONE).date() + relativedelta(years=-5)
+        today = datetime.now(TIMEZONE).date()
+        start = today + relativedelta(years=-5)
 
         values: list[float] = []
         for k, v in self.pes.items():
             d = datetime.strptime(k, "%Y-%m-%d").date()
 
-            if d < start:
+            # d > today: Wisesheets rows include forward year-end estimates —
+            # a historical average must not contain forecasts.
+            if d < start or d > today:
                 continue
 
             pe = float(v["pe_ratio"])

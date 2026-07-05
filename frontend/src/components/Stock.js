@@ -660,23 +660,38 @@ const Stock = () => {
     return combinedData;
   }, [priceData, data?.orders, data?.prices, priceMetric]);
 
-  // Process PE history data from the new API response
+  // Process PE history data from the new API response. Forward estimates come
+  // separately and render as a dashed continuation; the last historical point
+  // is duplicated into the estimate series so the two lines join up.
   const peData = useMemo(() => {
     const peHistory = data?.pe_history || {};
-    return Object.entries(peHistory)
+    const peEstimates = data?.pe_estimates || {};
+    const rows = Object.entries(peHistory)
       .map(([date, pe]) => ({
         originalDate: date,
         date: formatDate(date),
         pe,
       }))
       .sort((a, b) => new Date(a.originalDate) - new Date(b.originalDate));
-  }, [data?.pe_history]);
+    const estRows = Object.entries(peEstimates)
+      .map(([date, pe]) => ({
+        originalDate: date,
+        date: formatDate(date),
+        peEstimate: pe,
+        isEstimate: true,
+      }))
+      .sort((a, b) => new Date(a.originalDate) - new Date(b.originalDate));
+    if (rows.length > 0 && estRows.length > 0) {
+      rows[rows.length - 1] = { ...rows[rows.length - 1], peEstimate: rows[rows.length - 1].pe };
+    }
+    return rows.concat(estRows);
+  }, [data?.pe_history, data?.pe_estimates]);
 
   // Calculate smart Y-axis domain for PE chart
   const peDomain = useMemo(() => {
     if (peData.length === 0) return [0, 100];
 
-    const peValues = peData.map(d => d.pe).filter(v => v != null && !isNaN(v));
+    const peValues = peData.map(d => d.pe ?? d.peEstimate).filter(v => v != null && !isNaN(v));
     if (peValues.length === 0) return [0, 100];
 
     const minPe = Math.min(...peValues);
@@ -1421,13 +1436,14 @@ const Stock = () => {
                   content={({ active, payload, label }) => {
                     if (active && payload && payload.length) {
                       const data = payload[0].payload;
+                      const v = data.pe ?? data.peEstimate;
 
                       return (
                         <div className="custom-tooltip">
                           <p className="tooltip-label">{label}</p>
                           <p className="tooltip-item" style={{ color: '#e74c3c' }}>
                             <span className="color-indicator" style={{ backgroundColor: '#e74c3c' }}></span>
-                            PE Ratio: {typeof data.pe === 'number' ? data.pe.toFixed(2) : data.pe}
+                            {data.isEstimate ? 'PE (estimate)' : 'PE Ratio'}: {typeof v === 'number' ? v.toFixed(2) : v}
                           </p>
                         </div>
                       );
@@ -1444,6 +1460,17 @@ const Stock = () => {
                   strokeWidth={2}
                   dot={false}
                   activeDot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="peEstimate"
+                  name="PE (estimate)"
+                  stroke="#e74c3c"
+                  strokeWidth={2}
+                  strokeDasharray="6 4"
+                  dot={{ r: 3 }}
+                  activeDot={false}
+                  connectNulls
                 />
                 {avgPeFromHistory != null && (
                   <ReferenceLine

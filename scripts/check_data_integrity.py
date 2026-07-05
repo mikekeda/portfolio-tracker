@@ -334,10 +334,11 @@ CHECKS: list[tuple[str, str, str, str]] = [
         "canonical_sibling=true = stale duplicate: the supersede window missed the PR row "
         "(pre-Jul-2026 rows predate the ±7-day match) — DELETE the PR row. false = no "
         "route delivered a canonical filing: EU/Canada name with no route at all "
-        "(SAF.PA/RHM.DE/MDA.TO), or an FPI whose results 6-K sits deeper than the "
-        "FPI_SCAN_LIMIT newest filings (buyback-heavy UK banks like AZN/BARC file dozens "
-        "of governance 6-Ks). The Jul 2026 queue-starvation bug also showed up here "
-        "first — if many US names flag at once, check the SEC task logs.",
+        "(SAF.PA/RHM.DE/MDA.TO), an FPI whose results 6-K sits deeper than the "
+        "FPI_SCAN_LIMIT newest filings (NVO/KYIV file weekly buyback 6-Ks), or a UK "
+        "name whose Investegate announcements come back as stubs (AZN.L/BARC.L — no "
+        "CIK, so the RNS route owns them). The Jul 2026 queue-starvation bug also "
+        "showed up here first — if many US names flag at once, check the SEC task logs.",
         f"""
         SELECT i.yahoo_symbol, e.date AS pr_date, CURRENT_DATE - e.date AS age_days,
                EXISTS (SELECT 1 FROM earnings_reports c

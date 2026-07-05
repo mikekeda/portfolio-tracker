@@ -391,7 +391,13 @@ async def get_instrument(
         "cashflow": (yh.cashflow or {}) if yh else {},
         "prices": chart_price_data,
         "orders": chart_orders_data,
-        "pe_history": {k: v["pe_ratio"] for k, v in (yh.pes or {}).items() if date.fromisoformat(k) >= start_date}
+        "pe_history": {
+            k: v["pe_ratio"] for k, v in (yh.pes or {}).items() if start_date <= date.fromisoformat(k) <= date.today()
+        }
+        if yh
+        else {},
+        # Wisesheets forward year-end estimates — charted as a dashed continuation
+        "pe_estimates": {k: v["pe_ratio"] for k, v in (yh.pes or {}).items() if date.fromisoformat(k) > date.today()}
         if yh
         else {},
         "splits": {k: v for k, v in (yh.splits or {}).items() if date.fromisoformat(k) >= start_date} if yh else {},
