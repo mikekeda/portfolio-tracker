@@ -1604,10 +1604,20 @@ const Stock = () => {
         {data?.earnings_reports && data.earnings_reports.length > 0 && (() => {
           const report = data.earnings_reports[Math.min(activeReportIdx, data.earnings_reports.length - 1)];
           const metrics = report.metrics || {};
-          const guidance = metrics.guidance || {};
+          // SEC filings rarely restate guidance/consensus; fall back to the pr_*
+          // fields carried over from the same-day press release on supersede.
+          const hasValues = (v) => {
+            if (v == null) return false;
+            if (Array.isArray(v)) return v.some(hasValues);
+            if (typeof v === 'object') return Object.values(v).some(hasValues);
+            return true;
+          };
+          const guidanceFromPR = !hasValues(metrics.guidance) && hasValues(metrics.pr_guidance);
+          const guidance = (guidanceFromPR ? metrics.pr_guidance : metrics.guidance) || {};
+          const consensusFromPR = !hasValues(metrics.consensus_comparison) && hasValues(metrics.pr_consensus_comparison);
+          const consensus = (consensusFromPR ? metrics.pr_consensus_comparison : metrics.consensus_comparison) || {};
           const epsGuidance = guidance.eps_guidance || {};
           const revenueGuidance = guidance.revenue_guidance || {};
-          const consensus = metrics.consensus_comparison || {};
           const assessment = metrics.investment_assessment || {};
 
           const sinceEarningsPct = (() => {
@@ -1622,6 +1632,7 @@ const Stock = () => {
                 ? `Beat +${consensus.eps_beat_pct.toFixed(0)}%`
                 : `Miss ${consensus.eps_beat_pct.toFixed(0)}%`,
               type: consensus.eps_beat_pct >= 0 ? 'beat' : 'miss',
+              sub: consensusFromPR ? 'from press release' : null,
             },
             consensus.revenue_beat_pct != null && {
               label: 'Revenue',
@@ -1629,11 +1640,13 @@ const Stock = () => {
                 ? `Beat +${consensus.revenue_beat_pct.toFixed(0)}%`
                 : `Miss ${consensus.revenue_beat_pct.toFixed(0)}%`,
               type: consensus.revenue_beat_pct >= 0 ? 'beat' : 'miss',
+              sub: consensusFromPR ? 'from press release' : null,
             },
             consensus.guidance_vs_consensus && {
               label: 'Guidance',
               badge: consensus.guidance_vs_consensus === 'above' ? '↑ Above' : consensus.guidance_vs_consensus === 'below' ? '↓ Below' : '→ In-Line',
               type: consensus.guidance_vs_consensus === 'above' ? 'beat' : consensus.guidance_vs_consensus === 'below' ? 'miss' : 'inline',
+              sub: consensusFromPR ? 'from press release' : null,
             },
             assessment.recommendation && {
               label: 'Signal',
@@ -1746,7 +1759,17 @@ const Stock = () => {
 
               {(epsGuidance.next_quarter || epsGuidance.next_year || revenueGuidance.next_quarter || revenueGuidance.next_year || guidance.operating_margin_guidance != null || guidance.outlook_commentary) && (
                 <div className="earnings-guidance">
-                  <h5>Guidance</h5>
+                  <h5>
+                    Guidance
+                    {guidanceFromPR && (
+                      <span
+                        className="guidance-pr-note"
+                        title="From the same-day earnings press release — the SEC filing did not restate guidance"
+                      >
+                        press release
+                      </span>
+                    )}
+                  </h5>
                   <div className="guidance-metrics">
                     {epsGuidance.next_year && (
                       <div className="guidance-metric">

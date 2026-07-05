@@ -1,10 +1,14 @@
 """
-Fetches the latest 10-Q / 10-K / 20-F / 40-F filing for each eligible instrument
-from the SEC EDGAR API and extracts structured metrics via an LLM.
+Fetches the latest 10-Q / 10-K / 20-F / 40-F / 6-K filing for each eligible
+instrument from the SEC EDGAR API and extracts structured metrics via an LLM.
 
 Coverage model — "latest-only, forward-looking":
-  * Each run processes the *single most recent* SEC filing per instrument
-    (``get_latest_filing_metadata_any``). Historical filings are never
+  * Each run processes the *newest results filing* per instrument
+    (``get_filing_candidates_any``). Domestic filers: the latest 10-Q/10-K.
+    Foreign private issuers mix results and governance filings under 6-K, so
+    the newest few candidates are scanned and the LLM's is_earnings_report
+    gate picks the results one (non-results verdicts are cached as marker
+    files so they never cost a second LLM call). Historical filings are never
     backfilled, even if Yahoo lists many prior earnings announcements that
     have no matching ``EarningsReport`` row.
   * Rationale: the dashboard ranks current buy/sell signal and forward
@@ -33,7 +37,7 @@ updates split and the global never-seen backlog.
 """
 
 import argparse
-from datetime import date
+from datetime import date, timedelta
 from time import perf_counter, sleep
 
 import requests
@@ -56,45 +60,67 @@ HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate", "Ho
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{primary_document}"
 
+# PR placeholders are keyed on the press release's stated period end, which can
+# sit a few days off the SEC reportDate (AAPL fiscal Q2 2026: 03-28 vs 03-31).
+PR_SUPERSEDE_WINDOW = timedelta(days=7)
+# FPIs mix results and governance filings under 6-K (ASML's newest 6-K is an AGM
+# notice; its Q1 results 6-K is second). Scan this many newest candidates.
+FPI_SCAN_LIMIT = 5
 
-def get_latest_filing_metadata(cik: str, form_types: tuple[str, ...] = ("10-Q", "10-K")):
+
+def get_filing_metadata_candidates(cik: str, form_types: tuple[str, ...], limit: int = 1) -> list[dict]:
     """
-    Fetches the most recent filing metadata for the given CIK and form types.
+    Fetches metadata for the most recent filings of the given form types, newest first.
 
-    For US domestic companies the default ("10-Q", "10-K") works.
-    Foreign private issuers (e.g. ASML, NVO, NU) file 20-F (annual) instead of 10-K,
-    and Canadian companies file 40-F.  Pass form_types=("20-F",) or ("40-F",) explicitly,
-    or use the helper get_latest_filing_metadata_any() which tries both automatically.
+    For US domestic companies ("10-Q", "10-K") the latest filing is always the
+    results document, so the default limit of 1 suffices. Foreign private issuers
+    file 20-F (40-F for Canada) annually and everything else — quarterly results,
+    but also AGM notices and governance updates — as 6-K, so callers pass a larger
+    limit and let the LLM's is_earnings_report gate pick the results filing.
     """
 
     url = SEC_SUBMISSIONS_URL.format(cik=cik)
     response = requests.get(url, headers={"User-Agent": SEC_USER_AGENT}, timeout=30)
     response.raise_for_status()
-    data = response.json()
+    filings = response.json()["filings"]["recent"]
 
-    filings = data["filings"]["recent"]
-
+    candidates: list[dict] = []
     for i, form in enumerate(filings["form"]):
-        if form in form_types:
-            return {
+        if form not in form_types:
+            continue
+        candidates.append(
+            {
                 "accessionNumber": filings["accessionNumber"][i],
                 "primaryDocument": filings["primaryDocument"][i],
                 "form": form,
-                "reportDate": filings["reportDate"][i],
+                # Results 6-Ks carry the period end here, but some governance
+                # 6-Ks leave reportDate empty — fall back to the filing date.
+                "reportDate": filings["reportDate"][i] or filings["filingDate"][i],
             }
+        )
+        if len(candidates) >= limit:
+            break
+    return candidates
 
-    return None
 
-
-def get_latest_filing_metadata_any(cik: str):
+def get_filing_candidates_any(cik: str) -> list[dict]:
     """
-    Tries domestic (10-Q/10-K) first, then foreign (20-F/40-F) as fallback.
+    Tries domestic (10-Q/10-K) first, then foreign (20-F/40-F/6-K) as fallback.
     Covers US companies, foreign private issuers, and Canadian filers.
     """
-    result = get_latest_filing_metadata(cik, form_types=("10-Q", "10-K"))
-    if result is None:
-        result = get_latest_filing_metadata(cik, form_types=("20-F", "40-F"))
-    return result
+    candidates = get_filing_metadata_candidates(cik, form_types=("10-Q", "10-K"))
+    if not candidates:
+        candidates = get_filing_metadata_candidates(cik, form_types=("20-F", "40-F", "6-K"), limit=FPI_SCAN_LIMIT)
+    return candidates
+
+
+def _has_content(value) -> bool:
+    """True if a nested guidance/consensus structure carries at least one real value."""
+    if isinstance(value, dict):
+        return any(_has_content(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_has_content(v) for v in value)
+    return value is not None
 
 
 def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
@@ -145,128 +171,154 @@ def _latest_yahoo_earnings_date(earnings: dict | None) -> str | None:
 
 def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
     """
-    Fetches, processes, and saves the *latest* SEC earnings filing for a given ticker.
+    Fetches, processes, and saves the latest SEC earnings filing for a given ticker.
 
-    Decision flow:
-    1. Fetch filing metadata from SEC (lightweight JSON, tries 10-Q/10-K then 20-F/40-F).
-    2. DB record exists for that report_date → skip (already analysed).
+    Decision flow (per candidate filing, newest first):
+    1. Fetch filing metadata from SEC — one candidate for 10-Q/10-K filers, the
+       newest FPI_SCAN_LIMIT candidates for foreign issuers (20-F/40-F/6-K).
+    2. Canonical DB record exists for that report_date → done (already analysed).
     3. HTML cached on disk for that report_date → regenerate summary from cache
        (post-table-truncation scenario: re-run LLM without re-downloading).
     4. Neither DB nor cache → download from SEC and analyse.
+    5. LLM flags a non-results document (governance 6-K) → persist a marker file
+       and move on to the next candidate.
+    6. Save. PR placeholders within ±PR_SUPERSEDE_WINDOW of the period are
+       superseded, carrying their guidance/consensus over as pr_* metrics.
 
-    Scope note: "latest" means the single most recent 10-Q/10-K (or 20-F/40-F).
-    If older filings were never processed (common after an instrument just became
-    eligible), they are NOT backfilled here — see the module docstring.
+    Scope note: only the newest results filing is processed. If older filings
+    were never processed (common after an instrument just became eligible),
+    they are NOT backfilled here — see the module docstring.
 
     Note: we intentionally do NOT compare the SEC report_date to the Yahoo announcement
     date. Those are different things (period end vs. announcement day) and comparing them
     caused legitimate new filings to be skipped.
     """
 
-    # 1. Filing metadata
-    metadata = get_latest_filing_metadata_any(cik)
+    # 1. Filing metadata, newest first
+    candidates = get_filing_candidates_any(cik)
 
-    if not metadata:
-        logger.warning("No supported filings (10-Q/10-K/20-F/40-F) found for %s CIK %s", ticker, cik)
+    if not candidates:
+        logger.warning("No supported filings (10-Q/10-K/20-F/40-F/6-K) found for %s CIK %s", ticker, cik)
         return None
 
-    report_date = metadata["reportDate"]
-    form = metadata["form"]
+    for metadata in candidates:
+        report_date = metadata["reportDate"]
+        form = metadata["form"]
+        period = date.fromisoformat(report_date)
 
-    # 2. DB check — skip if a canonical row already exists. A PR placeholder is
-    # superseded at save time (step 7), not here: deleting it now would leak an
-    # uncommitted delete into the shared session when the download/LLM step bails.
-    existing_report = session.execute(
-        select(EarningsReport).filter(
-            EarningsReport.instrument_id == instrument_id, EarningsReport.date == date.fromisoformat(report_date)
+        # 2. DB check — done if a canonical row already exists. PR placeholders are
+        # matched in a window because they are keyed on the press release's stated
+        # period end, which can sit a few days off the SEC reportDate (AAPL fiscal
+        # Q2 2026: 03-28 vs 03-31). They are superseded at save time (step 6), not
+        # here: deleting them now would leak an uncommitted delete into the shared
+        # session when the download/LLM step bails. Legacy rows (pre-cce2a1f3)
+        # lack report_type → treated as canonical and kept as-is.
+        window_rows = (
+            session.execute(
+                select(EarningsReport).filter(
+                    EarningsReport.instrument_id == instrument_id,
+                    EarningsReport.date.between(period - PR_SUPERSEDE_WINDOW, period + PR_SUPERSEDE_WINDOW),
+                )
+            )
+            .scalars()
+            .all()
         )
-    ).scalar_one_or_none()
-
-    pr_placeholder = None
-    if existing_report:
-        # PR rows are placeholders ingested via ingest_earnings_pr.py; replace
-        # them with the canonical SEC filing. Legacy rows (pre-cce2a1f3) lack
-        # report_type → fall into the else branch and are kept as-is.
-        if existing_report.metrics.get("report_type") == PR_REPORT_TYPE:
-            pr_placeholder = existing_report
-        else:
+        pr_placeholders = [r for r in window_rows if r.metrics.get("report_type") == PR_REPORT_TYPE]
+        canonical = next((r for r in window_rows if r.date == period and r not in pr_placeholders), None)
+        if canonical:
             logger.debug("[skip] %s already in DB (form %s, period %s)", ticker, form, report_date)
-            return existing_report
+            return canonical
 
-    # 3. Check HTML cache
-    safe_form = form.replace("/", "_")
-    html_cached = _check_file_exists_for_date(ticker, report_date, safe_form)
+        safe_form = form.replace("/", "_")
+        # Sentinel persisting an LLM verdict that this filing is not a results
+        # document, so nightly re-runs don't re-analyse the same governance 6-K.
+        nonearnings_marker = DATA_DIR / ticker / f"{report_date}_{safe_form}.nonearnings"
+        if nonearnings_marker.exists():
+            logger.debug("[skip] %s %s period %s — marked non-earnings on a previous run", ticker, form, report_date)
+            continue
 
-    if html_cached:
-        logger.debug("[cache] %s %s period %s — regenerating summary (no download)", ticker, form, report_date)
-    else:
-        logger.debug("[download] %s %s period %s — fetching from SEC", ticker, form, report_date)
+        # 3. Check HTML cache
+        html_cached = _check_file_exists_for_date(ticker, report_date, safe_form)
 
-    # 4. Get HTML (returns cached file if present, downloads otherwise)
-    try:
-        html_content = get_filing_html(cik, ticker, metadata)
-    except requests.RequestException as e:
-        logger.warning("%s download failed: %s", ticker, e)
-        return None
+        if html_cached:
+            logger.debug("[cache] %s %s period %s — regenerating summary (no download)", ticker, form, report_date)
+        else:
+            logger.debug("[download] %s %s period %s — fetching from SEC", ticker, form, report_date)
 
-    # 5. Extract text
-    text = extract_text_from_html(html_content)
+        # 4. Get HTML (returns cached file if present, downloads otherwise)
+        try:
+            html_content = get_filing_html(cik, ticker, metadata)
+        except requests.RequestException as e:
+            logger.warning("%s download failed: %s", ticker, e)
+            return None
 
-    # 6. LLM analysis
-    result = summarize_with_llm(text, ticker, report_type=form, period=report_date)
+        # 5. Extract text + LLM analysis
+        text = extract_text_from_html(html_content)
+        result = summarize_with_llm(text, ticker, report_type=form, period=report_date)
 
-    if result is None:
-        logger.warning("[error] LLM failed for %s %s — skipping DB save", ticker, report_date)
-        return None
+        if result is None:
+            logger.warning("[error] LLM failed for %s %s — skipping DB save", ticker, report_date)
+            return None
 
-    if result.get("is_earnings_report") is False:
-        logger.info("[skip] %s %s period %s — LLM flagged as non-earnings disclosure", ticker, form, report_date)
-        return None
+        if result.get("is_earnings_report") is False:
+            nonearnings_marker.touch()
+            logger.info("[skip] %s %s period %s — LLM flagged as non-earnings disclosure", ticker, form, report_date)
+            continue
 
-    summary = result.get("summary", "")
-    metrics = {k: v for k, v in result.items() if k != "summary"}
-    metrics["report_type"] = form
-    metrics["source_url"] = SEC_ARCHIVES_URL.format(
-        cik=cik,
-        accession=metadata["accessionNumber"].replace("-", ""),
-        primary_document=metadata["primaryDocument"],
-    )
+        summary = result.get("summary", "")
+        metrics = {k: v for k, v in result.items() if k != "summary"}
+        metrics["report_type"] = form
+        metrics["source_url"] = SEC_ARCHIVES_URL.format(
+            cik=cik,
+            accession=metadata["accessionNumber"].replace("-", ""),
+            primary_document=metadata["primaryDocument"],
+        )
 
-    # 7. Save — replace the PR placeholder first to free the (instrument_id, date) slot
-    if pr_placeholder is not None:
+        # 6. Save — supersede PR placeholders, carrying over the forward-looking
+        # fields only they have (guidance lives in the press release, not the 10-Q).
+        if pr_placeholders:
+            pr_metrics = max(pr_placeholders, key=lambda r: r.date).metrics
+            for key in ("guidance", "consensus_comparison"):
+                if _has_content(pr_metrics.get(key)):
+                    metrics[f"pr_{key}"] = pr_metrics[key]
+            for pr in pr_placeholders:
+                logger.info(
+                    "[supersede] %s: replacing PR row %d (%s) with canonical %s (period %s)",
+                    ticker,
+                    pr.id,
+                    pr.date,
+                    form,
+                    report_date,
+                )
+                session.delete(pr)
+            session.flush()
+
+        earnings_report = EarningsReport(
+            instrument_id=instrument_id,
+            date=period,
+            summary=summary,
+            metrics=metrics,
+        )
+        session.add(earnings_report)
+        session.commit()
+
+        eps_guidance = (metrics.get("guidance") or {}).get("eps_guidance") or {}
+        assessment = metrics.get("investment_assessment") or {}
         logger.info(
-            "[supersede] %s: replacing PR row %d with canonical %s (period %s)",
+            "[saved] %s %s period %s | rec=%s conv=%s | EPS next_q=%s next_y=%s growth=%s%%",
             ticker,
-            pr_placeholder.id,
             form,
             report_date,
+            assessment.get("recommendation", "—"),
+            assessment.get("conviction", "—"),
+            eps_guidance.get("next_quarter"),
+            eps_guidance.get("next_year"),
+            eps_guidance.get("growth_pct"),
         )
-        session.delete(pr_placeholder)
-        session.flush()
+        return earnings_report
 
-    earnings_report = EarningsReport(
-        instrument_id=instrument_id,
-        date=date.fromisoformat(report_date),
-        summary=summary,
-        metrics=metrics,
-    )
-    session.add(earnings_report)
-    session.commit()
-
-    eps_guidance = (metrics.get("guidance") or {}).get("eps_guidance") or {}
-    assessment = metrics.get("investment_assessment") or {}
-    logger.info(
-        "[saved] %s %s period %s | rec=%s conv=%s | EPS next_q=%s next_y=%s growth=%s%%",
-        ticker,
-        form,
-        report_date,
-        assessment.get("recommendation", "—"),
-        assessment.get("conviction", "—"),
-        eps_guidance.get("next_quarter"),
-        eps_guidance.get("next_year"),
-        eps_guidance.get("growth_pct"),
-    )
-    return earnings_report
+    logger.info("[skip] %s — no results filing among the %d newest candidates", ticker, len(candidates))
+    return None
 
 
 def get_earnings_reports(limit: int = 100, only_holdings: bool = False):

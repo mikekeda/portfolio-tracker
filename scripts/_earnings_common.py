@@ -34,7 +34,11 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("google_genai").setLevel(logging.WARNING)
 
 DATA_DIR = Path("data/filings")
-MODEL = "gemini-3-flash-preview"
+# GA model — the gemini-3-flash-preview line graduated as 3.5 Flash; preview
+# endpoints get retired without notice, so pin the stable id.
+MODEL = "gemini-3.5-flash"
+# Near-deterministic output: extraction and scoring should not vary run-to-run.
+TEMPERATURE = 0.1
 
 # Report type discriminator persisted in EarningsReport.metrics["report_type"]
 ReportType = Literal[
@@ -122,7 +126,8 @@ class InvestmentAssessment(BaseModel):
         ...,
         description=(
             "Strength of the investment signal, not just data clarity. "
-            "High = strong, consistent evidence supports the call (e.g. guidance raised, margins expanding, moat intact). "
+            "High = strong, consistent evidence supports the call (e.g. guidance raised, margins expanding, moat intact) — "
+            "reserve for the strongest ~10% of reports. "
             "Medium = mixed signals or limited forward visibility. "
             "Low = contradictory data, one-off items dominating, or unclear long-term trajectory."
         ),
@@ -291,6 +296,14 @@ while generating a comprehensive summary.
 3. **Investment Assessment (REQUIRED - answer "is this a good buy?"):**
    - **recommendation**: "buy" (attractive), "hold" (neutral), "avoid" (unattractive), or "consider" (worth researching)
    - **conviction**: "high", "medium", or "low" — strength of the investment signal (consistent evidence vs mixed vs contradictory), not merely how clear the filing text is
+   - **Calibration**: most filings describe routine quarters. Across a large sample expect
+     roughly 20% "buy", 30% "consider", 35% "hold", 15% "avoid" — an in-line quarter with no
+     change to the long-term thesis is a "hold", not a "buy". Reserve "buy" for concrete
+     positive evidence in THIS report (accelerating growth, expanding margins or returns on
+     capital, raised guidance) and "high" conviction for the strongest ~10% of reports.
+     Never pair "buy" with "high" conviction unless key_concerns are identified and clearly
+     outweighed by the evidence. Companies narrate their own results favourably — judge the
+     numbers, not the framing.
    - **rationale**: 2-3 sentences explaining why (e.g., "Strong guidance raise and margin expansion support buy. Debt paydown reduces risk.")
    - **key_catalysts**: 2-4 positive drivers (e.g., "AI revenue accelerating", "Market share gains", "Buyback program")
    - **key_concerns**: 2-4 risks (e.g., "Macro headwinds", "Customer concentration", "Margin pressure")
@@ -429,6 +442,7 @@ def summarize_with_llm(
             model=MODEL,
             contents=prompt,
             config={
+                "temperature": TEMPERATURE,
                 "response_mime_type": "application/json",
                 "response_json_schema": EarningsReportMetrics.model_json_schema(),
             },
@@ -495,6 +509,7 @@ def summarize_pdf_with_llm(
                 prompt,
             ],
             config={
+                "temperature": TEMPERATURE,
                 "response_mime_type": "application/json",
                 "response_json_schema": EarningsReportMetrics.model_json_schema(),
             },

@@ -29,6 +29,9 @@ MAX_ROWS_SHOWN = 15
 STALE_PRICE_DAYS = 7      # > a week without prices on a live symbol = frozen line
 STALE_PROFILE_DAYS = 3    # Yahoo profile refresh budget covers the universe daily
 STALE_METRICS_DAYS = 2    # held instruments should get metrics every run
+# SEC 10-Q deadline is 40-45 days after quarter end, so a PR placeholder older
+# than that without a canonical row means the supersede path or a route failed.
+STALE_PR_DAYS = 45
 PORTFOLIO_DIFF_PCT = 1.0  # T212 total vs holdings sum; small FX drift is normal
 # Same bounds as the split detector: an unadjusted 2:1 split shows as ~0.5x.
 MOVE_UPPER, MOVE_LOWER = 1.8, 0.55
@@ -323,6 +326,29 @@ CHECKS: list[tuple[str, str, str, str]] = [
                            'STOCK_SPLIT_OPEN', 'STOCK_SPLIT_CLOSE')
         GROUP BY i.t212_code, h.quantity
         HAVING abs(h.quantity - sum(t.quantity)) > 0.01
+        """,
+    ),
+    (
+        "stale_pr_rows",
+        f"PR placeholder rows older than {STALE_PR_DAYS} days (supersede or route failed)",
+        "canonical_sibling=true = stale duplicate: the supersede window missed the PR row "
+        "(pre-Jul-2026 rows predate the ±7-day match) — DELETE the PR row. false = no "
+        "route delivered a canonical filing: EU/Canada name with no route at all "
+        "(SAF.PA/RHM.DE/MDA.TO), or an FPI whose results 6-K sits deeper than the "
+        "FPI_SCAN_LIMIT newest filings (buyback-heavy UK banks like AZN/BARC file dozens "
+        "of governance 6-Ks). The Jul 2026 queue-starvation bug also showed up here "
+        "first — if many US names flag at once, check the SEC task logs.",
+        f"""
+        SELECT i.yahoo_symbol, e.date AS pr_date, CURRENT_DATE - e.date AS age_days,
+               EXISTS (SELECT 1 FROM earnings_reports c
+                       WHERE c.instrument_id = e.instrument_id
+                         AND coalesce(c.metrics->>'report_type', '') != 'PR'
+                         AND c.date BETWEEN e.date - 7 AND e.date + 7) AS canonical_sibling
+        FROM earnings_reports e
+        JOIN instruments i ON i.id = e.instrument_id
+        WHERE e.metrics->>'report_type' = 'PR'
+          AND e.date < CURRENT_DATE - {STALE_PR_DAYS}
+        ORDER BY canonical_sibling DESC, e.date
         """,
     ),
 ]

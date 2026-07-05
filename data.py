@@ -117,6 +117,7 @@ STOCKS_DELISTED: set[str] = {
     "FJK.DE",    # Fujikura - Xetra line dead on Yahoo; primary 5803.T is JPY (unsupported)
     "KEE.DE",    # Keyence - Xetra line dead on Yahoo; primary 6861.T is JPY (unsupported)
     "KGHA.DE",   # KGHM Polska Miedz - Xetra line dead on Yahoo; primary KGH.WA is PLN (unsupported)
+    "PJXC.DE",   # Petrobras - Xetra line frozen on Yahoo (corrupt adj_close); primary PBR is the NYSE ADR
     "ALCC1",     # AltC Acquisition - merged into Oklo (OKLO)
     "BSAQ",      # Black Spade Acquisition - SPAC, no longer trading
     "CRH.L",     # CRH cancelled its LSE line Apr 2026; NYSE-only now (USD line is a separate instrument)

@@ -40,13 +40,14 @@ from time import perf_counter, sleep
 
 import requests
 from bs4 import BeautifulSoup
-from sqlalchemy import func, select
+from sqlalchemy import Date, cast, func, or_, select
 from sqlalchemy.sql import text as sql_text
 
 from config import logger
 from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
 from scripts._earnings_common import (
     DATA_DIR,
+    PR_REPORT_TYPE,
     extract_text_from_html,
     summarize_with_llm,
 )
@@ -480,10 +481,13 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
         - cik IS NULL (instruments with a CIK go through the SEC pipeline)
         - InstrumentYahoo row exists (so we can rank by Yahoo earnings dates)
 
-    Selection priority (mirrors the US script):
+    Selection (mirrors the US script):
+        - Work-pending gate: an instrument is a candidate only while its newest
+          canonical (non-PR) summary predates its latest Yahoo earnings date.
+          Instruments with no Yahoo earnings data stay in the pool — we cannot
+          tell when new results are due — and fall to the end of the ordering.
         1. Never-seen instruments (has_reports = 0) first.
         2. Within that, most recent past Yahoo earnings announcement date desc.
-           Instruments with no Yahoo earnings data fall to the end.
     """
 
     with get_session() as session:
@@ -500,6 +504,18 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
         has_reports = (
             select(func.count(EarningsReport.id))
             .where(EarningsReport.instrument_id == Instrument.id)
+            .correlate(Instrument)
+            .scalar_subquery()
+        )
+
+        # Newest canonical (non-PR) summary per instrument. PR placeholders must
+        # not count here — they'd mask the still-missing RNS results they stand in for.
+        last_canonical_created = (
+            select(func.max(EarningsReport.created_at))
+            .where(
+                EarningsReport.instrument_id == Instrument.id,
+                func.coalesce(EarningsReport.metrics["report_type"].astext, "") != PR_REPORT_TYPE,
+            )
             .correlate(Instrument)
             .scalar_subquery()
         )
@@ -525,9 +541,20 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
                 Instrument.cik.is_(None),
                 equity_only,
                 Instrument.yahoo_symbol.notin_(NON_EARNINGS_LISTINGS),
+                # Work-pending gate: drop instruments whose newest canonical summary
+                # already postdates their last Yahoo announcement — same starvation
+                # fix as the SEC route (2026-07). Instruments without Yahoo earnings
+                # data stay in: we cannot tell when their results are due.
+                or_(
+                    last_canonical_created.is_(None),
+                    max_earnings_date_expr.is_(None),
+                    cast(last_canonical_created, Date) < cast(max_earnings_date_expr, Date),
+                ),
             )
             .order_by(
-                has_reports.asc(),
+                # Boolean never-seen flag, NOT the raw count: ordering by count keeps
+                # low-count instruments permanently ahead of multi-report ones.
+                (has_reports == 0).desc(),
                 max_earnings_date_expr.desc().nulls_last(),
             )
             .limit(limit)
