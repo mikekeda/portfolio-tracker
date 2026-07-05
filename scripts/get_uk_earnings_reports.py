@@ -44,6 +44,7 @@ from sqlalchemy import Date, cast, func, or_, select
 from sqlalchemy.sql import text as sql_text
 
 from config import logger
+from data import STOCKS_DELISTED
 from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
 from scripts._earnings_common import (
     DATA_DIR,
@@ -541,6 +542,9 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
                 Instrument.cik.is_(None),
                 equity_only,
                 Instrument.yahoo_symbol.notin_(NON_EARNINGS_LISTINGS),
+                # Delisted lines never publish new RNS (AGR.L sat permanently in
+                # the never-seen queue burning Investegate fetches every night).
+                Instrument.yahoo_symbol.notin_(STOCKS_DELISTED),
                 # Work-pending gate: drop instruments whose newest canonical summary
                 # already postdates their last Yahoo announcement — same starvation
                 # fix as the SEC route (2026-07). Instruments without Yahoo earnings
@@ -592,6 +596,7 @@ def get_uk_earnings_reports(limit: int = 10, only_holdings: bool = False) -> Non
                     Instrument.cik.is_(None),
                     equity_only,
                     Instrument.yahoo_symbol.notin_(NON_EARNINGS_LISTINGS),
+                    Instrument.yahoo_symbol.notin_(STOCKS_DELISTED),
                 )
             ).scalar()
             or 0
