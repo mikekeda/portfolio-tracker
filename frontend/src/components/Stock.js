@@ -1857,6 +1857,107 @@ const Stock = () => {
           );
         })()}
 
+        {/* Position Review Section (LLM thesis review) */}
+        {data?.position_review && (() => {
+          const rv = data.position_review;
+          const label = rv.position_action === 'no_action'
+            ? 'No action'
+            : rv.position_action.charAt(0).toUpperCase() + rv.position_action.slice(1);
+          const ageDays = rv.reviewed_at
+            ? Math.floor((Date.now() - new Date(rv.reviewed_at + 'T00:00:00').getTime()) / 86400000)
+            : null;
+          const isStale = ageDays != null && ageDays > 30;
+          const qt = rv.quality_trajectory || {};
+          const triggers = rv.trigger_evaluations || [];
+          return (
+            <div className="panel">
+              <div className="earnings-panel-header">
+                <div>
+                  <h3>Position Review</h3>
+                  <p className="earnings-panel-dates">
+                    Reviewed {rv.reviewed_at}
+                    {ageDays != null && <> · {ageDays}d ago</>}
+                    {isStale && <> · stale</>}
+                    {rv.model && <> · {rv.model}</>}
+                  </p>
+                </div>
+                <span
+                  className={`review-badge rv-${rv.position_action}`}
+                  style={isStale ? { opacity: 0.5 } : undefined}
+                >
+                  {label}
+                </span>
+              </div>
+
+              <div className="earnings-metric-cards">
+                <div className={`earnings-metric-card emc-${rv.thesis_status === 'intact' ? 'beat' : rv.thesis_status === 'broken' ? 'miss' : 'inline'}`}>
+                  <div className="emc-label">Thesis</div>
+                  <div className="emc-badge">{rv.thesis_status.replace(/_/g, ' ')}</div>
+                </div>
+                <div className="earnings-metric-card emc-inline">
+                  <div className="emc-label">Strength</div>
+                  <div className="emc-badge">{rv.signal_strength}</div>
+                </div>
+                <div className="earnings-metric-card emc-inline">
+                  <div className="emc-label">Confidence</div>
+                  <div className="emc-badge">{Math.round(rv.confidence * 100)}%</div>
+                </div>
+                <div className="earnings-metric-card emc-inline">
+                  <div className="emc-label">Quality</div>
+                  <div className="emc-badge">ROIC {qt.roic_trend} · margins {qt.margin_trend}</div>
+                </div>
+              </div>
+
+              {triggers.length > 0 && (
+                <div className="review-triggers">
+                  <h5>Trigger evaluations</h5>
+                  <ul>
+                    {triggers.map((t, i) => (
+                      <li key={i} className="trigger-item">
+                        <span className={`trigger-status ts-${t.status} tt-${t.trigger_type}`}>
+                          {t.status.replace(/_/g, ' ')}
+                        </span>
+                        <span className={`trigger-type tt-${t.trigger_type}`}>{t.trigger_type}</span>
+                        <span className="trigger-text" title={t.evidence}>{t.trigger_text}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {(rv.catalysts?.length > 0 || rv.risk_flags?.length > 0) && (
+                <div className="earnings-catalysts-concerns">
+                  {rv.catalysts?.length > 0 && (
+                    <div className="earnings-catalysts">
+                      <h5>Catalysts</h5>
+                      <ul>
+                        {rv.catalysts.map((c, i) => <li key={i}>{c}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                  {rv.risk_flags?.length > 0 && (
+                    <div className="earnings-concerns">
+                      <h5>Risk flags</h5>
+                      <ul>
+                        {rv.risk_flags.map((c, i) => <li key={i}>{c}</li>)}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {rv.rationale && (
+                <div className="earnings-summary">
+                  <div
+                    className="earnings-summary-content"
+                    dangerouslySetInnerHTML={{ __html: markdownToHtml(rv.rationale) }}
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* News Section */}
         <div className="panel">
           <h3>Latest News</h3>

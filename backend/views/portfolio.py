@@ -40,6 +40,7 @@ from models import (
     InstrumentMetricsDaily,
     InstrumentThesisTypedDict,
     PortfolioDaily,
+    PositionReview,
     PricesDaily,
     TransactionAction,
     TransactionHistory,
@@ -245,6 +246,45 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
     return result
 
 
+async def _get_position_reviews(session: AsyncSession, inst_ids: list[int]) -> dict[int, dict]:
+    """
+    Returns { instrument_id: { review_action, review_thesis_status,
+                               review_signal_strength, review_confidence, reviewed_at } }
+    from the most recent PositionReview per instrument.
+    """
+    if not inst_ids:
+        return {}
+
+    latest_sq = (
+        select(
+            PositionReview.instrument_id,
+            func.max(PositionReview.created_at).label("max_created"),
+        )
+        .where(PositionReview.instrument_id.in_(inst_ids))
+        .group_by(PositionReview.instrument_id)
+        .subquery()
+    )
+    rows = await session.execute(
+        select(PositionReview.instrument_id, PositionReview.payload, PositionReview.created_at).join(
+            latest_sq,
+            and_(
+                PositionReview.instrument_id == latest_sq.c.instrument_id,
+                PositionReview.created_at == latest_sq.c.max_created,
+            ),
+        )
+    )
+    return {
+        inst_id: {
+            "review_action": payload["position_action"],
+            "review_thesis_status": payload["thesis_status"],
+            "review_signal_strength": payload["signal_strength"],
+            "review_confidence": payload["confidence"],
+            "reviewed_at": created_at.date().isoformat(),
+        }
+        for inst_id, payload, created_at in rows.all()
+    }
+
+
 @router.get("/api/portfolio/current")
 async def get_current_portfolio(
     session: AsyncSession = Depends(get_db_session), show_all: bool = False
@@ -336,6 +376,7 @@ async def get_current_portfolio(
     form13f = await _get_form13f_for_instruments(session, instrument_ids)
     earnings_signals = await _get_earnings_signals(session, items)
     insider_signals = await _get_insider_signals(session, instrument_ids)
+    position_reviews = await _get_position_reviews(session, instrument_ids)
 
     portfolio_data: list[dict[str, Any]] = []
     thesis_by_symbol: dict[str, InstrumentThesisTypedDict] = {}
@@ -481,6 +522,16 @@ async def get_current_portfolio(
                         "insider_buy_count_90d": None,
                         "insider_sell_count_90d": None,
                         "insider_net_value_90d": None,
+                    }
+                ),
+                **(
+                    position_reviews.get(holding.instrument.id)
+                    or {
+                        "review_action": None,
+                        "review_thesis_status": None,
+                        "review_signal_strength": None,
+                        "review_confidence": None,
+                        "reviewed_at": None,
                     }
                 ),
             }

@@ -216,6 +216,19 @@ function signalScore(row) {
   return SIGNAL_CONVICTION_SCORE[key] ?? 99;
 }
 
+/**
+ * Composite sort score for position-review action + confidence.
+ * Ascending = most actionable first (exit, trim, add, hold); within an action,
+ * higher confidence ranks first. Confidence is halved so it can never cross
+ * an action boundary (max 0.5 < rank step of 1).
+ */
+const REVIEW_ACTION_RANK = { exit: 0, trim: 1, add: 2, hold: 3, no_action: 4 };
+
+function reviewScore(row) {
+  const rank = REVIEW_ACTION_RANK[row.review_action] ?? 9;
+  return rank - (row.review_confidence ?? 0) / 2;
+}
+
 // Net institutional momentum: sum of change scores, counting only holders that
 // meet conviction thresholds (scored=true). Noise holders are excluded so a
 // stock with many tiny "New" positions doesn't rank above one with a single
@@ -1419,6 +1432,34 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 80,
       }),
+      columnHelper.accessor('review_action', {
+        header: 'Review',
+        cell: (info) => {
+          const action = info.getValue();
+          if (!action) return <span className="review-cell" />;
+          const row = info.row.original;
+          const label = action === 'no_action'
+            ? 'No action'
+            : action.charAt(0).toUpperCase() + action.slice(1);
+          const status = row.review_thesis_status;
+          const tip = [
+            `${label}${row.review_confidence != null ? ` · ${Math.round(row.review_confidence * 100)}% confidence` : ''}`,
+            status ? `Thesis: ${status.replace('_', ' ')}` : null,
+            row.review_signal_strength ? `Strength: ${row.review_signal_strength}` : null,
+            row.reviewed_at ? `Reviewed: ${row.reviewed_at}` : null,
+          ].filter(Boolean).join(' · ');
+          return (
+            <span className={`review-badge rv-${action}`} title={tip}>
+              {label}
+              {status && <span className={`review-thesis-dot ts-${status}`} />}
+            </span>
+          );
+        },
+        enableSorting: true,
+        enableGlobalFilter: false,
+        size: 90,
+        sortingFn: (rowA, rowB) => reviewScore(rowA.original) - reviewScore(rowB.original),
+      }),
       columnHelper.accessor('form13f_score', {
         header: () => (
           <span title={'Conviction-weighted institutional signal (−2 to +2).\n+2 = strong buy signal, −2 = strong sell signal.\nOnly positions above conviction thresholds (≥0.05–0.1% of manager\'s AUM) contribute.\nWeighted by each manager\'s commitment relative to their portfolio size.'}>
@@ -1721,6 +1762,7 @@ const Holdings = () => {
       'form13f_holders': '13F Holders',
       'earnings_signal': 'Signal',
       'since_earnings_pct': 'Since Earn.',
+      'review_action': 'Review',
       'country': 'Country',
       'sector': 'Sector',
       'currency': 'Ccy',

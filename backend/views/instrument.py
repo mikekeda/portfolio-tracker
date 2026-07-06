@@ -26,6 +26,7 @@ from models import (
     HoldingDaily,
     Instrument,
     InstrumentMetricsDaily,
+    PositionReview,
     PricesDaily,
     TransactionHistory,
 )
@@ -356,6 +357,20 @@ async def get_instrument(
     current_price = fundamentals.get("currentPrice")
     dcf_diff: float | None = (dcf_price / current_price - 1) if (dcf_price and current_price) else None
 
+    review_row = (
+        await session.execute(
+            select(PositionReview)
+            .where(PositionReview.instrument_id == instrument.id)
+            .order_by(PositionReview.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    position_review = (
+        {**review_row.payload, "reviewed_at": review_row.created_at.date().isoformat(), "model": review_row.model}
+        if review_row
+        else None
+    )
+
     yh = instrument.yahoo
     f_score_result = get_piotroski_f_score(yh.cashflow, yh.balance_sheet, yh.income_stmt) if yh else None
 
@@ -413,6 +428,7 @@ async def get_instrument(
         "dcf_low": dcf_low,
         "dcf_high": dcf_high,
         "dcf_implied_growth": dcf_analysis["implied_growth"],
+        "position_review": position_review,
         "f_score": f_score_result["score"] if f_score_result else None,
         "f_score_details": f_score_result["details"] if f_score_result else None,
         "insider_buy_count_90d": insider_row[0] if insider_row else None,
