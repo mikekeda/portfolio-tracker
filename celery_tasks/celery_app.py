@@ -122,4 +122,14 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=5),
         "args": (),
     },
+    # LLM position reviews: Daily at 6 AM UTC, after every nightly data job
+    # (PE 2:00, pies 3:00, earnings 4:00/4:30, transactions 5:00) so reviews see
+    # the freshest inputs. Hash-gated — quiet days cost zero LLM calls; a review
+    # regenerates only when thesis, rule/band state, fundamentals, latest
+    # earnings, or the macro regime changed.
+    "run_position_reviews_nightly": {
+        "task": "celery_tasks.tasks.run_position_reviews_task",
+        "schedule": crontab(minute=0, hour=6),
+        "args": (),
+    },
 }

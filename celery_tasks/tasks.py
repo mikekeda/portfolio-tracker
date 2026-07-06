@@ -6,6 +6,7 @@ from scripts.get_earnings_reports import get_earnings_reports
 from scripts.get_uk_earnings_reports import get_uk_earnings_reports
 from scripts.scrape_13f import main as scrape_13f_main
 from scripts.scrape_wisesheets_pe import update_pe_data
+from scripts.run_position_review import run_position_reviews
 from scripts.update_data import update_data
 from scripts.update_market_metrics import update_market_metrics
 from scripts.update_pies import update_pies
@@ -75,6 +76,17 @@ def scrape_13f_task():
     The script fetches only missing quarters, so this is a no-op when already up to date.
     """
     scrape_13f_main()
+
+
+@app.task
+def run_position_reviews_task():
+    """Generate LLM position reviews for held instruments with a thesis.
+
+    Hash-gated: a review regenerates only when its slow-moving inputs changed
+    (thesis, rule/band state, fundamentals, latest earnings, macro regime) —
+    quiet days cost zero LLM calls. See scripts/run_position_review.py.
+    """
+    asyncio.run(run_position_reviews())
 
 
 @app.task
