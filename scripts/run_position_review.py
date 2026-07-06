@@ -1,0 +1,147 @@
+"""
+scripts/run_position_review.py
+==============================
+Generate (or refresh) LLM position reviews for held instruments with a thesis.
+
+Skips instruments whose context hash matches the latest row. Run from project root:
+
+    python scripts/run_position_review.py
+"""
+
+import asyncio
+
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+
+from backend.app import get_session
+from backend.schemas.instrument_thesis import InstrumentThesisSchema
+from backend.utils.position_review import (
+    MODEL,
+    build_context,
+    generate_assessment,
+    hash_context,
+)
+from backend.views.portfolio import get_current_portfolio
+from config import logger
+from models import Instrument, MarketMetricsDaily, PositionReview
+
+
+async def run_position_reviews() -> None:
+    """Generate position reviews for held instruments; skip unchanged inputs."""
+    async with get_session() as session:
+        portfolio = await get_current_portfolio(session=session, show_all=False)
+        holdings = [h for h in portfolio["holdings"] if h["quantity"] > 0]
+        if not holdings:
+            logger.info("Position-review: no held instruments to assess")
+            return
+
+        symbols = [h["yahoo_symbol"] for h in holdings]
+        logger.info("Position-review: starting for %d held instruments", len(holdings))
+
+        rows = await session.execute(
+            select(Instrument)
+            .where(Instrument.yahoo_symbol.in_(symbols))
+            .options(
+                selectinload(Instrument.yahoo),
+                selectinload(Instrument.earnings_reports),
+            )
+        )
+        by_symbol: dict[str, Instrument] = {inst.yahoo_symbol: inst for inst in rows.scalars().all()}
+
+        macro_row = (
+            await session.execute(
+                select(MarketMetricsDaily).order_by(MarketMetricsDaily.date.desc()).limit(1)
+            )
+        ).scalar_one_or_none()
+
+        processed = 0
+        skipped_unchanged = 0
+        skipped_invalid_thesis = 0
+        skipped_no_thesis = 0
+        saved = 0
+
+        for h in holdings:
+            sym = h["yahoo_symbol"]
+            instrument = by_symbol[sym]
+
+            if not instrument.thesis:
+                skipped_no_thesis += 1
+                processed += 1
+                continue
+
+            try:
+                thesis = InstrumentThesisSchema.model_validate(instrument.thesis)
+            except ValidationError as e:
+                logger.warning("[skip] %s — thesis JSONB invalid: %s", sym, e.errors())
+                skipped_invalid_thesis += 1
+                processed += 1
+                continue
+
+            try:
+                ctx = build_context(holding=h, instrument=instrument, thesis=thesis, macro=macro_row)
+                inputs_hash = hash_context(ctx)
+
+                latest = (
+                    await session.execute(
+                        select(PositionReview)
+                        .where(PositionReview.instrument_id == instrument.id)
+                        .order_by(PositionReview.created_at.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+
+                if latest and latest.inputs_hash == inputs_hash:
+                    logger.info("[skip] %s — inputs unchanged since %s", sym, latest.created_at.isoformat())
+                    skipped_unchanged += 1
+                    processed += 1
+                    continue
+
+                payload = generate_assessment(ctx, ticker=sym)
+                if payload is None:
+                    logger.warning("[skip] %s — Gemini call failed", sym)
+                    processed += 1
+                    continue
+
+                session.add(PositionReview(
+                    instrument_id=instrument.id,
+                    model=MODEL,
+                    inputs_hash=inputs_hash,
+                    payload=payload,
+                    summary=payload["rationale"],
+                ))
+                await session.commit()
+                saved += 1
+
+                logger.info(
+                    "[saved] %s | action=%s strength=%s thesis=%s confidence=%.2f",
+                    sym,
+                    payload["position_action"],
+                    payload["signal_strength"],
+                    payload["thesis_status"],
+                    payload["confidence"],
+                )
+
+            except Exception:
+                logger.exception("Position-review failed for %s", sym)
+                await session.rollback()
+
+            processed += 1
+
+        logger.info(
+            "Position-review complete: %d processed | %d saved | %d skipped (unchanged) | "
+            "%d skipped (invalid thesis) | %d skipped (no thesis)",
+            processed,
+            saved,
+            skipped_unchanged,
+            skipped_invalid_thesis,
+            skipped_no_thesis,
+        )
+
+
+def main() -> None:
+    asyncio.run(run_position_reviews())
+
+
+if __name__ == "__main__":
+    main()
