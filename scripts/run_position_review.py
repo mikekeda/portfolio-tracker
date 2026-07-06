@@ -61,6 +61,11 @@ async def run_position_reviews() -> None:
         skipped_no_thesis = 0
         saved = 0
 
+        # Phase 1 — read everything out of ORM state up front. Phase 2 must not
+        # touch ORM instances: a rollback there expires them, and lazy-reloading
+        # an expired attribute inside the async session raises MissingGreenlet,
+        # killing the whole run instead of skipping one instrument.
+        review_inputs: list[tuple[str, int, dict, str]] = []
         for h in holdings:
             sym = h["yahoo_symbol"]
             instrument = by_symbol[sym]
@@ -78,14 +83,16 @@ async def run_position_reviews() -> None:
                 processed += 1
                 continue
 
-            try:
-                ctx = build_context(holding=h, instrument=instrument, thesis=thesis, macro=macro_row)
-                inputs_hash = hash_context(ctx)
+            ctx = build_context(holding=h, instrument=instrument, thesis=thesis, macro=macro_row)
+            review_inputs.append((sym, instrument.id, ctx, hash_context(ctx)))
 
+        # Phase 2 — LLM calls and inserts, plain data only.
+        for sym, instrument_id, ctx, inputs_hash in review_inputs:
+            try:
                 latest = (
                     await session.execute(
                         select(PositionReview)
-                        .where(PositionReview.instrument_id == instrument.id)
+                        .where(PositionReview.instrument_id == instrument_id)
                         .order_by(PositionReview.created_at.desc())
                         .limit(1)
                     )
@@ -104,7 +111,7 @@ async def run_position_reviews() -> None:
                     continue
 
                 session.add(PositionReview(
-                    instrument_id=instrument.id,
+                    instrument_id=instrument_id,
                     model=MODEL,
                     inputs_hash=inputs_hash,
                     payload=payload,

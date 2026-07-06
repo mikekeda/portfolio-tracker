@@ -625,7 +625,7 @@ class PositionReview(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
 
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="position_reviews")
 
