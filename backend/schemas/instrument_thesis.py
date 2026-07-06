@@ -1,5 +1,6 @@
 """User-authored thesis JSON stored on Instrument.thesis (JSONB)."""
 
+from datetime import date
 from typing import Any, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -85,6 +86,10 @@ class InstrumentThesisSchema(BaseModel):
     sell_triggers: list[str] = Field(default_factory=list)
     horizon_years: int = Field(ge=1, le=100)
     conviction: ThesisConviction | None = None
+    authored_on: date = Field(
+        None,
+        description="When the thesis was written or last materially revised"
+    )
 
     @model_validator(mode="after")
     def target_weight_band_ordered(self) -> "InstrumentThesisSchema":

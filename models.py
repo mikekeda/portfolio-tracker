@@ -43,6 +43,8 @@ InstrumentTag = Literal[
     "growth",
     "speculative",
     "EU",
+    "etf",
+    "commodity",
 ]
 
 
@@ -68,6 +70,7 @@ class InstrumentThesisTypedDict(TypedDict, total=False):
     sell_triggers: list[str]
     horizon_years: int
     conviction: ThesisConviction | None
+    authored_on: str  # ISO date — when the thesis was written or last materially revised
 
 
 class TransactionAction(enum.Enum):
@@ -177,6 +180,8 @@ class Instrument(Base):
     form13f_holdings: Mapped[list["Form13FHolding"]] = relationship(
         "Form13FHolding", back_populates="instrument"
     )
+    # LLM position review snapshots
+    position_reviews: Mapped[list["PositionReview"]] = relationship(back_populates="instrument")
 
     def __repr__(self) -> str:
         return f"<Instrument(t212_code='{self.t212_code}', name='{self.name}')>"
@@ -604,6 +609,30 @@ class EarningsReport(Base):
 
     def __repr__(self) -> str:
         return f"<EarningsReport(instrument_id={self.instrument_id}, date='{self.date}')>"
+
+
+class PositionReview(Base):
+    """LLM position-review snapshot for a held instrument (scripts/run_position_review.py)."""
+
+    __tablename__ = "position_reviews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(50), nullable=False)
+    # sha256 of the rounded context JSON — identical inputs skip regeneration
+    inputs_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Full validated PositionAssessmentSchema output
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(TIMEZONE))
+
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="position_reviews")
+
+    __table_args__ = (Index("idx_position_reviews_instrument_created", "instrument_id", "created_at"),)
+
+    def __repr__(self) -> str:
+        return f"<PositionReview(instrument_id={self.instrument_id}, created_at='{self.created_at}')>"
 
 
 # ─── Form 13F (Institutional Holdings) ──────────────────────────────────────
