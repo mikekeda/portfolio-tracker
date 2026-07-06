@@ -358,9 +358,54 @@ def _round_floats(obj: Any, decimals: int = 2) -> Any:
     return obj
 
 
+def _slow_inputs(ctx: dict) -> dict:
+    """Subset of the context whose change warrants a fresh review.
+
+    Deliberately excludes price-driven noise — position value, technicals,
+    valuation prints, raw macro — which would re-review every holding every
+    day. Numeric conditions the investor cares about still bust the cache via
+    the rule state the moment a rule fires or clears.
+    """
+    # market_cap and free_cashflow_yield move with the share price daily
+    fundamentals = {
+        k: v
+        for k, v in ctx["fundamentals"].items()
+        if k not in ("market_cap", "total_revenue", "free_cashflow_yield")
+    }
+    rule_eval = ctx["thesis_rule_eval"]
+    macro = ctx["macro"]
+    fg = macro.get("fear_greed_index")
+    vix = macro.get("vix")
+    return {
+        "ticker": ctx["ticker"],
+        "thesis": ctx["thesis"],
+        "rule_state": {
+            # descriptions only: eval reason strings embed live prices/percentages
+            "buy_rules_met": sorted(r["description"] for r in rule_eval["buy_rules_met"]),
+            "sell_rules_met": sorted(r["description"] for r in rule_eval["sell_rules_met"]),
+            "allocation_status": rule_eval["allocation_status"],
+        },
+        "fundamentals": fundamentals,
+        "recent_earnings": [
+            {
+                "date": r["date"],
+                "report_type": r["report_type"],
+                "recommendation": r["investment_assessment"]["recommendation"],
+            }
+            for r in ctx["recent_earnings"]
+        ],
+        # Regime buckets, not raw prints — the contrarian reweight reacts to
+        # regime shifts (fear/neutral/greed, calm/elevated vol), not daily wiggles.
+        "macro_regime": {
+            "fear_greed": None if fg is None else ("fear" if fg <= 40 else "greed" if fg >= 60 else "neutral"),
+            "vix_elevated": None if vix is None else bool(vix >= 25),
+        },
+    }
+
+
 def hash_context(ctx: dict) -> str:
-    """sha256 of canonical JSON with floats rounded for stable skip logic."""
-    rounded = _round_floats(ctx)
+    """sha256 over the slow-moving input subset (see _slow_inputs)."""
+    rounded = _round_floats(_slow_inputs(ctx), decimals=1)
     canonical = json.dumps(rounded, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
