@@ -1444,10 +1444,13 @@ const Holdings = () => {
           const status = row.review_thesis_status;
           const tip = [
             `${label}${row.review_confidence != null ? ` · ${Math.round(row.review_confidence * 100)}% confidence` : ''}`,
-            status ? `Thesis: ${status.replace('_', ' ')}` : null,
-            row.review_signal_strength ? `Strength: ${row.review_signal_strength}` : null,
-            row.reviewed_at ? `Reviewed: ${row.reviewed_at}` : null,
-          ].filter(Boolean).join(' · ');
+            row.review_headline,
+            [
+              status ? `Thesis: ${status.replace('_', ' ')}` : null,
+              row.review_signal_strength ? `Strength: ${row.review_signal_strength}` : null,
+              row.reviewed_at ? `Reviewed: ${row.reviewed_at}` : null,
+            ].filter(Boolean).join(' · '),
+          ].filter(Boolean).join('\n');
           return (
             <span className={`review-badge rv-${action}`} title={tip}>
               {label}

@@ -1031,6 +1031,13 @@
 .review-badge.rv-exit      { background: #fee2e2; color: #991b1b; }
 .review-badge.rv-no_action { background: #f8f9fa; color: #adb5bd; }
 
+.review-headline {
+  margin: -4px 0 14px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: #212529;
+}
+
 .review-triggers {
   margin-bottom: 14px;
 }

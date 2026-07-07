@@ -99,6 +99,28 @@ RISK_FREE_RATE = 0.04  # ~4.0% — verify against current gilt yield
 # Terminal growth rate for DCF — long-run nominal GDP growth. Update if macro regime shifts.
 # Reference: https://www.imf.org/en/Publications/WEO (World Economic Outlook, long-run GDP)
 TERMINAL_GROWTH_RATE = 0.025  # 2.5%
+# Soft caps (% of portfolio) for tag-cluster exposure — advisory review triggers
+# for correlated-theme concentration, not hard limits. Tags overlap by design
+# (NVDA is semiconductor+ai+growth), so rows don't sum to 100%. Served to the
+# frontend via /api/portfolio/allocations; update as risk appetite changes.
+# growth is the declared strategy, not a risk cluster: its cap guards the ~25%
+# non-growth ballast floor (banks, defense primes, UKDV, gold), so the alarm
+# only rings when diversifiers get sold down, not when growth rallies.
+TAG_CLUSTER_SOFT_CAPS: dict[str, float] = {
+    "ai": 45,
+    "semiconductor": 35,
+    "growth": 75,
+    "defense": 20,
+    "space": 15,
+    "speculative": 20,
+    "software": 15,
+    "cloud": 20,
+    "healthcare": 12,
+    "financial": 12,
+    "EU": 30,
+    "etf": 30,
+    "commodity": 5,
+}
 # MSCI World long-run reference figures used on the Projection page (1970–present, rough expectations).
 # Nominal 8.5% / inflation ~2.5% ≈ real 6.5%. σ ~16% p.a. from monthly returns.
 # Reference: https://www.msci.com/documents/10199/178e6643-6ae6-47b9-82be-e1fc565ededb

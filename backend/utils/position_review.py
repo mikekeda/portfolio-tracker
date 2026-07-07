@@ -29,6 +29,10 @@ logging.getLogger("google_genai").setLevel(logging.WARNING)
 MODEL = "gemini-3.5-flash"
 # Near-deterministic output: assessments should not vary run-to-run.
 TEMPERATURE = 0.1
+# A valid payload is ~1-2k tokens; the cap kills runaway generations (observed:
+# a 64KB response with an invalid \uXXXX escape on PARRO.PA, 2026-07-06) while
+# leaving headroom for the model's internal thinking tokens.
+MAX_OUTPUT_TOKENS = 8192
 
 _EARNINGS_SUMMARY_MAX_CHARS = 1500
 _RECENT_EARNINGS_LIMIT = 3
@@ -79,6 +83,11 @@ class PositionAssessmentSchema(BaseModel):
     catalysts: list[str] = Field(default_factory=list)
     time_horizon_alignment: TimeHorizonAlignment
     rationale: str
+    # Generated last so it summarises completed reasoning; shown in UI tooltips.
+    headline: str = Field(
+        ...,
+        description="One line (<=140 chars): bottom-line action plus its primary driver, citing one specific number from the context",
+    )
 
 
 _PROMPT_HEADER = """\
@@ -166,6 +175,11 @@ risk flags grounded in the provided data, catalysts, the contrarian reweight
 applied, and the bottom-line action with conviction. Use **bold** for key
 numbers; cite specific values from the context (e.g. "**ROIC 28.5%**, up from
 22.1% three years ago").
+
+Finish with `headline`: ONE plain-text line (max 140 characters) stating the
+action and its single primary driver, citing one specific number from the
+context — e.g. "Add: fwd P/E 16 vs 5-yr avg 31 while revenue accelerates 18%".
+No markdown, no hedging filler.
 
 --- CONTEXT (JSON) ---
 """
@@ -358,6 +372,11 @@ def _round_floats(obj: Any, decimals: int = 2) -> Any:
     return obj
 
 
+# Bump to force portfolio-wide review regeneration on the next run (busts every
+# stored inputs_hash) after schema or prompt changes that alter the payload.
+_CONTEXT_VERSION = 2
+
+
 def _slow_inputs(ctx: dict) -> dict:
     """Subset of the context whose change warrants a fresh review.
 
@@ -377,6 +396,7 @@ def _slow_inputs(ctx: dict) -> dict:
     fg = macro.get("fear_greed_index")
     vix = macro.get("vix")
     return {
+        "context_version": _CONTEXT_VERSION,
         "ticker": ctx["ticker"],
         "thesis": ctx["thesis"],
         "rule_state": {
@@ -425,12 +445,31 @@ def generate_assessment(ctx: dict, *, ticker: str) -> dict[str, Any] | None:
             contents=prompt,
             config={
                 "temperature": TEMPERATURE,
+                "max_output_tokens": MAX_OUTPUT_TOKENS,
                 "response_mime_type": "application/json",
                 "response_json_schema": PositionAssessmentSchema.model_json_schema(),
             },
         )
 
-        result_dict = json.loads(response.text)
+        try:
+            result_dict = json.loads(response.text)
+        except json.JSONDecodeError as e:
+            # Structured output occasionally comes back malformed; one regeneration
+            # usually fixes it. A second failure falls to the outer handler and the
+            # nightly hash gate retries the instrument tomorrow.
+            logger.warning("%s: invalid JSON from Gemini (%s) — retrying once", ticker, e)
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=prompt,
+                config={
+                    "temperature": TEMPERATURE,
+                    "max_output_tokens": MAX_OUTPUT_TOKENS,
+                    "response_mime_type": "application/json",
+                    "response_json_schema": PositionAssessmentSchema.model_json_schema(),
+                },
+            )
+            result_dict = json.loads(response.text)
+
         validated = PositionAssessmentSchema.model_validate(result_dict)
         return validated.model_dump()
 

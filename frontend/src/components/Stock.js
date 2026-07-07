@@ -1889,6 +1889,8 @@ const Stock = () => {
                 </span>
               </div>
 
+              {rv.headline && <p className="review-headline">{rv.headline}</p>}
+
               <div className="earnings-metric-cards">
                 <div className={`earnings-metric-card emc-${rv.thesis_status === 'intact' ? 'beat' : rv.thesis_status === 'broken' ? 'miss' : 'inline'}`}>
                   <div className="emc-label">Thesis</div>

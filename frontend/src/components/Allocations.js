@@ -42,6 +42,37 @@ function groupPerformance(holdings, key) {
   return result;
 }
 
+/**
+ * Aggregate holdings by tag: weight vs soft cap plus P&L. Caps come from
+ * config.py TAG_CLUSTER_SOFT_CAPS via /api/portfolio/allocations — tags
+ * overlap by design, so rows do not sum to 100%.
+ */
+function groupByTag(holdings, caps) {
+  const total = holdings.reduce((s, h) => s + (h.market_value || 0), 0);
+  const groups = {};
+  for (const h of holdings) {
+    for (const tag of h.tags || []) {
+      if (!groups[tag]) groups[tag] = { value: 0, profit: 0, count: 0 };
+      groups[tag].value  += h.market_value || 0;
+      groups[tag].profit += h.profit       || 0;
+      groups[tag].count  += 1;
+    }
+  }
+  return Object.entries(groups)
+    .map(([tag, g]) => {
+      const cost = g.value - g.profit;
+      return {
+        tag,
+        weightPct: total > 0 ? (g.value / total) * 100 : 0,
+        capPct: caps[tag] ?? null,
+        returnPct: cost > 0 ? (g.profit / cost) * 100 : null,
+        pnl: g.profit,
+        count: g.count,
+      };
+    })
+    .sort((a, b) => b.weightPct - a.weightPct);
+}
+
 const fmtPct  = (v)  => v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
 const fmtPnl  = (v)  => v == null ? '—' : `${v >= 0 ? '+' : ''}£${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const fmtGBP  = (v)  => v == null ? '—' : `£${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
@@ -268,6 +299,10 @@ const Allocations = () => {
 
   const sectorPerf  = useMemo(() => groupPerformance(holdings, 'sector'),  [holdings]);
   const countryPerf = useMemo(() => groupPerformance(holdings, 'country'), [holdings]);
+  const tagRows     = useMemo(
+    () => groupByTag(holdings, allocations?.tag_soft_caps || {}),
+    [holdings, allocations],
+  );
 
   const currencyFxPnl = useMemo(() => {
     const groups = {};
@@ -528,6 +563,66 @@ const Allocations = () => {
           })()}
         </div>
       </div>
+
+      {/* ── Theme exposure (tags) vs soft caps ─────────────────────────────── */}
+      {tagRows.length > 0 && (
+        <div className="alloc-perf-panel tag-cluster-panel">
+          <div className="alloc-perf-header">
+            <h3>Theme Exposure</h3>
+            <span className="tag-cluster-note">
+              tags overlap — rows don&apos;t sum to 100% · caps are advisory review triggers
+            </span>
+          </div>
+          <table className="perf-table">
+            <thead>
+              <tr>
+                <th>Tag</th>
+                <th title="Number of holdings">Pos</th>
+                <th title="Bar shows how full the risk budget is (100% = at cap)">Weight</th>
+                <th>Soft cap</th>
+                <th>Return</th>
+                {!hideAmounts && <th>P&amp;L (£)</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {tagRows.map(row => {
+                const over = row.capPct != null && row.weightPct > row.capPct;
+                const near = row.capPct != null && !over && row.weightPct > row.capPct * 0.85;
+                const barPct = row.capPct
+                  ? Math.min(100, (row.weightPct / row.capPct) * 100)
+                  : Math.min(100, row.weightPct);
+                return (
+                  <tr key={row.tag} className={over ? 'tag-over-cap' : near ? 'tag-near-cap' : ''}>
+                    <td className="tag-name">{row.tag}</td>
+                    <td>{row.count}</td>
+                    <td>
+                      <div className="tag-weight-cell">
+                        <div className="tag-weight-bar-track">
+                          <div
+                            className={`tag-weight-bar${over ? ' over' : near ? ' near' : ''}`}
+                            style={{ width: `${barPct}%` }}
+                          />
+                        </div>
+                        <span>{row.weightPct.toFixed(1)}%</span>
+                      </div>
+                    </td>
+                    <td>
+                      {row.capPct != null ? `${row.capPct}%` : '—'}
+                      {over && <span className="tag-cap-flag">over</span>}
+                    </td>
+                    <td className={row.returnPct == null ? '' : row.returnPct >= 0 ? 'positive' : 'negative'}>
+                      {fmtPct(row.returnPct)}
+                    </td>
+                    {!hideAmounts && (
+                      <td className={row.pnl >= 0 ? 'positive' : 'negative'}>{fmtPnl(row.pnl)}</td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* ── Currency + ETF/Equity ───────────────────────────────────────────── */}
       <div className="alloc-secondary-section">

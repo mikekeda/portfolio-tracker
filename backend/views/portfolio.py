@@ -31,7 +31,7 @@ from backend.utils.screener import calculate_screener_results
 from backend.utils.thesis_rules import attach_thesis_rule_eval
 from backend.utils.technical import calculate_technical_indicators_for_symbols
 from backend.views._shared import PRICE_COLUMN, calculate_historical_trends, get_rates
-from config import BENCHES, DAYS_PER_YEAR, TIMEZONE, VIX
+from config import BENCHES, DAYS_PER_YEAR, TAG_CLUSTER_SOFT_CAPS, TIMEZONE, VIX
 from data import QUICK_RATIO_THRESHOLDS
 from models import (
     EarningsReport,
@@ -279,6 +279,8 @@ async def _get_position_reviews(session: AsyncSession, inst_ids: list[int]) -> d
             "review_thesis_status": payload["thesis_status"],
             "review_signal_strength": payload["signal_strength"],
             "review_confidence": payload["confidence"],
+            # .get: rows generated before the headline field was added lack it
+            "review_headline": payload.get("headline"),
             "reviewed_at": created_at.date().isoformat(),
         }
         for inst_id, payload, created_at in rows.all()
@@ -531,6 +533,7 @@ async def get_current_portfolio(
                         "review_thesis_status": None,
                         "review_signal_strength": None,
                         "review_confidence": None,
+                        "review_headline": None,
                         "reviewed_at": None,
                     }
                 ),
@@ -665,6 +668,7 @@ async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_sessi
         "currency_allocation": latest_snapshot.currency_allocation,
         "etf_equity_split": latest_snapshot.etf_equity_split,
         "total_value": latest_snapshot.value,
+        "tag_soft_caps": TAG_CLUSTER_SOFT_CAPS,
     }
 
 
