@@ -101,6 +101,24 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "AU0000185993": "Q4982L109",  # IREN
     "IL0011974909": "M7518J104",  # Oddity
     "MU0295S00016": "V5633W109",  # MakeMyTrip
+    # 2026-07-07 — confirmed against prod DB (existing NULL rows fixed via one-off UPDATE)
+    "IE00028FXN24": "G8267P108",  # Smurfit WestRock plc
+    "GB00BFMBMT84": "G8060N102",  # Sensata Technologies (UK plc, NYSE ST)
+    "GB00BRXH2664": "G0378L100",  # AngloGold Ashanti plc
+    "IL0011301780": "M98068105",  # Wix.com Ltd
+    "IL0011684185": "M6191J100",  # JFrog Ltd
+    "IE00BDVJJQ56": "G6700G107",  # nVent Electric plc
+    "LU0974299876": "L44385109",  # Globant S.A.
+    "IL0010824113": "M22465104",  # Check Point Software
+}
+
+# Some issuers file under multiple CUSIPs (e.g. ADR + ordinary-share lines), but the
+# dict above allows only one CUSIP per ISIN: AstraZeneca GB0009895292 already maps to
+# the ADR CUSIP 046353108, so its ordinary-share line (CUSIP G0593M107, ~$1.46B across
+# Q1'26 filings) would otherwise stay unmatched. Aliases here map additional CUSIPs to
+# the ISIN whose instrument they should resolve to.
+EXTRA_CUSIP_TO_ISIN_ALIASES: dict[str, str] = {
+    "G0593M107": "GB0009895292",  # AstraZeneca PLC ordinary shares -> same instrument as ADR line
 }
 
 
@@ -460,15 +478,23 @@ def _build_cusip_to_instrument_map(session: Session) -> dict[str, int]:
     """Build CUSIP -> instrument_id from Instrument.isin.
     All ISINs follow the same 12-char structure: 2-char country code + 9-char CUSIP + 1 check digit.
     This works for US ISINs (US + CUSIP) and non-US cross-listings (e.g. CA11271J1075 -> 11271J107
-    for Brookfield Corp BN). Keys are uppercased for case-insensitive lookup."""
+    for Brookfield Corp BN). Keys are uppercased for case-insensitive lookup.
+    EXTRA_CUSIP_TO_ISIN_ALIASES adds further CUSIPs for issuers filed under more than one
+    (e.g. ADR + ordinary-share lines)."""
     result = session.execute(select(Instrument.id, Instrument.isin).where(Instrument.isin.is_not(None)))
     mapping: dict[str, int] = {}
+    isin_to_id: dict[str, int] = {}
     for row in result.all():
         isin = (row.isin or "").strip().upper()
         if len(isin) < 11:
             continue
+        isin_to_id[isin] = row.id
         cusip = ISIN_TO_CUSIP_OVERRIDES.get(isin, isin[2:11])
         mapping[cusip.upper()] = row.id
+    for alias_cusip, alias_isin in EXTRA_CUSIP_TO_ISIN_ALIASES.items():
+        instrument_id = isin_to_id.get(alias_isin.upper())
+        if instrument_id is not None:
+            mapping[alias_cusip.upper()] = instrument_id
     return mapping
 
 
