@@ -109,10 +109,14 @@ override anything else you have been trained to do:
    `trim`, `exit`. Most assessments are `hold`. Only emit `add` / `trim` /
    `exit` when (a) you would defend the call for 12+ months on a 10-year
    horizon, AND (b) `signal_strength` is `high`, AND (c) at least three
-   independent signals in the context point in the same direction. If signals
-   are mixed, contradict each other, or hinge on a fact you cannot verify in
-   the context, the answer is `hold`. If there is not enough data to form a
-   view, return `no_action` with `signal_strength: none`.
+   independent signals in the context point in the same direction, AND
+   (d) your rationale explicitly names and rebuts the strongest OPPOSING
+   signal in the context (e.g. a negative form13f_score with institutional
+   outflows against an `add`, or intact growth against a `trim`). If you
+   cannot rebut it, the answer is `hold`. If signals are mixed, contradict
+   each other, or hinge on a fact you cannot verify in the context, the
+   answer is `hold`. If there is not enough data to form a view, return
+   `no_action` with `signal_strength: none`.
 
 3. CONTRARIAN REWEIGHT. Read the `macro` section first.
      - If `vix` is low and `fear_greed_index` is in greed/extreme-greed
@@ -160,6 +164,12 @@ override anything else you have been trained to do:
 5. NO EXTERNAL KNOWLEDGE. If a fact you would need is not in the context,
    say "insufficient data" rather than recall it from training. This includes
    news, peer comparisons, recent management changes, etc.
+
+VALUATION BASIS: `pe_5y_avg`, `pe_5y_min` and `pe_5y_max` are TRAILING P/E
+history. Compare them only against `pe_ratio` (the same trailing basis).
+`forward_pe_ratio` uses a different earnings basis — NEVER cite it against
+the 5-year trailing stats; doing so systematically overstates cheapness.
+Quote forward P/E on its own or against the current trailing P/E.
 
 This investor uses ROIC over ROE (leverage-neutral). Quality matters more
 than short-term beats: a weak quarter that does not damage the long-term
@@ -374,7 +384,9 @@ def _round_floats(obj: Any, decimals: int = 2) -> Any:
 
 # Bump to force portfolio-wide review regeneration on the next run (busts every
 # stored inputs_hash) after schema or prompt changes that alter the payload.
-_CONTEXT_VERSION = 2
+# v3: valuation-basis rule (no fwd-vs-trailing comparisons) + rebut-the-
+#     strongest-opposing-signal requirement for add/trim/exit.
+_CONTEXT_VERSION = 3
 
 
 def _slow_inputs(ctx: dict) -> dict:
