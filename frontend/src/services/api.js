@@ -196,6 +196,12 @@ export const portfolioAPI = {
     const response = await apiClient.get('/api/projection/inputs');
     return response.data;
   },
+
+  // Get HRP reference weights + risk-contribution diagnostics for the risk page
+  getRisk: async () => {
+    const response = await apiClient.get('/api/risk');
+    return response.data;
+  },
 };
 
 // Export the apiClient for use in other modules

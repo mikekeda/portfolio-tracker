@@ -89,7 +89,7 @@ const SCREENER_NORMALIZER = 50;
 const GROUP_START_COL_IDS = new Set([
   'composite_score',                 // Summary metric — framed with a separator
   'portfolio_pct',                   // Position
-  'dividend_yield',                  // Fundamentals
+  'next_1k_vol_delta_bp',            // Risk + Fundamentals
   'recommendation_mean',             // Valuation  (Rec, Rec Trend, DCF Diff, Price)
   'fifty_two_week_high_distance',    // Technical  (52WH, Short, RSI)
   'screener_score',                  // Signals
@@ -372,7 +372,7 @@ function computeComposite(h) {
 
 // Keys whose numeric values should be serialised with 2 decimal places in CSV
 const CSV_PERCENT_KEYS = new Set([
-  'portfolio_pct', 'return_pct', 'dividend_yield', 'prediction',
+  'portfolio_pct', 'return_pct', 'prediction',
   'profit_margins', 'revenue_growth',
   'roic', 'free_cashflow_yield', 'fifty_two_week_high_distance',
   'short_percent_of_float', 'dcf_diff',
@@ -437,6 +437,8 @@ const Holdings = () => {
   const [selectedStocks, setSelectedStocks] = useState(new Set());
   const [showOnlySelected, setShowOnlySelected] = useState(false);
   const [ruleRecommendations, setRuleRecommendations] = useState({ buy: [], sell: [] });
+  // yahoo_symbol -> +£1k Δvol (bp) from /api/risk (held + monitored candidates)
+  const [riskDeltas, setRiskDeltas] = useState(null);
 
   // Calculate min/max values for bar columns
   const barRanges = useMemo(() => {
@@ -515,7 +517,9 @@ const Holdings = () => {
 
   // Get filtered holdings based on screener selection and stock selection
   const filteredHoldings = useMemo(() => {
-    let result = holdings;
+    let result = riskDeltas
+      ? holdings.map(h => ({ ...h, next_1k_vol_delta_bp: riskDeltas[h.yahoo_symbol] ?? null }))
+      : holdings;
 
     // Apply screener filter
     if (selectedScreeners.length > 0) {
@@ -539,7 +543,7 @@ const Holdings = () => {
     }
 
     return result;
-  }, [holdings, selectedScreeners, selectedTags, showOnlySelected, selectedStocks]);
+  }, [holdings, riskDeltas, selectedScreeners, selectedTags, showOnlySelected, selectedStocks]);
 
   // Toggle select all based on currently filtered/visible rows
   const toggleSelectAll = useCallback(() => {
@@ -777,14 +781,18 @@ const Holdings = () => {
         enableGlobalFilter: false,
         size: 80,
       }),
-      columnHelper.accessor('dividend_yield', {
-        header: 'Div',
+      columnHelper.accessor('next_1k_vol_delta_bp', {
+        header: () => (
+          <span title="How buying £1,000 of this would change annualised portfolio volatility, in basis points (100bp = 1%). Negative (green) = diversifies the portfolio; red = concentrates risk (>15bp). Computed by the /risk model from 2y of GBP daily returns, correlations included.">
+            +£1k Δvol
+          </span>
+        ),
         cell: (info) => {
           const value = info.getValue();
-          if (value === null || value === undefined) return <span className="dividend"></span>;
-          return (
-            <span className="dividend">{value.toFixed(2)}%</span>
-          );
+          if (value === null || value === undefined) return <span className="vol-delta"></span>;
+          // Green = buying diversifies; red = materially concentrates (>15bp)
+          const className = value <= 0 ? 'positive' : value > 15 ? 'negative' : '';
+          return <span className={`vol-delta ${className}`}>{value.toFixed(1)}</span>;
         },
         enableSorting: true,
         enableGlobalFilter: false,
@@ -904,20 +912,6 @@ const Holdings = () => {
         enableSorting: true,
         enableGlobalFilter: false,
         size: 50,
-      }),
-      columnHelper.accessor('beta', {
-        header: 'Beta',
-        cell: (info) => {
-          const value = info.getValue();
-          if (value === null || value === undefined) return <span className="beta"></span>;
-          const isPositive = value < 1;
-          const isNegative = value > 2;
-          const className = isPositive ? 'positive' : isNegative ? 'negative' : '';
-          return <span className={`beta ${className}`}>{value}</span>;
-        },
-        enableSorting: true,
-        enableGlobalFilter: false,
-        size: 60,
       }),
       columnHelper.accessor('profit_margins', {
         header: 'Margins',
@@ -1663,6 +1657,26 @@ const Holdings = () => {
     fetchHoldings();
   }, [showAll]);
 
+  // Risk model join: +£1k Δvol per symbol (server-cached, so effectively free)
+  useEffect(() => {
+    portfolioAPI
+      .getRisk()
+      .then((risk) => {
+        const map = {};
+        (risk.holdings || []).forEach((h) => {
+          map[h.symbol] = h.next_1k_vol_delta_bp;
+        });
+        Object.entries(risk.candidates || {}).forEach(([symbol, bp]) => {
+          map[symbol] = bp;
+        });
+        setRiskDeltas(map);
+      })
+      .catch((err) => {
+        console.error('Error fetching risk deltas:', err);
+        setRiskDeltas({});
+      });
+  }, []);
+
   // Fetch available screeners
   useEffect(() => {
     const fetchScreeners = async () => {
@@ -1738,14 +1752,13 @@ const Holdings = () => {
       'market_value': 'Value (£)',
       'profit': 'Profit (£)',
       'return_pct': 'Return',
-      'dividend_yield': 'Div',
+      'next_1k_vol_delta_bp': '+£1k Δvol',
       'prediction': 'Pred',
       'market_cap': 'Mkt Cap',
       'peg_ratio': 'PEG',
       'pe_ratio': 'PE',
       'forward_pe_ratio': 'Fwd PE',
       'ps_ratio': 'PS',
-      'beta': 'Beta',
       'profit_margins': 'Margins',
       'revenue_growth': 'Growth',
       'roic': 'ROIC',
