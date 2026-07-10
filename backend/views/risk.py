@@ -50,6 +50,10 @@ CACHE_TTL_SECONDS = 3600
 # rendering a confidently wrong model.
 MAX_FFILL_RUN_DAYS = 5
 EXTREME_DAILY_RETURN = 0.60
+# Corrupt data (a batch backfill resuming after downtime) makes many symbols
+# "move" on the same day; a real melt-up (ETL.PA Mar 2025) is one symbol on
+# its own dates. Same-day extremes across this many symbols mean bad inputs.
+SUSPECT_SAME_DAY_SYMBOLS = 3
 # Positions with avg pairwise correlation above this move as one bet.
 GROUP_MIN_CORR = 0.5
 
@@ -136,8 +140,12 @@ def _gbp_returns(instruments: list, price_rows: list, fx_rows: list) -> tuple[pd
     return gbp_prices.pct_change(), filled
 
 
-def _data_warnings(matrix: pd.DataFrame, filled: pd.DataFrame) -> dict[str, list]:
-    """Detect stale-data artifacts inside the model window (see guard constants)."""
+def _data_warnings(matrix: pd.DataFrame, filled: pd.DataFrame) -> dict[str, Any]:
+    """Detect stale-data artifacts inside the model window (see guard constants).
+
+    severity: "high" = inputs look corrupt, the model shouldn't be trusted;
+    "info" = extreme but plausibly real single-name moves; None = clean.
+    """
     gap_lumped = []
     filled = filled.reindex(matrix.index)
     for s in matrix.columns:
@@ -154,7 +162,17 @@ def _data_warnings(matrix: pd.DataFrame, filled: pd.DataFrame) -> dict[str, list
         for (d, sym), v in extremes.items()
     ]
     extreme_returns.sort(key=lambda w: abs(w["value"]), reverse=True)
-    return {"gap_lumped": gap_lumped[:20], "extreme_returns": extreme_returns[:20]}
+
+    per_date: dict[str, int] = {}
+    for w in extreme_returns:
+        per_date[w["date"]] = per_date.get(w["date"], 0) + 1
+    if gap_lumped or max(per_date.values(), default=0) >= SUSPECT_SAME_DAY_SYMBOLS:
+        severity = "high"
+    elif extreme_returns:
+        severity = "info"
+    else:
+        severity = None
+    return {"gap_lumped": gap_lumped[:20], "extreme_returns": extreme_returns[:20], "severity": severity}
 
 
 def _candidate_vol_deltas(

@@ -171,8 +171,7 @@ const Risk = () => {
   const maskable = (v) => (hideAmounts ? MASK : formatGbp(v));
 
   const dailyMove = portfolio.annual_volatility / Math.sqrt(252);
-  const warningCount =
-    (warnings?.gap_lumped?.length || 0) + (warnings?.extreme_returns?.length || 0);
+  const severity = warnings?.severity;
 
   // Enrich rows once so sorting can use screener_score like any other column.
   const rows = holdings.map((h) => ({
@@ -205,7 +204,7 @@ const Risk = () => {
         </p>
       </div>
 
-      {warningCount > 0 && (
+      {severity === 'high' && (
         <div className="risk-warning-banner">
           <strong>Model inputs look unreliable</strong> — the numbers below are likely inflated.
           {warnings.gap_lumped.length > 0 && (
@@ -227,6 +226,16 @@ const Risk = () => {
             <code>scripts/backfill_currency_rates.py</code> and{' '}
             <code>scripts/fix_split_prices.py</code>, then restart the API.
           </div>
+        </div>
+      )}
+      {severity === 'info' && (
+        <div className="risk-info-banner">
+          Notable single-day moves in the window:{' '}
+          {warnings.extreme_returns
+            .map((w) => `${w.symbol} ${formatPct(w.value, 0)} on ${w.date}`)
+            .join(', ')}
+          . These look like genuine market events (isolated names, no data gaps) — they raise that
+          name&apos;s measured volatility, but the model is trustworthy.
         </div>
       )}
 

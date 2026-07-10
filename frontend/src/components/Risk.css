@@ -45,6 +45,17 @@
   font-size: 12px;
 }
 
+.risk-info-banner {
+  padding: 12px 18px;
+  margin-bottom: 24px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .risk-cards {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
