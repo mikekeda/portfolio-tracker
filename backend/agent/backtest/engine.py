@@ -36,7 +36,10 @@ def rebalance_schedule(dates: pd.Index, mode: str) -> set:
         return set(dates)
     if mode == "weekly":
         s = pd.Series(dates, index=dates)
-        return set(s.groupby([d.isocalendar()[:2] for d in dates]).last())
+        # One string key per date: a list of tuples would be read as multiple
+        # grouper columns, not as labels (KeyError: (2018, 1)).
+        iso_weeks = pd.Index([f"{d.isocalendar()[0]}-{d.isocalendar()[1]:02d}" for d in dates])
+        return set(s.groupby(iso_weeks).last())
     raise ValueError(f"unknown rebalance mode: {mode}")
 
 
