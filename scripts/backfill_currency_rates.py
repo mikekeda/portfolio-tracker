@@ -9,10 +9,11 @@ GBP-denominated backtests over the full prices_daily history.
 """
 
 import argparse
-from datetime import date, datetime
+from datetime import datetime
 
 import pandas as pd
 import yfinance as yf  # type: ignore[import-untyped]
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from models import CurrencyRateDaily
 from scripts.update_data import get_session
@@ -69,30 +70,6 @@ def fetch_currency_data(symbol: str, start_date: str, end_date: str, invert: boo
         return pd.Series(dtype=float)
 
 
-def store_currency_rate(session, rate_date: date, from_currency: str, to_currency: str, rate: float) -> bool:
-    """
-    Store a currency rate in the database.
-    """
-    try:
-        # Create new rate entry
-        currency_rate = CurrencyRateDaily(
-            date=rate_date,
-            from_currency=from_currency,
-            to_currency=to_currency,
-            rate=rate,
-        )
-
-        session.add(currency_rate)
-        return True
-
-    except Exception as e:
-        # If it's a duplicate key error, that's fine - just skip
-        if "duplicate key" in str(e).lower() or "unique constraint" in str(e).lower():
-            return False
-        print(f"    ❌ Error storing rate for {from_currency}/{to_currency} on {rate_date}: {e}")
-        return False
-
-
 def backfill_currency_pair(
     session,
     from_currency: str,
@@ -129,11 +106,6 @@ def backfill_currency_pair(
     print(f"  🔍 Debug: rates type: {type(rates)}")
     print(f"  🔍 Debug: rates length: {len(rates)}")
 
-    # Store rates in database
-    stored_count = 0
-    skipped_count = 0
-    processed_count = 0
-
     # If rates is a DataFrame, get the first column as a Series
     if isinstance(rates, pd.DataFrame):
         if len(rates.columns) > 0:
@@ -144,19 +116,11 @@ def backfill_currency_pair(
     else:
         rates_series = rates
 
-    print(f"  🔍 Debug: rates_series type: {type(rates_series)}")
-    print("  🔍 Debug: first 3 items from series:")
-    for i, (date_key, value) in enumerate(rates_series.items()):
-        if i >= 3:
-            break
-        print(f"    {i + 1}. Date: {date_key} (type: {type(date_key)}), Value: {value} (type: {type(value)})")
-
+    rows = []
     for rate_date, rate_value in rates_series.items():
-        processed_count += 1
-
         # Skip if rate_date is not a date (e.g., if it's the symbol name)
         if not isinstance(rate_date, (pd.Timestamp, datetime)):
-            print("    ⏭️  Skipping non-date item: {rate_date}")
+            print(f"    ⏭️  Skipping non-date item: {rate_date}")
             continue
 
         # Convert to scalar if it's a Series
@@ -167,30 +131,27 @@ def backfill_currency_pair(
             print(f"    ⏭️  Skipping invalid rate: {rate_value}")
             continue
 
-        # Convert rate_date to date object
-        if hasattr(rate_date, "date"):
-            rate_date_python = rate_date.date()
-        else:
-            # If it's already a string or other format, parse it
-            rate_date_python = pd.to_datetime(rate_date).date()
+        rows.append(
+            {
+                "date": rate_date.date(),
+                "from_currency": from_currency,
+                "to_currency": to_currency,
+                "rate": float(rate_value),
+            }
+        )
 
-        # Debug: show what we're trying to store
-        if processed_count <= 5:  # Show first 5 attempts
-            print(f"    🔍 Attempting to store: {rate_date_python} {from_currency}/{to_currency} = {rate_value}")
+    if not rows:
+        return {"fetched": len(rates), "stored": 0, "skipped": 0}
 
-        # Store in database
-        if store_currency_rate(session, rate_date_python, from_currency, to_currency, float(rate_value)):
-            stored_count += 1
-            if stored_count <= 3:  # Show first 3 successful stores
-                print(f"    ✅ Stored: {rate_date_python} {from_currency}/{to_currency} = {rate_value}")
-        else:
-            skipped_count += 1
-            if skipped_count <= 3:  # Show first 3 skips
-                print(f"    ⏭️  Skipped (exists): {rate_date_python} {from_currency}/{to_currency}")
+    # Idempotent batch insert: existing (from, to, date) rows are left untouched,
+    # so overlapping reruns are safe. session.add + try/except cannot do this —
+    # the UniqueViolation only fires at commit, killing the whole batch.
+    stmt = pg_insert(CurrencyRateDaily).values(rows).on_conflict_do_nothing(constraint="uq_currency_rate_date")
+    result = session.execute(stmt)
+    stored_count = result.rowcount
+    skipped_count = len(rows) - stored_count
 
-    print(f"  📊 Processed {processed_count} items total")
-
-    print(f"  📊 Results: {len(rates)} fetched, {stored_count} stored, {skipped_count} skipped")
+    print(f"  📊 Results: {len(rates)} fetched, {stored_count} stored, {skipped_count} skipped (already exist)")
 
     return {"fetched": len(rates), "stored": stored_count, "skipped": skipped_count}
 
