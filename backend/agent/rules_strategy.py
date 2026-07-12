@@ -96,8 +96,21 @@ class RulesStrategy:
             thesis_sell = bool(row.get("thesis_sell_fired", False))
             below_trend = bool(row.get("dist_sma200", np.nan) < 0)
             if thesis_sell or (pctl[sym] <= self.EXIT_PCTL and below_trend):
-                rationale["trigger"] = "thesis sell rule fired" if thesis_sell else "bottom decile and below 200d SMA"
+                if thesis_sell:
+                    reasons = row.get("thesis_sell_reasons") or ""
+                    rationale["trigger"] = f"thesis sell rule fired: {reasons}" if reasons else "thesis sell rule fired"
+                else:
+                    rationale["trigger"] = "bottom decile of universe and below 200d SMA"
                 intents.append(TradeIntent(sym, "exit", None, score=float(comp[sym]) - 1.0, rationale=rationale))
+                continue
+
+            # Above the thesis allocation band → trim back to the band max, not exit.
+            if bool(row.get("thesis_above_max", False)):
+                band_max = row.get("thesis_target_max", np.nan)
+                target = float(band_max) / 100.0 if not np.isnan(band_max) else w - self.STEP_WEIGHT
+                if target < w - 0.001:
+                    rationale["trigger"] = f"weight {w:.1%} above thesis band max → trim to {target:.1%}"
+                    intents.append(TradeIntent(sym, "trim", target, score=float(comp[sym]), rationale=rationale))
                 continue
 
             hrp = row.get("hrp_weight", np.nan)

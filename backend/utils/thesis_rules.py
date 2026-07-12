@@ -104,6 +104,10 @@ def evaluate_thesis_rules(
         "sell_rules_met": sell_rules_met,
         "allocation_status": allocation_status,
         "allocation_reason": allocation_reason,
+        # Band bounds so consumers (trade agent) can trim to the band instead
+        # of guessing; persisted into FeaturesDaily.thesis_rule_eval.
+        "target_weight_min_pct": thesis.target_weight_min_pct,
+        "target_weight_max_pct": thesis.target_weight_max_pct,
     }
 
 
@@ -126,6 +130,8 @@ def attach_thesis_rule_eval(
             "sell_rules_met": [],
             "allocation_status": "unknown",
             "allocation_reason": None,
+            "target_weight_min_pct": None,
+            "target_weight_max_pct": None,
         }
 
         if raw := thesis_by_symbol.get(h["yahoo_symbol"]):

@@ -16,6 +16,12 @@ const formatPct = (value, digits = 1) => {
 
 const ACTION_ORDER = { exit: 0, trim: 1, add: 2, buy: 3 };
 
+const SCORE_TOOLTIP =
+  'Composite conviction score vs the whole monitored universe (~1,000 symbols): ' +
+  'weighted z-scores of momentum, trend, relative strength, screener score and quality. ' +
+  '0 = universe average, positive = stronger, negative = weaker (roughly ±3 at the extremes). ' +
+  'Exits triggered by thesis rules can have a positive score — the rule overrides the ranking.';
+
 const Agent = () => {
   const { hideAmounts } = useHideAmounts();
   const [data, setData] = useState(null);
@@ -84,7 +90,17 @@ const Agent = () => {
         <td className="num">
           {formatPct(s.weight_before)} → {formatPct(s.weight_after)}
         </td>
-        <td className="num">{s.score != null ? s.score.toFixed(2) : '—'}</td>
+        <td className="num">
+          {s.rationale?.composite != null
+            ? s.rationale.composite.toFixed(2)
+            : s.score != null
+              ? s.score.toFixed(2)
+              : '—'}
+        </td>
+        <td className="agent-reason">
+          {s.rationale?.trigger || '—'}
+          {s.constraint_adjustments.length > 0 && <span className="agent-reason-flag"> ⚠</span>}
+        </td>
         <td>
           {s.status === 'proposed' && s.value_gbp > 0 ? (
             <span className="agent-actions" onClick={(e) => e.stopPropagation()}>
@@ -102,12 +118,12 @@ const Agent = () => {
       </tr>
       {expandedId === s.id && (
         <tr className="agent-detail-row">
-          <td colSpan={showDate ? 7 : 6}>
-            {s.rationale?.trigger && <div className="agent-detail-line">Trigger: {s.rationale.trigger}</div>}
+          <td colSpan={showDate ? 8 : 7}>
             {s.rationale?.composite != null && (
               <div className="agent-detail-line">
                 Composite score {s.rationale.composite}
-                {s.rationale.percentile != null && ` (percentile ${Math.round(s.rationale.percentile * 100)})`}
+                {s.rationale.percentile != null && ` (percentile ${Math.round(s.rationale.percentile * 100)} of universe)`}
+                {s.score != null && ` — budget priority ${s.score.toFixed(2)}`}
               </div>
             )}
             {s.constraint_adjustments.length > 0 && (
@@ -131,7 +147,12 @@ const Agent = () => {
       <th>Instrument</th>
       <th className="num">Value</th>
       <th className="num">Weight</th>
-      <th className="num">Score</th>
+      <th className="num">
+        <span className="agent-tooltip" title={SCORE_TOOLTIP}>
+          Score
+        </span>
+      </th>
+      <th>Reason</th>
       <th>Status</th>
     </tr>
   );

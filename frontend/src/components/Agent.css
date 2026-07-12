@@ -149,6 +149,21 @@
   background: #fee2e2;
 }
 
+.agent-reason {
+  color: #475569;
+  font-size: 12px;
+  max-width: 340px;
+}
+
+.agent-reason-flag {
+  color: #92400e;
+}
+
+.agent-tooltip {
+  cursor: help;
+  border-bottom: 1px dotted #94a3b8;
+}
+
 .agent-detail-row td {
   background: #f8fafc;
   font-size: 12px;

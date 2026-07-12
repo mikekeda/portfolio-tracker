@@ -164,8 +164,15 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
         for col in FUNDAMENTAL_COLUMNS:
             rec[col] = getattr(f, col)
         eval_ = f.thesis_rule_eval or {}
-        rec["thesis_sell_fired"] = bool(eval_.get("sell_signal"))
-        rec["thesis_buy_fired"] = bool(eval_.get("buy_signal"))
+        # sell_signal conflates "a sell rule fired" with "above allocation band";
+        # the strategy exits on the former but only trims to the band on the latter.
+        rec["thesis_sell_fired"] = bool(eval_.get("sell_rules_met"))
+        rec["thesis_buy_fired"] = bool(eval_.get("buy_rules_met"))
+        rec["thesis_above_max"] = eval_.get("allocation_status") == "above_max"
+        rec["thesis_target_max"] = eval_.get("target_weight_max_pct")  # percent or None
+        rec["thesis_sell_reasons"] = "; ".join(
+            r.get("description") or r.get("reason", "") for r in (eval_.get("sell_rules_met") or [])
+        )
         records.append(rec)
     fundamentals = pd.DataFrame(records)
     if not fundamentals.empty:
@@ -246,9 +253,11 @@ def features_for_date(
     out = cross.join(latest.reindex(universe))
     # Boolean flags must never be NaN: bool(NaN) is True, and a missing thesis
     # evaluation must read as "no signal", not as a fired sell rule.
-    for col in ("thesis_sell_fired", "thesis_buy_fired"):
+    for col in ("thesis_sell_fired", "thesis_buy_fired", "thesis_above_max"):
         if col in out.columns:
             out[col] = out[col].fillna(False).astype(bool)
+    if "thesis_sell_reasons" in out.columns:
+        out["thesis_sell_reasons"] = out["thesis_sell_reasons"].fillna("")
     return out
 
 
