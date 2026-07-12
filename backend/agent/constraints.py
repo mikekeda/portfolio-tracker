@@ -38,7 +38,7 @@ def _cluster_headroom_gbp(
     return headroom, binding_tag
 
 
-def _veto(intent: TradeIntent, weight: float, reason: str) -> TradeOrder:
+def _veto(intent: TradeIntent, weight: float, reason: str, prior: list[str] | None = None) -> TradeOrder:
     return TradeOrder(
         symbol=intent.symbol,
         action=intent.action,
@@ -49,7 +49,7 @@ def _veto(intent: TradeIntent, weight: float, reason: str) -> TradeOrder:
         score=intent.score,
         fee_gbp=0.0,
         rationale=intent.rationale,
-        adjustments=(reason,),
+        adjustments=tuple(prior or ()) + (reason,),
     )
 
 
@@ -108,14 +108,14 @@ def apply_constraints(
         if value > turnover_left:
             adjustments.append(f"clipped by turnover budget: wanted £{value:.0f}, allowed £{turnover_left:.0f}")
             value = turnover_left
+        if value <= 0:
+            orders.append(_veto(intent, w, "vetoed: daily turnover budget already spent", adjustments))
+            continue
         # A full exit may fall below min trade size — the position itself is
         # small and blocking it would strand dust positions forever.
         is_full_exit = intent.action == "exit" and value >= position_value
         if value < limits.min_trade_gbp and not is_full_exit:
-            orders.append(_veto(intent, w, f"vetoed: £{value:.0f} below min trade size after clipping"))
-            continue
-        if value <= 0:
-            orders.append(_veto(intent, w, "vetoed: turnover budget exhausted"))
+            orders.append(_veto(intent, w, f"vetoed: £{value:.0f} below min trade size after clipping", adjustments))
             continue
 
         quantity = state.quantities[intent.symbol] if is_full_exit else value / prices_gbp[intent.symbol]
@@ -180,9 +180,12 @@ def apply_constraints(
         if value > turnover_left:
             adjustments.append(f"clipped by turnover budget: wanted £{value:.0f}, allowed £{turnover_left:.0f}")
             value = turnover_left
+        if value <= 0:
+            orders.append(_veto(intent, w, "vetoed: no cash or turnover budget left", adjustments))
+            continue
 
         if value < limits.min_trade_gbp:
-            orders.append(_veto(intent, w, f"vetoed: £{value:.0f} below min trade size after clipping"))
+            orders.append(_veto(intent, w, f"vetoed: £{value:.0f} below min trade size after clipping", adjustments))
             continue
 
         fee = value * fee_rate

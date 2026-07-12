@@ -223,18 +223,33 @@ def tradable_universe(md: MarketData, d: date) -> list[str]:
     return sorted(md.gbp_prices.columns[priced & enough_history])
 
 
-def features_for_date(md: MarketData, d: date, universe: list[str]) -> pd.DataFrame:
-    """One row per symbol: technicals at d + freshest fundamentals dated ≤ d."""
+def features_for_date(
+    md: MarketData, d: date, universe: list[str], fundamentals_as_of: date | None = None
+) -> pd.DataFrame:
+    """One row per symbol: technicals at d + freshest fundamentals.
+
+    Fundamentals are as-of `d` by default (strict point-in-time for backtests).
+    The live runner passes `fundamentals_as_of=today`: its decision date is the
+    last *trading* day, but a suggestion executed tomorrow may legitimately use
+    a feature snapshot taken over the weekend.
+    """
     cross = pd.DataFrame({name: matrix.loc[d].reindex(universe) for name, matrix in md.technicals.items()})
 
     if md.fundamentals.empty:
         return cross
 
-    fresh_cutoff = d - timedelta(days=FUNDAMENTAL_STALENESS_DAYS)
-    window = md.fundamentals[(md.fundamentals["date"] <= d) & (md.fundamentals["date"] >= fresh_cutoff)]
-    assert window.empty or window["date"].max() <= d, "fundamental row dated after decision date"
+    as_of = fundamentals_as_of or d
+    fresh_cutoff = as_of - timedelta(days=FUNDAMENTAL_STALENESS_DAYS)
+    window = md.fundamentals[(md.fundamentals["date"] <= as_of) & (md.fundamentals["date"] >= fresh_cutoff)]
+    assert window.empty or window["date"].max() <= as_of, "fundamental row dated after decision date"
     latest = window.groupby("symbol").tail(1).set_index("symbol").drop(columns=["date"])
-    return cross.join(latest.reindex(universe))
+    out = cross.join(latest.reindex(universe))
+    # Boolean flags must never be NaN: bool(NaN) is True, and a missing thesis
+    # evaluation must read as "no signal", not as a fired sell rule.
+    for col in ("thesis_sell_fired", "thesis_buy_fired"):
+        if col in out.columns:
+            out[col] = out[col].fillna(False).astype(bool)
+    return out
 
 
 def risk_columns(md: MarketData, d: date, weights: dict[str, float]) -> pd.DataFrame:

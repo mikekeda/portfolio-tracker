@@ -14,7 +14,7 @@ into trade_suggestions. Run from project root:
 import asyncio
 from datetime import date, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.agent.backtest.data import features_for_date, load_market_data, risk_columns, tradable_universe
@@ -61,7 +61,9 @@ async def run_trade_agent() -> None:
         weights = {s: v / total_value for s, v in values.items()}
 
         universe = tradable_universe(md, d)
-        features = features_for_date(md, d, universe).join(risk_columns(md, d, weights))
+        features = features_for_date(md, d, universe, fundamentals_as_of=date.today()).join(
+            risk_columns(md, d, weights)
+        )
         state = PortfolioState(
             date=d,
             total_value_gbp=total_value,
@@ -101,6 +103,15 @@ async def run_trade_agent() -> None:
             }
             for o in orders
         ]
+        # A rerun replaces this batch: drop rows the new run no longer proposes,
+        # but keep anything the user already accepted or dismissed.
+        await session.execute(
+            delete(TradeSuggestion).where(
+                TradeSuggestion.date == d,
+                TradeSuggestion.strategy == strategy.name,
+                TradeSuggestion.status == "proposed",
+            )
+        )
         stmt = pg_insert(TradeSuggestion).values(rows)
         update_cols = {
             c.name: getattr(stmt.excluded, c.name)
