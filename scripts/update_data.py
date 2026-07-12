@@ -17,6 +17,7 @@ from typing import Any, Generator, Literal, Optional, TypeAlias, TypedDict, Unio
 import numpy as np
 import pandas as pd
 import requests
+from curl_cffi import CurlError
 import yfinance as yf  # type: ignore[import-untyped]
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import case, create_engine, or_, select
@@ -730,6 +731,9 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
             # ETFs don't have earnings
             yahoo_data["earnings"] = {}
         else:
+            # Yahoo occasionally lists the same earnings timestamp twice (e.g. AGN.AS)
+            # and orient="index" requires a unique index.
+            data = data[~data.index.duplicated(keep="first")]
             yahoo_data["earnings"] = scrub_for_json(data.to_dict(orient="index"))
 
         data = ticker.recommendations.to_dict(orient="index")
@@ -749,6 +753,11 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
         yahoo_data["news"] = ticker.get_news()
     except (ValueError, AttributeError) as e:
         logger.warning("Problem with parsing DataFrame %s: %s", ticker.ticker, e)
+    except CurlError as e:
+        # Yahoo throttles/times out sporadically; return the partial profile so one
+        # slow symbol doesn't abort the whole batch (the consumer keeps cached blobs
+        # for the missing pieces and the refresh queue retries next run).
+        logger.warning("Network error fetching %s: %s", ticker.ticker, e)
 
     return ticker.ticker, yahoo_data
 
