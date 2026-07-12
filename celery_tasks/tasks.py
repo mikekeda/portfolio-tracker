@@ -7,7 +7,9 @@ from scripts.get_uk_earnings_reports import get_uk_earnings_reports
 from scripts.scrape_13f import main as scrape_13f_main
 from scripts.scrape_wisesheets_pe import update_pe_data
 from scripts.run_position_review import run_position_reviews
+from scripts.run_trade_agent import run_trade_agent
 from scripts.update_data import update_data
+from scripts.update_features import update_features
 from scripts.update_market_metrics import update_market_metrics
 from scripts.update_pies import update_pies
 from scripts.sync_transactions import sync_transactions
@@ -87,6 +89,27 @@ def run_position_reviews_task():
     quiet days cost zero LLM calls. See scripts/run_position_review.py.
     """
     asyncio.run(run_position_reviews())
+
+
+@app.task
+def run_trade_agent_task():
+    """Generate today's trade suggestions (suggest-only) into trade_suggestions.
+
+    Runs the rules strategy through the deterministic constraint layer; results
+    surface on the /agent page where the user accepts or dismisses them.
+    """
+    asyncio.run(run_trade_agent())
+
+
+@app.task
+def update_features_task():
+    """Persist today's point-in-time feature snapshot for every monitored instrument.
+
+    Captures the derived features (screener score, ROIC, DCF, thesis-rule state)
+    that otherwise only exist in the overwritten InstrumentYahoo cache, building
+    the historical series the trade-suggestion agent trains and backtests on.
+    """
+    asyncio.run(update_features())
 
 
 @app.task

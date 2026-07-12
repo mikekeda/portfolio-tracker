@@ -122,6 +122,23 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=5),
         "args": (),
     },
+    # Trade-suggestion agent: Daily at 7 AM UTC, after the nightly data jobs and
+    # the 6:00 position reviews, so suggestions are on the /agent page before
+    # the London open (8:00 UTC in summer). Suggest-only — nothing executes.
+    "run_trade_agent_daily": {
+        "task": "celery_tasks.tasks.run_trade_agent_task",
+        "schedule": crontab(minute=0, hour=7),
+        "args": (),
+    },
+    # Point-in-time feature snapshot: Daily at 22:30 UTC, 30 min after the last
+    # weekday update_data run (22:00), so screener/DCF/thesis features are
+    # captured from a Yahoo cache that reflects the US close. Idempotent upsert
+    # by (instrument, date) — a re-run the same day just refreshes the row.
+    "update_features_nightly": {
+        "task": "celery_tasks.tasks.update_features_task",
+        "schedule": crontab(minute=30, hour=22),
+        "args": (),
+    },
     # LLM position reviews: Daily at 6 AM UTC, after every nightly data job
     # (PE 2:00, pies 3:00, earnings 4:00/4:30, transactions 5:00) so reviews see
     # the freshest inputs. Hash-gated — quiet days cost zero LLM calls; a review

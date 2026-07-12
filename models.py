@@ -182,6 +182,10 @@ class Instrument(Base):
     )
     # LLM position review snapshots
     position_reviews: Mapped[list["PositionReview"]] = relationship(back_populates="instrument")
+    # Daily point-in-time feature snapshots (trade-suggestion agent / ML training)
+    features: Mapped[list["FeaturesDaily"]] = relationship(back_populates="instrument")
+    # Daily agent trade suggestions
+    trade_suggestions: Mapped[list["TradeSuggestion"]] = relationship(back_populates="instrument")
 
     def __repr__(self) -> str:
         return f"<Instrument(t212_code='{self.t212_code}', name='{self.name}')>"
@@ -318,6 +322,67 @@ class InstrumentMetricsDaily(Base):
 
     def __repr__(self) -> str:
         return f"<InstrumentMetricsDaily(instrument_id={self.instrument_id}, date='{self.date}')>"
+
+
+class FeaturesDaily(Base):
+    """Daily point-in-time feature snapshot per instrument (scripts/update_features.py).
+
+    Persists the derived, model-ready features that otherwise exist only in the
+    overwritten InstrumentYahoo cache or are computed at request time, so the
+    trade-suggestion agent can be backtested and an ML ranker trained on them.
+    """
+
+    __tablename__ = "features_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
+    # Quality / fundamentals (percent units where the source is a ratio)
+    roic: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    gross_margin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    operating_margin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    profit_margin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    revenue_growth: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fcf_yield: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    debt_to_equity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    short_percent_float: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Analyst sentiment
+    analyst_rec_mean: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    analyst_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    analyst_target_upside: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # % to median target
+
+    # Valuation
+    forward_pe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    peg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ps_ratio: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    pe_5y_avg_vs_current_pct: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    dcf_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    dcf_diff: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    dcf_implied_growth: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # Composites
+    rule_of_40: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    f_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    screener_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    passed_screeners: Mapped[Optional[list[str]]] = mapped_column(JSONB, nullable=True)
+    thesis_rule_eval: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    # Spillover for new features without a migration
+    extras: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("instrument_id", "date", name="uq_features_instrument_date"),
+        Index("idx_features_instrument_date", "instrument_id", "date"),
+    )
+
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="features")
+
+    def __repr__(self) -> str:
+        return f"<FeaturesDaily(instrument_id={self.instrument_id}, date='{self.date}')>"
 
 
 class CurrencyRateDaily(Base):
@@ -633,6 +698,41 @@ class PositionReview(Base):
 
     def __repr__(self) -> str:
         return f"<PositionReview(instrument_id={self.instrument_id}, created_at='{self.created_at}')>"
+
+
+class TradeSuggestion(Base):
+    """Daily agent trade suggestion (scripts/run_trade_agent.py) — suggest-only.
+
+    value_gbp == 0 rows are vetoed intents kept for transparency; the
+    constraint_adjustments field explains what blocked or clipped the trade.
+    `status` records the user's decision and doubles as a future ML label.
+    """
+
+    __tablename__ = "trade_suggestions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False, index=True)
+    strategy: Mapped[str] = mapped_column(String(30), nullable=False)
+    action: Mapped[str] = mapped_column(String(10), nullable=False)  # buy | add | trim | exit
+    quantity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    value_gbp: Mapped[float] = mapped_column(Float, nullable=False)
+    weight_before: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    weight_after: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fee_gbp: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rationale: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    constraint_adjustments: Mapped[Optional[list[str]]] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default="proposed")  # proposed | accepted | dismissed
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now())
+
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="trade_suggestions")
+
+    __table_args__ = (UniqueConstraint("date", "instrument_id", "strategy", name="uq_suggestion_date_instrument_strategy"),)
+
+    def __repr__(self) -> str:
+        return f"<TradeSuggestion(date='{self.date}', instrument_id={self.instrument_id}, action='{self.action}')>"
 
 
 # ─── Form 13F (Institutional Holdings) ──────────────────────────────────────
