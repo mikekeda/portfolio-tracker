@@ -202,6 +202,28 @@ export const portfolioAPI = {
     const response = await apiClient.get('/api/risk');
     return response.data;
   },
+
+  // Get trade-agent suggestions for one day (default: latest available)
+  getAgentSuggestions: async (forDate = null) => {
+    let url = '/api/agent/suggestions';
+    if (forDate) {
+      url += `?for_date=${forDate}`;
+    }
+    const response = await apiClient.get(url);
+    return response.data;
+  },
+
+  // Get trade-agent suggestion history over the trailing N days
+  getAgentSuggestionsHistory: async (days = 30) => {
+    const response = await apiClient.get(`/api/agent/suggestions/history?days=${days}`);
+    return response.data;
+  },
+
+  // Record accept/dismiss decision on a trade suggestion
+  setAgentSuggestionStatus: async (id, status) => {
+    const response = await apiClient.post(`/api/agent/suggestions/${id}/status`, { status });
+    return response.data;
+  },
 };
 
 // Export the apiClient for use in other modules

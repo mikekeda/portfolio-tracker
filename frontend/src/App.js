@@ -14,6 +14,7 @@ import EarningsCalendar from './components/EarningsCalendar';
 import Transactions from './components/Transactions';
 import Projection from './components/Projection';
 import Risk from './components/Risk';
+import Agent from './components/Agent';
 import './App.css';
 
 const RELOAD_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes — reload stale tabs on visibility
@@ -59,6 +60,7 @@ function AppContent() {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/projection" element={<Projection />} />
           <Route path="/risk" element={<Risk />} />
+          <Route path="/agent" element={<Agent />} />
         </Routes>
       </main>
     </div>
