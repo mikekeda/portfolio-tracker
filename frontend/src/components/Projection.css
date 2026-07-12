@@ -62,7 +62,8 @@
   margin-bottom: 16px;
 }
 
-.assumption > label {
+.assumption > label,
+.assumption > .assumption-label {
   display: block;
   margin-bottom: 6px;
   font-size: 12px;
@@ -126,6 +127,21 @@ label.assumption-inline input[type="checkbox"] {
   margin-top: 6px;
   font-size: 12px;
   color: #6b7280;
+}
+
+.input-reset {
+  padding: 0;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #6b7280;
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.input-reset:hover {
+  color: #374151;
 }
 
 .segmented {
@@ -223,6 +239,12 @@ label.assumption-inline input[type="checkbox"] {
   color: #111827;
 }
 
+.card h2 .muted-note {
+  font-size: 12px;
+  font-weight: 400;
+  color: #9ca3af;
+}
+
 .chart-header {
   display: flex;
   flex-wrap: wrap;
@@ -315,11 +337,59 @@ label.assumption-inline input[type="checkbox"] {
   color: #1d4ed8;
 }
 
+.goal-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.goal-header h2 {
+  margin: 0;
+}
+
+.goal-mode {
+  flex: 0 0 auto;
+  width: 240px;
+}
+
 .goal-inputs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.goal-implied {
+  margin: -4px 0 16px;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.goal-implied strong {
+  color: #111827;
+}
+
+.goal-extend {
+  margin: -4px 0 16px;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.link-button {
+  padding: 0;
+  font-size: 13px;
+  color: #1d4ed8;
+  text-decoration: underline;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.link-button:hover {
+  color: #1e40af;
 }
 
 .goal-inputs label {
@@ -341,7 +411,7 @@ label.assumption-inline input[type="checkbox"] {
 
 .goal-outputs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 16px;
 }
 
@@ -365,6 +435,18 @@ label.assumption-inline input[type="checkbox"] {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: #111827;
+}
+
+.goal-value.prob-good {
+  color: #059669;
+}
+
+.goal-value.prob-mid {
+  color: #d97706;
+}
+
+.goal-value.prob-poor {
+  color: #dc2626;
 }
 
 .goal-note {
