@@ -11,6 +11,7 @@ and upserts one FeaturesDaily row per instrument. Run nightly from project root:
 """
 
 import asyncio
+import math
 from datetime import datetime
 
 from sqlalchemy import select
@@ -23,7 +24,10 @@ from models import FeaturesDaily, Instrument, InstrumentYahoo
 
 
 def _num(value) -> float | None:
-    return float(value) if isinstance(value, (int, float)) else None
+    """Float or None; NaN/inf become None so they store as NULL, not 'NaN'::float8."""
+    if isinstance(value, (int, float)) and math.isfinite(value):
+        return float(value)
+    return None
 
 
 def _row_from_holding(h: dict, instrument_id: int, margins: dict) -> dict:
@@ -54,7 +58,8 @@ def _row_from_holding(h: dict, instrument_id: int, margins: dict) -> dict:
         "passed_screeners": h.get("passedScreeners") or [],
         "thesis_rule_eval": h.get("thesis_rule_eval"),
         "extras": None,
-        "updated_at": datetime.now(TIMEZONE),
+        # Column is timestamp without time zone; asyncpg rejects aware datetimes
+        "updated_at": datetime.now(TIMEZONE).replace(tzinfo=None),
     }
 
 
