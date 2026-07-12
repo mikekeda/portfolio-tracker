@@ -2,10 +2,13 @@
 Backfill CurrencyRateDaily with historical currency rates.
 
 This script fetches historical exchange rates for USD/GBP, EUR/GBP, and CAD/GBP
-from April 18, 2024 to October 11, 2025 using Yahoo Finance, and stores them
-in the CurrencyRateDaily table.
+using Yahoo Finance and stores them in the CurrencyRateDaily table.
+Date range is configurable via --start/--end (defaults preserve the original
+2024-04-18 → 2025-08-29 behaviour); pass --start 2015-01-01 to unlock
+GBP-denominated backtests over the full prices_daily history.
 """
 
+import argparse
 from datetime import date, datetime
 
 import pandas as pd
@@ -194,14 +197,18 @@ def backfill_currency_pair(
 
 def main():
     """Main function to backfill currency rates."""
+    parser = argparse.ArgumentParser(description="Backfill CurrencyRateDaily from Yahoo Finance")
+    parser.add_argument("--start", default="2024-04-18", help="Start date YYYY-MM-DD")
+    parser.add_argument("--end", default="2025-08-29", help="End date YYYY-MM-DD")
+    args = parser.parse_args()
+
     print("=" * 80)
     print("CURRENCY RATE BACKFILL SCRIPT")
     print("=" * 80)
     print()
 
-    # Define date range
-    start_date_str = "2024-04-18"
-    end_date_str = "2025-08-29"
+    start_date_str = args.start
+    end_date_str = args.end
     start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
     end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
 
