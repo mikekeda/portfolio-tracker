@@ -130,6 +130,14 @@ PROJECTION_BENCHMARK_VOLATILITY = 0.16
 # UK ISA annual subscription limit — set by HMRC each tax year.
 # Reference: https://www.gov.uk/individual-savings-accounts
 ISA_ANNUAL_ALLOWANCE = 20_000.0  # £20,000 for 2025/26 (frozen since 2017/18)
+# Trade-suggestion agent (backend/agent) — deterministic safety caps applied to
+# every strategy's output, and by the backtest engine when simulating fills.
+# FX fee reference: https://www.trading212.com/terms/invest (0.15%, no commission)
+T212_FX_FEE = 0.0015  # charged on non-GBP notional per trade
+AGENT_MAX_DAILY_TURNOVER = 0.05  # buys + sells, as a fraction of portfolio value
+AGENT_MIN_HOLDINGS = 5
+AGENT_MAX_POSITION_WEIGHT = 0.16  # NVDA is ~15% today; cap must not force an immediate trim
+AGENT_MIN_TRADE_GBP = 150.0
 # Days per year constants for annualisation
 DAYS_PER_YEAR = 365.25  # Gregorian calendar average; used for TWRR/MWRR/alpha annualisation
 TRADING_DAYS_PER_YEAR = 252  # US/UK equity market trading days; used for volatility scaling
