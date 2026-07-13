@@ -188,6 +188,12 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
     fundamentals = pd.DataFrame(records)
     if not fundamentals.empty:
         fundamentals = fundamentals.sort_values(["symbol", "date"]).reset_index(drop=True)
+        # Consecutive-snapshot streak of a fired sell rule, ending at each row.
+        # Cumulative within run-groups → backward-only, so truncating history
+        # never changes past streak values (invariance-check safe).
+        fundamentals["thesis_sell_streak"] = fundamentals.groupby("symbol")["thesis_sell_fired"].transform(
+            lambda s: s.astype(int).groupby((~s).cumsum()).cumsum()
+        )
 
     return MarketData(
         gbp_prices=gbp_prices,
@@ -270,6 +276,8 @@ def features_for_date(
             out[col] = out[col].fillna(False).astype(bool)
     if "thesis_sell_reasons" in out.columns:
         out["thesis_sell_reasons"] = out["thesis_sell_reasons"].fillna("")
+    if "thesis_sell_streak" in out.columns:
+        out["thesis_sell_streak"] = out["thesis_sell_streak"].fillna(0).astype(int)
     return out
 
 

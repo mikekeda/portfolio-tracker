@@ -64,6 +64,32 @@ class ThesisRuleSchema(BaseModel):
         return self
 
 
+class ThesisRuleGroupSchema(BaseModel):
+    """Boolean group of rules: `all` = every child must hold (AND), `any` = at
+    least one child (OR). Children may be leaf rules or nested groups, so
+    ((c1 AND c2) OR (c3 AND c4)) is two `all` groups in an OR-semantics list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    all: list["ThesisRuleNode"] | None = None
+    any: list["ThesisRuleNode"] | None = None
+    description: str = ""
+
+    @model_validator(mode="after")
+    def validate_group(self) -> "ThesisRuleGroupSchema":
+        if (self.all is None) == (self.any is None):
+            raise ValueError("group must define exactly one of 'all' or 'any'")
+        if not (self.all or self.any):
+            raise ValueError("group must contain at least one rule")
+        return self
+
+
+# A dict with 'field' parses as a leaf rule; one with 'all'/'any' as a group
+# (extra="forbid" on both makes the union unambiguous).
+ThesisRuleNode = Union[ThesisRuleSchema, ThesisRuleGroupSchema]
+
+
 class InstrumentThesisSchema(BaseModel):
     """Validated thesis document on Instrument.thesis."""
 
@@ -80,8 +106,8 @@ class InstrumentThesisSchema(BaseModel):
         le=100.0,
         description="Maximum target allocation as % of total portfolio (0–100)",
     )
-    buy_rules: list[ThesisRuleSchema] = Field(default_factory=list)
-    sell_rules: list[ThesisRuleSchema] = Field(default_factory=list)
+    buy_rules: list[ThesisRuleNode] = Field(default_factory=list)
+    sell_rules: list[ThesisRuleNode] = Field(default_factory=list)
     buy_triggers: list[str] = Field(default_factory=list)
     sell_triggers: list[str] = Field(default_factory=list)
     horizon_years: int = Field(ge=1, le=100)
@@ -96,3 +122,6 @@ class InstrumentThesisSchema(BaseModel):
         if self.target_weight_min_pct > self.target_weight_max_pct:
             raise ValueError("target_weight_min_pct must be <= target_weight_max_pct")
         return self
+
+
+ThesisRuleGroupSchema.model_rebuild()

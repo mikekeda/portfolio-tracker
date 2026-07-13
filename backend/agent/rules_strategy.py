@@ -72,6 +72,9 @@ class RulesStrategy:
     DEPLOY_POSITIONS = 15
     MIN_QUALITY_ROIC = 15.0
     MIN_QUALITY_SCREENER = 8.0
+    # A thesis sell rule must fire this many consecutive daily snapshots before
+    # it escalates to an EXIT — one noisy quarter print shouldn't dump a position.
+    SELL_RULE_PERSISTENCE = 5
 
     def __init__(self, limits: AgentLimits | None = None):
         self.limits = limits or AgentLimits.from_config()
@@ -93,12 +96,15 @@ class RulesStrategy:
             w = state.weights.get(sym, 0.0)
             rationale = {"composite": round(float(comp[sym]), 3), "percentile": round(float(pctl[sym]), 3)}
 
-            thesis_sell = bool(row.get("thesis_sell_fired", False))
+            streak = int(row.get("thesis_sell_streak", 0))
+            thesis_sell = bool(row.get("thesis_sell_fired", False)) and streak >= self.SELL_RULE_PERSISTENCE
             below_trend = bool(row.get("dist_sma200", np.nan) < 0)
             if thesis_sell or (pctl[sym] <= self.EXIT_PCTL and below_trend):
                 if thesis_sell:
                     reasons = row.get("thesis_sell_reasons") or ""
-                    rationale["trigger"] = f"thesis sell rule fired: {reasons}" if reasons else "thesis sell rule fired"
+                    rationale["trigger"] = f"thesis sell rule fired {streak} snapshots running" + (
+                        f": {reasons}" if reasons else ""
+                    )
                 else:
                     rationale["trigger"] = "bottom decile of universe and below 200d SMA"
                 intents.append(TradeIntent(sym, "exit", None, score=float(comp[sym]) - 1.0, rationale=rationale))

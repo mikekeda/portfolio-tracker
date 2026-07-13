@@ -49,13 +49,21 @@ InstrumentTag = Literal[
 
 
 class ThesisRuleTypedDict(TypedDict, total=False):
-    """Screener-style rule in thesis buy_rules / sell_rules."""
+    """Screener-style rule in thesis buy_rules / sell_rules.
+
+    Entries may also be boolean groups: {"all": [rules…]} or {"any": [rules…]}
+    with an optional description, nesting arbitrarily. Full validation lives in
+    backend/schemas/instrument_thesis.py (ThesisRuleNode); this TypedDict stays
+    loose because TypedDicts can't express the recursive union.
+    """
 
     field: str
     operator: str
     op: str
     value: float | int | str | dict[str, str]
     description: str
+    all: list[dict]
+    any: list[dict]
 
 
 class InstrumentThesisTypedDict(TypedDict, total=False):

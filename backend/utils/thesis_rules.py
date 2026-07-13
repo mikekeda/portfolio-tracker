@@ -11,7 +11,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from backend.screener_config import FieldRef, ScreenerCriteria, get_screener_config
-from backend.schemas.instrument_thesis import InstrumentThesisSchema, ThesisRuleSchema
+from backend.schemas.instrument_thesis import InstrumentThesisSchema, ThesisRuleNode, ThesisRuleSchema
 from config import logger
 from models import InstrumentThesisTypedDict
 
@@ -30,14 +30,30 @@ def _rule_to_criteria(rule: ThesisRuleSchema) -> ScreenerCriteria:
     )
 
 
-def _rules_met(holding: dict, rules: list[ThesisRuleSchema]) -> list[dict[str, Any]]:
+def _eval_node(config, holding: dict, node: ThesisRuleNode) -> tuple[bool, str]:
+    """Recursively evaluate a leaf rule or an all/any group.
+
+    A missing/non-finite field makes its leaf False (eval_criterion), so an
+    `all` group with missing data cannot fire — conservative by construction.
+    """
+    if isinstance(node, ThesisRuleSchema):
+        return config.eval_criterion(holding, _rule_to_criteria(node))
+    children = node.all if node.all is not None else node.any
+    results = [_eval_node(config, holding, child) for child in children]
+    if node.all is not None:
+        return all(ok for ok, _ in results), " AND ".join(reason for _, reason in results)
+    fired = [reason for ok, reason in results if ok]
+    return bool(fired), " OR ".join(fired or [reason for _, reason in results])
+
+
+def _rules_met(holding: dict, rules: list[ThesisRuleNode]) -> list[dict[str, Any]]:
     config = get_screener_config()
     met: list[dict[str, Any]] = []
-    for rule in rules:
-        passed, reason = config.eval_criterion(holding, _rule_to_criteria(rule))
+    for node in rules:
+        passed, reason = _eval_node(config, holding, node)
         if passed:
             met.append({
-                "description": rule.description or reason,
+                "description": node.description or reason,
                 "reason": reason,
             })
     return met
