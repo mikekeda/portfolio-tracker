@@ -11,6 +11,7 @@ ThesisConviction = Literal["low", "medium", "high"]
 THESIS_RULE_FIELDS = frozenset({
     "return_on_equity",
     "return_on_assets",
+    "debtToEquity",  # camelCase — matches the holding-dict key from Yahoo info
     "free_cashflow_yield",
     "peg_ratio",
     "revenue_growth",
