@@ -22,6 +22,8 @@ LIMITS = AgentLimits(
     min_trade_gbp=150.0,
     fx_fee=0.0015,
     cluster_caps={"ai": 45, "space": 15},
+    stamp_duty=0.005,
+    french_ftt=0.004,
 )
 
 
@@ -90,7 +92,7 @@ def test_turnover_budget_goes_to_highest_conviction():
     orders = by_symbol(apply_constraints(intents, state, PRICES, LIMITS))
     assert orders["NVDA"].value_gbp == 3_000.0 and not orders["NVDA"].adjustments
     assert orders["GOOGL"].value_gbp == 2_000.0
-    assert "turnover budget" in orders["GOOGL"].adjustments[0]
+    assert "sell budget" in orders["GOOGL"].adjustments[0]
 
 
 def test_position_weight_cap_clips_add():
@@ -135,7 +137,7 @@ def test_sell_proceeds_fund_buys():
 
 
 def test_fx_fee_only_on_non_sterling():
-    state = make_state()
+    state = make_state(etf_symbols=frozenset({"VUAG.L"}))
     intents = [
         TradeIntent("VUAG.L", "trim", 0.06, score=1.0),
         TradeIntent("NVDA", "trim", 0.14, score=2.0),
@@ -145,12 +147,63 @@ def test_fx_fee_only_on_non_sterling():
     assert abs(orders["NVDA"].fee_gbp - 1_000.0 * 0.0015) < 1e-9
 
 
+def test_buys_have_own_budget_not_crowded_out_by_sells():
+    # Sells exhaust their entire 5% budget; a buy must still go through on its own budget.
+    state = make_state(cash_gbp=5_000.0)
+    state.tags["AMD"] = []
+    state.currencies["AMD"] = "USD"
+    intents = [
+        TradeIntent("NVDA", "trim", 0.10, score=9.0),  # £5,000 — consumes full sell budget
+        TradeIntent("AMD", "buy", 0.03, score=1.0),  # £3,000 — must not be blocked
+    ]
+    orders = by_symbol(apply_constraints(intents, state, PRICES, LIMITS))
+    assert approx(orders["NVDA"].value_gbp, 5_000.0), orders["NVDA"]
+    assert orders["AMD"].executable, orders["AMD"]
+    assert approx(orders["AMD"].value_gbp, 3_000.0, tol=25), orders["AMD"]
+
+
+def test_stamp_duty_on_uk_share_buys_not_etfs_or_sells():
+    state = make_state(cash_gbp=20_000.0, etf_symbols=frozenset({"VUAG.L"}))
+    prices = {**PRICES, "RR.L": 5.0}
+    state.tags["RR.L"] = []
+    state.currencies["RR.L"] = "GBX"
+    # UK share buy: 0.5% stamp duty, no FX fee.
+    orders = by_symbol(apply_constraints([TradeIntent("RR.L", "buy", 0.02, 1.0)], state, prices, LIMITS))
+    assert approx(orders["RR.L"].fee_gbp, 2_000.0 * 0.005), orders["RR.L"]
+    # ETF buy in GBP: no stamp duty, no FX fee.
+    orders = by_symbol(apply_constraints([TradeIntent("VUAG.L", "add", 0.10, 1.0)], state, prices, LIMITS))
+    assert orders["VUAG.L"].fee_gbp == 0.0, orders["VUAG.L"]
+    # UK share sell: no stamp duty either.
+    state2 = make_state(
+        weights={**make_state().weights, "RR.L": 0.04},
+        quantities={**make_state().quantities, "RR.L": 800},
+        etf_symbols=frozenset({"VUAG.L"}),
+    )
+    state2.currencies["RR.L"] = "GBX"
+    orders = by_symbol(apply_constraints([TradeIntent("RR.L", "trim", 0.02, -1.0)], state2, prices, LIMITS))
+    assert orders["RR.L"].fee_gbp == 0.0, orders["RR.L"]
+
+
+def test_french_ftt_plus_fx_on_pa_buys():
+    state = make_state(cash_gbp=20_000.0)
+    prices = {**PRICES, "AM.PA": 60.0}
+    state.tags["AM.PA"] = []
+    state.currencies["AM.PA"] = "EUR"
+    orders = by_symbol(apply_constraints([TradeIntent("AM.PA", "buy", 0.02, 1.0)], state, prices, LIMITS))
+    assert approx(orders["AM.PA"].fee_gbp, 2_000.0 * (0.0015 + 0.004), tol=0.5), orders["AM.PA"]
+
+
 def test_malformed_intents_fail_loud():
     state = make_state()
+    nan = float("nan")
     for bad in (
         [TradeIntent("NVDA", "trim", None, 1.0)],  # trim without target
         [TradeIntent("NVDA", "exit", None, 1.0), TradeIntent("NVDA", "trim", 0.1, 1.0)],  # dupe
         [TradeIntent("ZZZZ", "buy", 0.02, 1.0)],  # no price
+        [TradeIntent("NVDA", "trim", -0.05, 1.0)],  # negative target would oversell
+        [TradeIntent("NVDA", "add", 1.5, 1.0)],  # target above 100%
+        [TradeIntent("NVDA", "add", nan, 1.0)],  # NaN target
+        [TradeIntent("NVDA", "exit", None, nan)],  # NaN score breaks deterministic ranking
     ):
         try:
             apply_constraints(bad, state, PRICES, LIMITS)
@@ -158,6 +211,42 @@ def test_malformed_intents_fail_loud():
             pass
         else:
             raise AssertionError(f"expected ValueError for {bad}")
+
+
+def test_cannot_sell_unheld_symbol():
+    state = make_state()
+    state.currencies["AMD"] = "USD"
+    state.tags["AMD"] = []
+    orders = by_symbol(apply_constraints([TradeIntent("AMD", "exit", None, -2.0)], state, PRICES, LIMITS))
+    assert not orders["AMD"].executable
+    assert "not currently held" in orders["AMD"].adjustments[0]
+
+
+def test_sell_never_exceeds_position():
+    # Trim to 0% must sell exactly the position, never more (short-sell guard);
+    # relaxed budget so the position cap is the only binding constraint.
+    limits = AgentLimits(**{**LIMITS.__dict__, "max_daily_turnover": 1.0})
+    state = make_state()
+    orders = by_symbol(apply_constraints([TradeIntent("MU", "trim", 0.0, -1.0)], state, PRICES, limits))
+    assert approx(orders["MU"].value_gbp, 2_000.0), orders["MU"]  # full £2,000 position, not more
+    assert orders["MU"].quantity <= state.quantities["MU"] + 1e-9
+
+
+def test_buys_capped_by_cash_including_sell_proceeds():
+    # £0 cash: buy is funded exclusively by the exit's proceeds and cannot exceed them.
+    limits = AgentLimits(**{**LIMITS.__dict__, "max_daily_turnover": 1.0, "cluster_caps": {}})
+    state = make_state(cash_gbp=0.0)
+    state.currencies["AMD"] = "USD"
+    state.tags["AMD"] = []
+    intents = [
+        TradeIntent("MU", "exit", None, -3.0),  # £2,000 proceeds (minus FX fee)
+        TradeIntent("AMD", "buy", 0.10, 2.0),  # wants £10,000
+    ]
+    orders = by_symbol(apply_constraints(intents, state, PRICES, limits))
+    proceeds = 2_000.0 * (1 - 0.0015)
+    max_buy = proceeds / 1.0015
+    assert approx(orders["AMD"].value_gbp, max_buy, tol=1.0), orders["AMD"]
+    assert "clipped by available cash" in orders["AMD"].adjustments[0]
 
 
 def test_deterministic():

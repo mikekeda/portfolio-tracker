@@ -40,6 +40,7 @@ class PortfolioState:
     quantities: dict[str, float]  # symbol -> shares held
     currencies: dict[str, str]  # symbol -> native currency (FX-fee awareness)
     tags: dict[str, list[str]] = field(default_factory=dict)  # symbol -> instrument tags
+    etf_symbols: frozenset[str] = frozenset()  # ETFs are exempt from UK stamp duty
 
     @property
     def held_count(self) -> int:
@@ -74,12 +75,14 @@ class TradeOrder:
 class AgentLimits:
     """Deterministic safety caps applied to every strategy's output."""
 
-    max_daily_turnover: float  # fraction of portfolio value, buys + sells
+    max_daily_turnover: float  # fraction of portfolio value, per side (sells and buys each)
     min_holdings: int
     max_position_weight: float  # fraction
     min_trade_gbp: float
     fx_fee: float  # fraction of non-GBP notional
     cluster_caps: dict[str, float] = field(default_factory=dict)  # tag -> cap in percent
+    stamp_duty: float = 0.0  # UK SDRT on share buys (ETFs exempt)
+    french_ftt: float = 0.0  # French FTT on .PA share buys
 
     @classmethod
     def from_config(cls) -> "AgentLimits":
@@ -92,4 +95,20 @@ class AgentLimits:
             min_trade_gbp=config.AGENT_MIN_TRADE_GBP,
             fx_fee=config.T212_FX_FEE,
             cluster_caps=dict(config.TAG_CLUSTER_SOFT_CAPS),
+            stamp_duty=config.UK_STAMP_DUTY,
+            french_ftt=config.FRENCH_FTT,
         )
+
+
+def trade_fee_rate(symbol: str, currency: str | None, is_etf: bool, side: str, limits: AgentLimits) -> float:
+    """Fee fraction for one trade, matching what T212 actually charges
+    (verified against transaction_history): FX fee both ways on non-sterling,
+    stamp duty on UK share buys (ETFs exempt), French FTT on .PA share buys.
+    """
+    rate = 0.0 if currency in STERLING else limits.fx_fee
+    if side == "buy":
+        if currency in STERLING and not is_etf:
+            rate += limits.stamp_duty
+        if symbol.endswith(".PA") and not is_etf:
+            rate += limits.french_ftt
+    return rate

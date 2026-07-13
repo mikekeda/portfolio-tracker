@@ -134,7 +134,14 @@ ISA_ANNUAL_ALLOWANCE = 20_000.0  # £20,000 for 2025/26 (frozen since 2017/18)
 # every strategy's output, and by the backtest engine when simulating fills.
 # FX fee reference: https://www.trading212.com/terms/invest (0.15%, no commission)
 T212_FX_FEE = 0.0015  # charged on non-GBP notional per trade
-AGENT_MAX_DAILY_TURNOVER = 0.05  # buys + sells, as a fraction of portfolio value
+# UK Stamp Duty Reserve Tax — 0.5% on purchases of UK shares; LSE-listed ETFs
+# (Irish-domiciled) are exempt. Confirmed against transaction_history fees.
+# Reference: https://www.gov.uk/tax-buy-shares
+UK_STAMP_DUTY = 0.005
+# French financial transaction tax on purchases of large-cap French (.PA) shares —
+# 0.3% until 2025, 0.4% since (both rates observed in transaction_history).
+FRENCH_FTT = 0.004
+AGENT_MAX_DAILY_TURNOVER = 0.05  # per side (sells and buys each), fraction of portfolio value
 AGENT_MIN_HOLDINGS = 5
 AGENT_MAX_POSITION_WEIGHT = 0.16  # NVDA is ~15% today; cap must not force an immediate trim
 AGENT_MIN_TRADE_GBP = 150.0

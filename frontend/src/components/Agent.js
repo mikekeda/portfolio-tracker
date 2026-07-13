@@ -163,8 +163,8 @@ const Agent = () => {
         <h1>Agent</h1>
         <p className="agent-subtitle">
           Daily trade suggestions from the rules strategy — momentum + screener composite with HRP risk
-          tilts, passed through the safety caps (5% daily turnover, position and cluster limits). Suggest-only:
-          nothing is executed. Click a row for the rationale.
+          tilts, passed through the safety caps (5% daily budget per side — sells never crowd out buys —
+          plus position and cluster limits). Suggest-only: nothing is executed. Click a row for details.
         </p>
       </div>
 

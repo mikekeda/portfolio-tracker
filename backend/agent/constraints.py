@@ -6,19 +6,30 @@ and returns constraint-checked TradeOrders. Fully vetoed intents come back as
 zero-value orders whose `adjustments` explain the veto, so the UI can show why
 a suggestion was blocked instead of silently dropping it.
 
-Processing order: sells first (they free cash and turnover for nothing), then
-buys — each group in descending |score| so the turnover budget goes to the
-strategy's strongest convictions. Ties break on symbol for determinism.
+Sells and buys have separate turnover budgets (each limits.max_daily_turnover
+of portfolio value): a de-risking sell should never crowd out a buy — buys
+compete with holding cash, not with sells. Each side processes in descending
+|score| so its budget goes to the strategy's strongest convictions; ties break
+on symbol for determinism. Sells still run first so their proceeds fund buys.
+
+Safety invariants, enforced no matter what a strategy proposes:
+  * never sell a symbol that isn't held, never sell more than the position
+  * never spend cash that isn't there (start cash + accepted sell proceeds)
+  * malformed intents (duplicate symbols, NaN/out-of-range target or score,
+    missing price) raise ValueError — a strategy bug fails loud, not quietly
+  * post-conditions assert non-negative cash, weights and budgets after the batch
 """
 
-from backend.agent.types import STERLING, AgentLimits, PortfolioState, TradeIntent, TradeOrder
+import math
+
+from backend.agent.types import AgentLimits, PortfolioState, TradeIntent, TradeOrder, trade_fee_rate
 
 SELL_ACTIONS = ("exit", "trim")
 BUY_ACTIONS = ("buy", "add")
 
 
-def _fee(value: float, symbol: str, state: PortfolioState, limits: AgentLimits) -> float:
-    return 0.0 if state.currencies.get(symbol) in STERLING else value * limits.fx_fee
+def _fee_rate(symbol: str, side: str, state: PortfolioState, limits: AgentLimits) -> float:
+    return trade_fee_rate(symbol, state.currencies.get(symbol), symbol in state.etf_symbols, side, limits)
 
 
 def _cluster_headroom_gbp(
@@ -73,11 +84,16 @@ def apply_constraints(
     for i in intents:
         if i.action in BUY_ACTIONS + ("trim",) and i.target_weight is None:
             raise ValueError(f"{i.symbol}: {i.action} intent requires target_weight")
-        if i.symbol not in prices_gbp or prices_gbp[i.symbol] <= 0:
+        if i.target_weight is not None and not (math.isfinite(i.target_weight) and 0.0 <= i.target_weight <= 1.0):
+            raise ValueError(f"{i.symbol}: target_weight {i.target_weight} outside [0, 1]")
+        if not math.isfinite(i.score):
+            raise ValueError(f"{i.symbol}: score must be finite (got {i.score})")
+        if i.symbol not in prices_gbp or not math.isfinite(prices_gbp[i.symbol]) or prices_gbp[i.symbol] <= 0:
             raise ValueError(f"{i.symbol}: no positive GBP price")
 
     total = state.total_value_gbp
-    turnover_left = limits.max_daily_turnover * total
+    sell_budget_left = limits.max_daily_turnover * total
+    buy_budget_left = limits.max_daily_turnover * total
     cash = state.cash_gbp
     weights = dict(state.weights)
     held = {s for s, q in state.quantities.items() if q > 0}
@@ -100,16 +116,17 @@ def apply_constraints(
                 continue
             value = position_value
         else:  # trim
-            value = (w - intent.target_weight) * total
+            # Never sell more than the position, whatever the target arithmetic says
+            value = min((w - intent.target_weight) * total, position_value)
             if value <= 0:
                 orders.append(_veto(intent, w, "vetoed: already at or below trim target"))
                 continue
 
-        if value > turnover_left:
-            adjustments.append(f"clipped by turnover budget: wanted £{value:.0f}, allowed £{turnover_left:.0f}")
-            value = turnover_left
+        if value > sell_budget_left:
+            adjustments.append(f"clipped by sell budget: wanted £{value:.0f}, allowed £{sell_budget_left:.0f}")
+            value = sell_budget_left
         if value <= 0:
-            orders.append(_veto(intent, w, "vetoed: daily turnover budget already spent", adjustments))
+            orders.append(_veto(intent, w, "vetoed: daily sell budget already spent", adjustments))
             continue
         # A full exit may fall below min trade size — the position itself is
         # small and blocking it would strand dust positions forever.
@@ -118,14 +135,17 @@ def apply_constraints(
             orders.append(_veto(intent, w, f"vetoed: £{value:.0f} below min trade size after clipping", adjustments))
             continue
 
-        quantity = state.quantities[intent.symbol] if is_full_exit else value / prices_gbp[intent.symbol]
-        fee = _fee(value, intent.symbol, state, limits)
+        if is_full_exit:
+            quantity = state.quantities[intent.symbol]
+        else:
+            quantity = min(value / prices_gbp[intent.symbol], state.quantities[intent.symbol])
+        fee = value * _fee_rate(intent.symbol, "sell", state, limits)
         new_w = w - value / total
         weights[intent.symbol] = new_w
         if is_full_exit:
             held.discard(intent.symbol)
         cash += value - fee
-        turnover_left -= value
+        sell_budget_left -= value
         orders.append(
             TradeOrder(
                 symbol=intent.symbol,
@@ -171,17 +191,17 @@ def apply_constraints(
             )
             value = cluster_headroom
 
-        fee_rate = 0.0 if state.currencies.get(intent.symbol) in STERLING else limits.fx_fee
+        fee_rate = _fee_rate(intent.symbol, "buy", state, limits)
         affordable = cash / (1.0 + fee_rate)
         if value > affordable:
             adjustments.append(f"clipped by available cash: wanted £{value:.0f}, allowed £{affordable:.0f}")
             value = affordable
 
-        if value > turnover_left:
-            adjustments.append(f"clipped by turnover budget: wanted £{value:.0f}, allowed £{turnover_left:.0f}")
-            value = turnover_left
+        if value > buy_budget_left:
+            adjustments.append(f"clipped by buy budget: wanted £{value:.0f}, allowed £{buy_budget_left:.0f}")
+            value = buy_budget_left
         if value <= 0:
-            orders.append(_veto(intent, w, "vetoed: no cash or turnover budget left", adjustments))
+            orders.append(_veto(intent, w, "vetoed: no cash or buy budget left", adjustments))
             continue
 
         if value < limits.min_trade_gbp:
@@ -193,7 +213,7 @@ def apply_constraints(
         weights[intent.symbol] = new_w
         held.add(intent.symbol)
         cash -= value + fee
-        turnover_left -= value
+        buy_budget_left -= value
         orders.append(
             TradeOrder(
                 symbol=intent.symbol,
@@ -209,4 +229,9 @@ def apply_constraints(
             )
         )
 
+    # Post-conditions: if any of these trip, the layer itself is buggy — halt
+    # rather than emit orders that oversell or overspend.
+    assert cash >= -1e-6, f"negative cash after batch: {cash}"
+    assert sell_budget_left >= -1e-6 and buy_budget_left >= -1e-6, "turnover budget overspent"
+    assert all(v >= -1e-9 for v in weights.values()), "negative position weight after batch"
     return orders

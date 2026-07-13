@@ -72,6 +72,7 @@ async def run_trade_agent() -> None:
             quantities=quantities,
             currencies=md.currencies,
             tags=md.tags,
+            etf_symbols=md.etf_symbols,
         )
 
         strategy = RulesStrategy(limits)

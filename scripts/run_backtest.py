@@ -85,11 +85,11 @@ def build_strategy(spec: str, md: MarketData, limits: AgentLimits):
     raise SystemExit(f"unknown strategy: {spec}")
 
 
-def print_report(result: BacktestResult, md: MarketData, initial_cash: float, fx_fee: float) -> None:
+def print_report(result: BacktestResult, md: MarketData, initial_cash: float, limits: AgentLimits) -> None:
     rows = {result.strategy: summarize(result.equity, result.trades)}
     for bench in BENCHES:
         if bench in md.gbp_prices.columns:
-            curve = buy_and_hold_curve(md, bench, result.equity.index, initial_cash, fx_fee)
+            curve = buy_and_hold_curve(md, bench, result.equity.index, initial_cash, limits)
             rows[f"hold {bench}"] = summarize(curve, pd.DataFrame())
     print("\n" + pd.DataFrame(rows).to_string())
 
@@ -115,8 +115,10 @@ def verify_invariance(strategy_spec: str, md: MarketData, args, limits: AgentLim
     print(f"invariance OK: {len(t_full)} trades and {len(eq_full)} equity points identical up to {cutoff}")
 
 
-def check_known_answer(result: BacktestResult, md: MarketData, symbol: str, initial_cash: float, fx_fee: float) -> None:
-    analytic = buy_and_hold_curve(md, symbol, result.equity.index, initial_cash, fx_fee)
+def check_known_answer(
+    result: BacktestResult, md: MarketData, symbol: str, initial_cash: float, limits: AgentLimits
+) -> None:
+    analytic = buy_and_hold_curve(md, symbol, result.equity.index, initial_cash, limits)
     # Engine holds ~1% cash (target weight 0.99) and fills one day after the
     # first rebalance, so allow a small tolerance on the final value.
     ratio = float(result.equity.iloc[-1] / analytic.iloc[-1])
@@ -147,6 +149,8 @@ async def main() -> None:
             min_trade_gbp=0.0,
             fx_fee=limits.fx_fee,
             cluster_caps={},
+            stamp_duty=limits.stamp_duty,
+            french_ftt=limits.french_ftt,
         )
     async with get_session() as session:
         md = await load_market_data(session, args.start, args.end)
@@ -158,10 +162,10 @@ async def main() -> None:
 
     strategy = build_strategy(args.strategy, md, limits)
     result = run_backtest(strategy, md, args.start, args.end, args.initial_cash, args.rebalance, limits)
-    print_report(result, md, args.initial_cash, limits.fx_fee)
+    print_report(result, md, args.initial_cash, limits)
 
     if args.strategy.startswith("buyhold:"):
-        check_known_answer(result, md, args.strategy.split(":", 1)[1], args.initial_cash, limits.fx_fee)
+        check_known_answer(result, md, args.strategy.split(":", 1)[1], args.initial_cash, limits)
 
     OUT_DIR.mkdir(exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

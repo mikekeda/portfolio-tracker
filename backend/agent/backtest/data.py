@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.utils.risk_math import ledoit_wolf_cov, hrp_weights, risk_contributions
 from backend.views._shared import PRICE_COLUMN
 from config import SPY
-from models import CurrencyRateDaily, FeaturesDaily, Instrument, PricesDaily
+from models import CurrencyRateDaily, FeaturesDaily, Instrument, InstrumentYahoo, PricesDaily
 
 _GBP_FACTORS = {"GBP": 1.0, "GBX": 0.01, "GBp": 0.01}
 
@@ -72,6 +72,7 @@ class MarketData:
     gbp_prices: pd.DataFrame  # dates × symbols, GBP-normalized adjusted close
     currencies: dict[str, str]  # symbol -> native currency
     tags: dict[str, list[str]]  # symbol -> instrument tags
+    etf_symbols: frozenset[str]  # quoteType == 'ETF' (exempt from UK stamp duty)
     technicals: dict[str, pd.DataFrame]  # name -> dates × symbols matrix
     fundamentals: pd.DataFrame  # long frame: date, symbol, FUNDAMENTAL_COLUMNS…; may be empty
 
@@ -87,6 +88,7 @@ class MarketData:
             gbp_prices=prices,
             currencies=self.currencies,
             tags=self.tags,
+            etf_symbols=self.etf_symbols,
             technicals=compute_technicals(prices),
             fundamentals=self.fundamentals[self.fundamentals["date"] <= cutoff]
             if not self.fundamentals.empty
@@ -110,6 +112,15 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
     currencies = {r.yahoo_symbol: r.currency for r in inst_rows}
     tags = {r.yahoo_symbol: (r.tags or []) for r in inst_rows}
     symbol_by_id = {r.id: r.yahoo_symbol for r in inst_rows}
+
+    etf_rows = (
+        await session.execute(
+            select(Instrument.yahoo_symbol)
+            .join(InstrumentYahoo, InstrumentYahoo.instrument_id == Instrument.id)
+            .where(InstrumentYahoo.info["quoteType"].astext == "ETF")
+        )
+    ).scalars()
+    etf_symbols = frozenset(etf_rows)
 
     load_start = start - timedelta(days=MIN_HISTORY_DAYS * 2)
     price_rows = (
@@ -182,6 +193,7 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
         gbp_prices=gbp_prices,
         currencies=currencies,
         tags=tags,
+        etf_symbols=etf_symbols,
         technicals=compute_technicals(gbp_prices),
         fundamentals=fundamentals,
     )
