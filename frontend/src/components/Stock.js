@@ -434,18 +434,14 @@ const Stock = () => {
   );
 
   // Event handlers
-  const handlePriceMetricChange = (e) => {
-    const value = e.target.value;
+  const handlePriceMetricChange = (value) => {
     setPriceMetric(value);
     localStorage.setItem('stock_price_metric', value);
   };
 
-  const handleChartDaysChange = (e) => {
-    const value = e.target.value;
-    // Convert to number if it's not 'ytd'
-    const parsedValue = value === 'ytd' ? value : Number(value);
-    setChartDays(parsedValue);
-    localStorage.setItem('stock_chart_days', String(parsedValue));
+  const handleChartDaysChange = (value) => {
+    setChartDays(value);
+    localStorage.setItem('stock_chart_days', String(value));
   };
 
   const toggleSummary = () => {
@@ -763,7 +759,24 @@ const Stock = () => {
     return values.length > 0 ? values.reduce((a, b) => a + b, 0) / values.length : null;
   }, [peData]);
 
-  if (loading) return <div className="page-fixed stock-container">Loading...</div>;
+  const qualityTrend = useMemo(() => {
+    return (data?.quality_history || [])
+      .filter(r => r.roic != null || r.operating_margin != null || r.profit_margin != null)
+      .map(r => ({ ...r, date: formatDate(r.date) }));
+  }, [data?.quality_history]);
+
+  if (loading) return (
+    <div className="page-fixed stock-container">
+      <div className="skeleton skeleton-breadcrumb" />
+      <div className="skeleton skeleton-title" />
+      <div className="skeleton-kpi-row">
+        {Array.from({ length: 8 }, (_, idx) => <div key={idx} className="skeleton skeleton-kpi" />)}
+      </div>
+      <div className="skeleton skeleton-panel" />
+      <div className="skeleton skeleton-panel" />
+      <div className="skeleton skeleton-panel skeleton-panel-tall" />
+    </div>
+  );
   if (error) return <div className="page-fixed stock-container error">{error}</div>;
   if (!data) return null;
 
@@ -1137,6 +1150,22 @@ const Stock = () => {
     },
   ];
 
+  const sections = [
+    { id: 'sec-valuation', label: 'Valuation' },
+    { id: 'sec-quality', label: 'Quality' },
+    { id: 'sec-13f', label: '13F' },
+    ...((thesisSummary || data.thesis_rule_eval) ? [{ id: 'sec-thesis', label: 'Thesis' }] : []),
+    ...(data.agent_suggestion ? [{ id: 'sec-agent', label: 'Agent' }] : []),
+    { id: 'sec-price', label: 'Price' },
+    { id: 'sec-pe', label: 'PE' },
+    { id: 'sec-eps', label: 'EPS' },
+    { id: 'sec-cashflow', label: 'Cash Flow' },
+    { id: 'sec-analysts', label: 'Analysts' },
+    ...(data.earnings_reports?.length > 0 ? [{ id: 'sec-reports', label: 'Reports' }] : []),
+    ...(data.position_review ? [{ id: 'sec-review', label: 'Review' }] : []),
+    { id: 'sec-news', label: 'News' },
+  ];
+
   return (
     <div className="page-fixed stock-container">
       <nav className="stock-breadcrumb">
@@ -1234,8 +1263,14 @@ const Stock = () => {
         </div>
       </div>
 
+      <nav className="stock-section-nav">
+        {sections.map(s => (
+          <a key={s.id} href={`#${s.id}`} className="stock-section-link">{s.label}</a>
+        ))}
+      </nav>
+
       <div className="stock-panels">
-        <div className="panel">
+        <div className="panel" id="sec-valuation">
           <h3>Valuation Multiples</h3>
           <div className="valuation-grid">
             {valuation.map(v => (
@@ -1246,7 +1281,7 @@ const Stock = () => {
             ))}
           </div>
         </div>
-        <div className="panel">
+        <div className="panel" id="sec-quality">
           <h3>Quality</h3>
           <div className="valuation-grid">
             {quality.map(q => (
@@ -1257,7 +1292,39 @@ const Stock = () => {
             ))}
           </div>
         </div>
-        <div className="panel">
+
+        {/* Lights up automatically once FeaturesDaily has enough snapshots */}
+        {qualityTrend.length >= 5 && (
+          <div className="panel">
+            <h3>Quality Trend</h3>
+            <ResponsiveContainer width="100%" height={280}>
+              <LineChart data={qualityTrend}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="date" />
+                <YAxis tickFormatter={(v) => `${v}%`} />
+                <Tooltip
+                  content={<SharedTooltip
+                    valueFormatter={(v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : v)}
+                    nameMap={{
+                      roic: 'ROIC',
+                      gross_margin: 'Gross Margin',
+                      operating_margin: 'Op Margin',
+                      profit_margin: 'Net Margin',
+                      revenue_growth: 'Rev Growth',
+                    }}
+                  />}
+                />
+                <Legend />
+                <Line type="monotone" dataKey="roic" name="ROIC" stroke="#16a34a" strokeWidth={2.5} dot={false} />
+                <Line type="monotone" dataKey="gross_margin" name="Gross Margin" stroke="#94a3b8" strokeWidth={1.5} dot={false} />
+                <Line type="monotone" dataKey="operating_margin" name="Op Margin" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
+                <Line type="monotone" dataKey="profit_margin" name="Net Margin" stroke="#8b5cf6" strokeWidth={1.5} dot={false} />
+                <Line type="monotone" dataKey="revenue_growth" name="Rev Growth" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+        <div className="panel" id="sec-13f">
           <h3>
             Institutional Holders (13F)
             {data.form13f_as_of && (
@@ -1378,7 +1445,7 @@ const Stock = () => {
         )}
 
         {(thesisSummary || data.thesis_rule_eval) && (
-          <div className="panel">
+          <div className="panel" id="sec-thesis">
             <h3>Thesis</h3>
             {thesisSummary && <p style={{ whiteSpace: 'pre-line' }}>{thesisSummary}</p>}
             {data.thesis_rule_eval && (() => {
@@ -1425,7 +1492,7 @@ const Stock = () => {
           const ageDays = Math.floor((Date.now() - new Date(s.date + 'T00:00:00').getTime()) / 86400000);
           const isStale = ageDays > 7;
           return (
-            <div className="panel">
+            <div className="panel" id="sec-agent">
               <div className="earnings-panel-header">
                 <div>
                   <h3>Agent Suggestion</h3>
@@ -1469,42 +1536,30 @@ const Stock = () => {
           );
         })()}
 
-        <div className="panel">
+        <div className="panel" id="sec-price">
           <h3>Price {priceMetric === 'price_pct_change' ? '(%)' : ''}</h3>
           <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label>Metric: </label>
-              <div className="radio-group">
-                {PRICE_METRICS.map(metric => (
-                  <label key={metric.value} className="radio-label">
-                    <input
-                      type="radio"
-                      name="price-metric"
-                      value={metric.value}
-                      checked={priceMetric === metric.value}
-                      onChange={handlePriceMetricChange}
-                    />
-                    {metric.label}
-                  </label>
-                ))}
-              </div>
+            <div className="segmented">
+              {PRICE_METRICS.map(metric => (
+                <button
+                  key={metric.value}
+                  className={`segmented-btn${priceMetric === metric.value ? ' active' : ''}`}
+                  onClick={() => handlePriceMetricChange(metric.value)}
+                >
+                  {metric.label}
+                </button>
+              ))}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label>Range: </label>
-              <div className="radio-group">
-                {CHART_DAYS_OPTIONS.map(option => (
-                  <label key={option.value} className="radio-label">
-                    <input
-                      type="radio"
-                      name="chart-range"
-                      value={option.value}
-                      checked={chartDays === option.value}
-                      onChange={handleChartDaysChange}
-                    />
-                    {option.label}
-                  </label>
-                ))}
-              </div>
+            <div className="segmented">
+              {CHART_DAYS_OPTIONS.map(option => (
+                <button
+                  key={option.value}
+                  className={`segmented-btn${chartDays === option.value ? ' active' : ''}`}
+                  onClick={() => handleChartDaysChange(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
           {chartData.length > 0 ? (
@@ -1666,26 +1721,20 @@ const Stock = () => {
           ) : <div className="empty">No price data</div>}
         </div>
 
-        <div className="panel">
+        <div className="panel" id="sec-pe">
           <h3>PE Ratio</h3>
           <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
             <div></div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <label>Range: </label>
-              <div className="radio-group">
-                {CHART_DAYS_OPTIONS.map(option => (
-                  <label key={option.value} className="radio-label">
-                    <input
-                      type="radio"
-                      name="pe-chart-range"
-                      value={option.value}
-                      checked={chartDays === option.value}
-                      onChange={handleChartDaysChange}
-                    />
-                    {option.label}
-                  </label>
-                ))}
-              </div>
+            <div className="segmented">
+              {CHART_DAYS_OPTIONS.map(option => (
+                <button
+                  key={option.value}
+                  className={`segmented-btn${chartDays === option.value ? ' active' : ''}`}
+                  onClick={() => handleChartDaysChange(option.value)}
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
           {peData.length > 0 ? (
@@ -1806,7 +1855,7 @@ const Stock = () => {
           ) : <div className="empty">No PE data</div>}
         </div>
 
-        <div className="panel">
+        <div className="panel" id="sec-eps">
           <h3>EPS: Estimate vs Reported (with Surprise%)</h3>
           {epsSeries.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
@@ -1847,7 +1896,7 @@ const Stock = () => {
           ) : <div className="empty">No earnings data</div>}
         </div>
 
-        <div className="panel">
+        <div className="panel" id="sec-cashflow">
           <h3>Cash Flow (OCF, CapEx, FCF)</h3>
           {cashflowSeries.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
@@ -1878,7 +1927,7 @@ const Stock = () => {
           ) : <div className="empty">No cash flow data</div>}
         </div>
 
-        <div className="panel">
+        <div className="panel" id="sec-analysts">
           <h3>Analyst Recommendations</h3>
           {recommendationsSeries.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
@@ -1980,7 +2029,7 @@ const Stock = () => {
             : null;
 
           return (
-            <div className="panel">
+            <div className="panel" id="sec-reports">
               <div className="earnings-panel-header">
                 <div>
                   <h3>Earnings Reports</h3>
@@ -2154,7 +2203,7 @@ const Stock = () => {
           const qt = rv.quality_trajectory || {};
           const triggers = rv.trigger_evaluations || [];
           return (
-            <div className="panel">
+            <div className="panel" id="sec-review">
               <div className="earnings-panel-header">
                 <div>
                   <h3>Position Review</h3>
@@ -2245,7 +2294,7 @@ const Stock = () => {
         })()}
 
         {/* News Section */}
-        <div className="panel">
+        <div className="panel" id="sec-news">
           <h3>Latest News</h3>
           {newsArticles && newsArticles.length > 0 ? (
             <div className="news-list">

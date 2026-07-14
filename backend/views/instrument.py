@@ -498,6 +498,36 @@ async def get_instrument(
             break
         thesis_sell_streak += 1
 
+    # Quality trend (ROIC/margins/growth, percent units). FeaturesDaily only
+    # started 2026-07-12, so the frontend hides the chart until enough points
+    # accrete — no deploy needed when it lights up.
+    quality_rows = (
+        await session.execute(
+            select(
+                FeaturesDaily.date,
+                FeaturesDaily.roic,
+                FeaturesDaily.gross_margin,
+                FeaturesDaily.operating_margin,
+                FeaturesDaily.profit_margin,
+                FeaturesDaily.revenue_growth,
+            )
+            .where(FeaturesDaily.instrument_id == instrument.id)
+            .order_by(FeaturesDaily.date.desc())
+            .limit(750)
+        )
+    ).all()
+    quality_history = [
+        {
+            "date": r.date.isoformat(),
+            "roic": r.roic,
+            "gross_margin": r.gross_margin,
+            "operating_margin": r.operating_margin,
+            "profit_margin": r.profit_margin,
+            "revenue_growth": r.revenue_growth,
+        }
+        for r in reversed(quality_rows)
+    ]
+
     suggestion_row = (
         await session.execute(
             select(TradeSuggestion)
@@ -568,6 +598,7 @@ async def get_instrument(
         "thesis_rule_eval": features_row[3] if features_row else None,
         "thesis_sell_streak": thesis_sell_streak,
         "sell_rule_persistence": RulesStrategy.SELL_RULE_PERSISTENCE,
+        "quality_history": quality_history,
         "agent_suggestion": agent_suggestion,
         "my_position": my_position,
         "analyst_price_targets": (yh.analyst_price_targets or {}) if yh else {},

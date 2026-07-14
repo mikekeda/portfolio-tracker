@@ -477,64 +477,6 @@
   box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.25);
 }
 
-.radio-group {
-  display: inline-flex;
-  align-items: stretch;
-  gap: 2px;
-  background-color: #f8f9fa;
-  border: 1px solid #dee2e6;
-  border-radius: 5px;
-  flex-wrap: wrap;
-  min-width: 0;
-}
-
-/* Make metric radio groups (like Price/Price % Change) distribute evenly */
-.inline-controls > div:first-child .radio-group {
-  display: flex;
-  width: 100%;
-  flex-wrap: nowrap;
-  min-width: 200px;
-}
-
-.inline-controls > div:first-child .radio-group .radio-label {
-  flex: 1;
-  min-width: 0;
-  text-align: center;
-}
-
-.radio-label {
-  position: relative;
-  padding: 6px 14px;
-  cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: 500;
-  color: #6c757d;
-  border-radius: 4px;
-  transition: all 0.2s ease;
-  margin: 0;
-  user-select: none;
-  white-space: nowrap;
-}
-
-.radio-label input[type="radio"] {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.radio-label:has(input[type="radio"]:checked) {
-  background-color: #212529;
-  color: #ffffff;
-  font-weight: 600;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
-}
-
-.radio-label:not(:has(input[type="radio"]:checked)):hover {
-  background-color: #e9ecef;
-  color: #495057;
-}
-
 .empty {
   color: #6c757d;
   padding: 8px 0;
@@ -730,25 +672,13 @@
     font-size: 0.85rem;
   }
 
-  .radio-group {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
-  /* Keep metric buttons evenly distributed on mobile */
-  .inline-controls > div:first-child .radio-group {
-    flex-wrap: nowrap;
+  .segmented {
     width: 100%;
   }
 
-  .inline-controls > div:first-child .radio-group .radio-label {
+  .segmented-btn {
     flex: 1;
-    text-align: center;
-  }
-
-  .radio-label {
-    padding: 6px 10px;
-    font-size: 0.8rem;
+    padding: 6px 8px;
   }
 }
 
@@ -771,9 +701,9 @@
     gap: 10px;
   }
 
-  .radio-label {
-    padding: 5px 8px;
-    font-size: 0.75rem;
+  .segmented-btn {
+    padding: 5px 6px;
+    font-size: 11px;
   }
 
   .inline-controls label {
@@ -1421,3 +1351,100 @@
 
 .thesis-rules-list.buy li { color: #166534; }
 .thesis-rules-list.sell li { color: #991b1b; }
+
+/* ── Section navigation ─────────────────────────────────────────────────── */
+
+.stock-section-nav {
+  position: sticky;
+  top: 52px; /* below the app navigation bar */
+  z-index: 100;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 0;
+  margin-bottom: 8px;
+  background: #f8f9fa;
+}
+
+.stock-section-link {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  color: #495057;
+  text-decoration: none;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  white-space: nowrap;
+}
+
+.stock-section-link:hover {
+  background: #e9ecef;
+  color: #212529;
+}
+
+/* Anchor targets land below the sticky bars */
+.stock-panels .panel {
+  scroll-margin-top: 100px;
+}
+
+/* ── Loading skeletons ──────────────────────────────────────────────────── */
+
+.skeleton {
+  background: linear-gradient(90deg, #e9ecef 25%, #f8f9fa 50%, #e9ecef 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-breadcrumb { width: 180px; height: 16px; margin: 8px 0 16px; }
+.skeleton-title { width: 320px; height: 28px; margin-bottom: 16px; }
+
+.skeleton-kpi-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.skeleton-kpi { width: 90px; height: 48px; }
+.skeleton-panel { height: 120px; margin-bottom: 16px; }
+.skeleton-panel-tall { height: 320px; }
+
+/* ── Segmented controls (chart metric/range) ────────────────────────────── */
+
+.segmented {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.segmented-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: none;
+  border-right: 1px solid #dee2e6;
+  background: transparent;
+  color: #495057;
+  cursor: pointer;
+}
+
+.segmented-btn:last-child {
+  border-right: none;
+}
+
+.segmented-btn:hover {
+  background: #f1f3f5;
+}
+
+.segmented-btn.active {
+  background: #212529;
+  color: #fff;
+}
