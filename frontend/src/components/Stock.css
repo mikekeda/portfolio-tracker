@@ -1370,3 +1370,54 @@
   color: #92400e;
   font-size: 0.85rem;
 }
+
+/* ── Thesis rule status ─────────────────────────────────────────────────── */
+
+.thesis-rules {
+  margin-top: 10px;
+}
+
+.thesis-rules-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.thesis-pill {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.thesis-pill.buy {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.thesis-pill.sell {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.thesis-pill.none {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.thesis-pill.alloc {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.thesis-rules-list {
+  margin: 4px 0 0;
+  padding-left: 0;
+  list-style: none;
+  font-size: 0.85rem;
+}
+
+.thesis-rules-list.buy li { color: #166534; }
+.thesis-rules-list.sell li { color: #991b1b; }

@@ -7,6 +7,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.agent.rules_strategy import RulesStrategy
 from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.form13f import (
@@ -19,7 +20,7 @@ from backend.utils.form13f import (
 from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.roic import get_roic
 from backend.views._shared import get_rates
-from config import PRICE_FIELD, TIMEZONE
+from config import BENCHES, PRICE_FIELD, TIMEZONE
 from models import (
     FeaturesDaily,
     Form13FFiling,
@@ -31,6 +32,7 @@ from models import (
     PositionReview,
     PricesDaily,
     TradeSuggestion,
+    TransactionAction,
     TransactionHistory,
 )
 
@@ -140,12 +142,26 @@ async def _chart_payload(session: AsyncSession, instrument: Instrument, start_da
         for o in orders_result.scalars().all()
     }
 
+    # Benchmark closes for the "% change vs index" overlay (skipped when the
+    # instrument is itself a benchmark)
+    bench_symbols = [b for b in BENCHES if b != symbol]
+    benchmarks: dict[str, dict[str, float]] = {b: {} for b in bench_symbols}
+    if bench_symbols:
+        bench_result = await session.execute(
+            select(PricesDaily)
+            .where(PricesDaily.symbol.in_(bench_symbols), PricesDaily.date >= start_date)
+            .order_by(PricesDaily.date.asc())
+        )
+        for p in bench_result.scalars().all():
+            benchmarks[p.symbol][p.date.isoformat()] = getattr(p, price_attr)
+
     yh = instrument.yahoo
     pes = (yh.pes or {}) if yh else {}
     today = date.today()
     return {
         "prices": prices,
         "orders": orders,
+        "benchmarks": benchmarks,
         "pe_history": {
             k: v["pe_ratio"] for k, v in pes.items() if start_date <= date.fromisoformat(k) <= today
         },
@@ -397,11 +413,36 @@ async def get_instrument(
             return_pct = (
                 (user_holding.ppl / cost_basis * 100.0) if user_holding.ppl is not None and cost_basis > 0 else 0.0
             )
+            buy_actions = [TransactionAction.MARKET_BUY, TransactionAction.LIMIT_BUY]
+            dividend_actions = [
+                TransactionAction.DIVIDEND,
+                TransactionAction.DIVIDEND_PROPERTY,
+                TransactionAction.DIVIDEND_TAX_EXEMPT,
+            ]
+            first_buy, dividends_gbp = (
+                await session.execute(
+                    select(
+                        func.min(TransactionHistory.timestamp).filter(
+                            TransactionHistory.action.in_(buy_actions)
+                        ),
+                        func.coalesce(
+                            func.sum(TransactionHistory.total).filter(
+                                TransactionHistory.action.in_(dividend_actions)
+                            ),
+                            0.0,
+                        ),
+                    ).where(TransactionHistory.ticker == instrument.yahoo_symbol)
+                )
+            ).one()
             my_position = {
                 "portfolio_pct": round(portfolio_pct, 2),
                 "market_value": round(market_value_gbp, 2),
                 "profit": round(profit, 2),
                 "return_pct": round(return_pct, 2),
+                "quantity": user_holding.quantity,
+                "avg_price": user_holding.avg_price,
+                "first_buy_date": first_buy.date().isoformat() if first_buy else None,
+                "dividends_gbp": round(dividends_gbp, 2),
             }
 
     effective_betas = await get_effective_betas([instrument], session)
@@ -432,16 +473,30 @@ async def get_instrument(
     yh = instrument.yahoo
     f_score_result = get_piotroski_f_score(yh.cashflow, yh.balance_sheet, yh.income_stmt) if yh else None
 
-    # Nightly screener snapshot (update_features.py) — the live screener needs
+    # Nightly snapshots (update_features.py) — the live screener needs
     # RSI/technicals for the whole portfolio, too heavy to recompute per stock.
-    features_row = (
+    # A few extra rows beyond the newest feed the thesis sell-streak count.
+    features_rows = (
         await session.execute(
-            select(FeaturesDaily.date, FeaturesDaily.screener_score, FeaturesDaily.passed_screeners)
+            select(
+                FeaturesDaily.date,
+                FeaturesDaily.screener_score,
+                FeaturesDaily.passed_screeners,
+                FeaturesDaily.thesis_rule_eval,
+            )
             .where(FeaturesDaily.instrument_id == instrument.id)
             .order_by(FeaturesDaily.date.desc())
-            .limit(1)
+            .limit(RulesStrategy.SELL_RULE_PERSISTENCE + 5)
         )
-    ).first()
+    ).all()
+    features_row = features_rows[0] if features_rows else None
+    # Consecutive newest snapshots with the sell leg firing — the same
+    # backward-only streak the agent uses to escalate a sell to EXIT.
+    thesis_sell_streak = 0
+    for r in features_rows:
+        if not (r.thesis_rule_eval or {}).get("sell_signal"):
+            break
+        thesis_sell_streak += 1
 
     suggestion_row = (
         await session.execute(
@@ -510,6 +565,9 @@ async def get_instrument(
         "screener_score": features_row[1] if features_row else None,
         "passed_screeners": (features_row[2] or []) if features_row else [],
         "screener_as_of": features_row[0].isoformat() if features_row else None,
+        "thesis_rule_eval": features_row[3] if features_row else None,
+        "thesis_sell_streak": thesis_sell_streak,
+        "sell_rule_persistence": RulesStrategy.SELL_RULE_PERSISTENCE,
         "agent_suggestion": agent_suggestion,
         "my_position": my_position,
         "analyst_price_targets": (yh.analyst_price_targets or {}) if yh else {},

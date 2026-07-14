@@ -51,6 +51,8 @@ const formatActionName = (action) => {
 
 const SMA_50_COLOR = '#3b82f6';   // blue
 const SMA_200_COLOR = '#ef4444';  // red
+const BENCH_COLORS = { 'VUAG.L': '#94a3b8', 'XNAS.L': '#0ea5e9' };
+const BENCH_FALLBACK_COLOR = '#94a3b8';
 
 const FiftyTwoWeekBar = ({ low, high, current }) => {
   if (low == null || high == null || current == null || high <= low) return null;
@@ -80,7 +82,7 @@ FiftyTwoWeekBar.propTypes = {
   current: PropTypes.number,
 };
 
-const PriceTooltip = ({ active, payload, label, priceMetric }) => {
+const PriceTooltip = ({ active, payload, label, priceMetric, benchSymbols }) => {
   if (active && payload && payload.length) {
     const data = payload[0]?.payload || {};
     const displayName = priceMetric === 'price_pct_change' ? 'Price %' : 'Price';
@@ -117,6 +119,12 @@ const PriceTooltip = ({ active, payload, label, priceMetric }) => {
             SMA 200: {formatVal(data.sma200)}
           </p>
         )}
+        {(benchSymbols || []).map(sym => data[sym] != null && (
+          <p key={sym} className="tooltip-item" style={{ color: BENCH_COLORS[sym] || BENCH_FALLBACK_COLOR }}>
+            <span className="color-indicator" style={{ backgroundColor: BENCH_COLORS[sym] || BENCH_FALLBACK_COLOR }}></span>
+            {sym}: {formatVal(data[sym])}
+          </p>
+        ))}
       </div>
     );
   }
@@ -141,12 +149,14 @@ PriceTooltip.propTypes = {
   ),
   label: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   priceMetric: PropTypes.string.isRequired,
+  benchSymbols: PropTypes.arrayOf(PropTypes.string),
 };
 
 PriceTooltip.defaultProps = {
   active: false,
   payload: [],
   label: '',
+  benchSymbols: [],
 };
 
 const OrderDot = ({ cx, cy, payload }) => {
@@ -252,6 +262,14 @@ const formatShort = (n) => {
 };
 
 const formatRatio = (n) => (n === null || n === undefined || isNaN(n) ? '-' : Number(n).toFixed(2));
+
+// First displayed date for a chart range ('ytd' or a day count)
+const getRangeCutoff = (chartDays) => {
+  if (chartDays === 'ytd') return new Date(new Date().getFullYear(), 0, 1);
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - Number(chartDays));
+  return cutoff;
+};
 
 
 // Convert markdown to HTML (handles headers, bold, lists)
@@ -572,13 +590,7 @@ const Stock = () => {
 
     // Clip by date so the displayed range matches exactly what the user selected.
     // The extra 300 calendar days fetched above are used only for SMA warm-up.
-    let cutoff;
-    if (chartDays === 'ytd') {
-      cutoff = new Date(new Date().getFullYear(), 0, 1);
-    } else {
-      cutoff = new Date();
-      cutoff.setDate(cutoff.getDate() - Number(chartDays));
-    }
+    const cutoff = getRangeCutoff(chartDays);
     const display = sorted.filter(p => new Date(p.date) >= cutoff);
 
     if (priceMetric === 'price_pct_change') {
@@ -599,7 +611,29 @@ const Stock = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data?.prices, priceMetric, chartDays]);
 
-  // Combine price data with order data for the chart
+  // Benchmark %-change series for the overlay in % mode, each rebased to its
+  // own first value inside the displayed window
+  const benchSeries = useMemo(() => {
+    if (priceMetric !== 'price_pct_change') return [];
+    const benchmarks = data?.benchmarks || {};
+    const cutoff = getRangeCutoff(chartDays);
+    return Object.entries(benchmarks)
+      .map(([sym, series]) => {
+        const display = Object.entries(series)
+          .map(([date, value]) => ({ date, value }))
+          .sort((a, b) => new Date(a.date) - new Date(b.date))
+          .filter(p => new Date(p.date) >= cutoff);
+        if (display.length === 0) return null;
+        const base = display[0].value;
+        return {
+          sym,
+          byDate: new Map(display.map(p => [p.date, base > 0 ? ((p.value - base) / base) * 100 : 0])),
+        };
+      })
+      .filter(Boolean);
+  }, [data?.benchmarks, priceMetric, chartDays]);
+
+  // Combine price data with orders, SMAs and benchmark overlays
   const chartData = useMemo(() => {
     const orders = data?.orders || {};
 
@@ -609,69 +643,67 @@ const Stock = () => {
     const maxAmount = Math.max(...orderAmounts, 0);
     const amountRange = maxAmount - minAmount;
 
-    // Start with price data
-    let combinedData = [...priceData];
+    // First order per calendar day (multiple same-day orders: keep the first,
+    // matching the previous find() semantics)
+    const ordersByDate = new Map();
+    for (const [timestamp, order] of Object.entries(orders)) {
+      const day = timestamp.split('T')[0];
+      if (!ordersByDate.has(day)) ordersByDate.set(day, order);
+    }
 
-    // Add order information to price data points
-    combinedData = combinedData.map(pricePoint => {
-      // Find if there's an order for this date
-      const orderDate = pricePoint.originalDate;
-      const orderEntry = Object.entries(orders).find(([timestamp]) =>
-        timestamp.split('T')[0] === orderDate
-      );
+    // Prefix sums over the raw series (display window + SMA warm-up) so each
+    // SMA value is O(1) instead of a per-point slice+reduce
+    const sortedRaw = Object.entries(data?.prices || {}).sort(([a], [b]) => new Date(a) - new Date(b));
+    const idxByDate = new Map(sortedRaw.map(([d], i) => [d, i]));
+    const prefix = new Array(sortedRaw.length + 1);
+    prefix[0] = 0;
+    for (let i = 0; i < sortedRaw.length; i++) prefix[i + 1] = prefix[i] + sortedRaw[i][1];
+    const smaAt = (idx, window) =>
+      idx + 1 >= window ? (prefix[idx + 1] - prefix[idx + 1 - window]) / window : null;
 
-      if (orderEntry) {
-        const [, order] = orderEntry;
+    // % mode rebases SMAs to the displayed window's first price — the raw
+    // series starts 300 warm-up days earlier and its first price is not the
+    // base the price line itself uses
+    const displayBaseIdx = priceData.length > 0 ? idxByDate.get(priceData[0].originalDate) : undefined;
+    const basePrice = displayBaseIdx !== undefined ? sortedRaw[displayBaseIdx][1] : 1;
+    const toDisplay = (raw) => {
+      if (raw == null) return null;
+      return priceMetric === 'price_pct_change' && basePrice > 0
+        ? ((raw - basePrice) / basePrice) * 100
+        : raw;
+    };
+
+    return priceData.map(pricePoint => {
+      const point = { ...pricePoint };
+
+      const order = ordersByDate.get(pricePoint.originalDate);
+      if (order) {
         const category = getTransactionCategory(order.action);
-
-        // Calculate dynamic radius (min 4, max 12)
         const normalizedAmount = amountRange > 0 ? (order.total - minAmount) / amountRange : 0;
-        const radius = Math.max(4, 4 + (normalizedAmount * 8)); // 4-12px range
-
-        // Calculate opacity (larger amounts are more transparent)
-        const opacity = Math.max(0.6, 1 - (normalizedAmount * 0.3)); // 0.7-1.0 range
-
-        return {
-          ...pricePoint,
-          order: {
-            action: order.action,
-            total: order.total,
-            category,
-            color: TRANSACTION_COLORS[category],
-            radius,
-            opacity
-          }
+        point.order = {
+          action: order.action,
+          total: order.total,
+          category,
+          color: TRANSACTION_COLORS[category],
+          radius: Math.max(4, 4 + (normalizedAmount * 8)), // 4-12px range
+          opacity: Math.max(0.6, 1 - (normalizedAmount * 0.3)), // 0.7-1.0 range
         };
       }
 
-      return pricePoint;
+      const idx = idxByDate.get(pricePoint.originalDate);
+      if (idx !== undefined) {
+        point.sma50 = toDisplay(smaAt(idx, 50));
+        point.sma200 = toDisplay(smaAt(idx, 200));
+      }
+
+      for (const bench of benchSeries) {
+        const v = bench.byDate.get(pricePoint.originalDate);
+        if (v !== undefined) point[bench.sym] = v;
+      }
+
+      return point;
     });
-
-    // Attach SMA values to each data point
-    const rawPrices = data?.prices || {};
-    const sortedRaw = Object.entries(rawPrices).sort(([a], [b]) => new Date(a) - new Date(b));
-    const basePrice = sortedRaw.length > 0 ? sortedRaw[0][1] : 1;
-    const rawArr = sortedRaw.map(([, p]) => p);
-    const dateArr = sortedRaw.map(([d]) => d);
-
-    combinedData = combinedData.map(d => {
-      const idx = dateArr.indexOf(d.originalDate);
-      if (idx === -1) return d;
-      const w50 = rawArr.slice(Math.max(0, idx - 49), idx + 1);
-      const w200 = rawArr.slice(Math.max(0, idx - 199), idx + 1);
-      const sma50raw = w50.length === 50 ? w50.reduce((a, b) => a + b, 0) / 50 : null;
-      const sma200raw = w200.length === 200 ? w200.reduce((a, b) => a + b, 0) / 200 : null;
-      const toDisplay = (raw) => {
-        if (raw == null) return null;
-        return priceMetric === 'price_pct_change' && basePrice > 0
-          ? ((raw - basePrice) / basePrice) * 100
-          : raw;
-      };
-      return { ...d, sma50: toDisplay(sma50raw), sma200: toDisplay(sma200raw) };
-    });
-
-    return combinedData;
-  }, [priceData, data?.orders, data?.prices, priceMetric]);
+  }, [priceData, data?.orders, data?.prices, priceMetric, benchSeries]);
 
   // Process PE history data from the new API response. Forward estimates come
   // separately and render as a dashed continuation; the last historical point
@@ -1140,6 +1172,41 @@ const Stock = () => {
                   {data.my_position.return_pct >= 0 ? '+' : ''}{Math.round(data.my_position.return_pct)}%
                 </span>
               </div>
+              {data.my_position.quantity != null && (
+                <div className="my-position-item" title="Shares held">
+                  <span className="my-position-label">Shares</span>
+                  <span className="my-position-value">
+                    {hideAmounts ? MASK : data.my_position.quantity.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  </span>
+                </div>
+              )}
+              {data.my_position.avg_price != null && (
+                <div className="my-position-item" title={`Average cost per share (${i.currency})`}>
+                  <span className="my-position-label">Avg Cost</span>
+                  <span className="my-position-value">
+                    {data.my_position.avg_price.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              )}
+              {data.my_position.first_buy_date && (() => {
+                const firstBuy = new Date(data.my_position.first_buy_date + 'T00:00:00');
+                const years = (Date.now() - firstBuy.getTime()) / (365.25 * 86400000);
+                const heldLabel = years >= 1 ? `${years.toFixed(1)}y` : `${Math.max(1, Math.round(years * 12))}mo`;
+                return (
+                  <div className="my-position-item" title={`First buy ${data.my_position.first_buy_date}`}>
+                    <span className="my-position-label">Held</span>
+                    <span className="my-position-value">{heldLabel}</span>
+                  </div>
+                );
+              })()}
+              {data.my_position.dividends_gbp > 0 && (
+                <div className="my-position-item" title="Dividends received (all time)">
+                  <span className="my-position-label">Dividends</span>
+                  <span className="my-position-value">
+                    {hideAmounts ? MASK : `£${data.my_position.dividends_gbp.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1310,10 +1377,46 @@ const Stock = () => {
           </div>
         )}
 
-        {thesisSummary && (
+        {(thesisSummary || data.thesis_rule_eval) && (
           <div className="panel">
             <h3>Thesis</h3>
-            <p style={{ whiteSpace: 'pre-line' }}>{thesisSummary}</p>
+            {thesisSummary && <p style={{ whiteSpace: 'pre-line' }}>{thesisSummary}</p>}
+            {data.thesis_rule_eval && (() => {
+              const ev = data.thesis_rule_eval;
+              const bandLabel = (ev.target_weight_min_pct != null && ev.target_weight_max_pct != null)
+                ? `${ev.target_weight_min_pct}–${ev.target_weight_max_pct}%` : null;
+              return (
+                <div className="thesis-rules">
+                  <div className="thesis-rules-pills">
+                    {ev.buy_signal && <span className="thesis-pill buy">Buy rules met</span>}
+                    {ev.sell_signal && (
+                      <span
+                        className="thesis-pill sell"
+                        title={`Escalates to EXIT after ${data.sell_rule_persistence} consecutive daily snapshots`}
+                      >
+                        Sell firing — day {data.thesis_sell_streak} of {data.sell_rule_persistence}
+                      </span>
+                    )}
+                    {!ev.buy_signal && !ev.sell_signal && <span className="thesis-pill none">No rules firing</span>}
+                    {ev.allocation_status && (
+                      <span className="thesis-pill alloc" title={ev.allocation_reason || undefined}>
+                        {ev.allocation_status.replace(/_/g, ' ')}{bandLabel ? ` · target ${bandLabel}` : ''}
+                      </span>
+                    )}
+                  </div>
+                  {ev.buy_rules_met?.length > 0 && (
+                    <ul className="thesis-rules-list buy">
+                      {ev.buy_rules_met.map((r, idx) => <li key={idx}>✓ {r.description}</li>)}
+                    </ul>
+                  )}
+                  {ev.sell_rules_met?.length > 0 && (
+                    <ul className="thesis-rules-list sell">
+                      {ev.sell_rules_met.map((r, idx) => <li key={idx}>✗ {r.description}</li>)}
+                    </ul>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -1444,7 +1547,7 @@ const Stock = () => {
                           : v)
                   }
                 />
-                <Tooltip content={<PriceTooltip priceMetric={priceMetric} />} />
+                <Tooltip content={<PriceTooltip priceMetric={priceMetric} benchSymbols={benchSeries.map(b => b.sym)} />} />
                 <Legend />
                 <Line
                   type="monotone"
@@ -1543,6 +1646,20 @@ const Stock = () => {
                     connectNulls={false}
                   />
                 )}
+                {benchSeries.map(b => (
+                  <Line
+                    key={`bench-${b.sym}`}
+                    type="monotone"
+                    dataKey={b.sym}
+                    name={b.sym}
+                    stroke={BENCH_COLORS[b.sym] || BENCH_FALLBACK_COLOR}
+                    strokeWidth={1.5}
+                    strokeDasharray="2 3"
+                    dot={false}
+                    activeDot={false}
+                    connectNulls
+                  />
+                ))}
               </LineChart>
               </ResponsiveContainer>
             </div>
