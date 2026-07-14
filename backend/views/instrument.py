@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -115,6 +115,66 @@ async def _build_earnings_reports(instrument, yh, session: AsyncSession) -> list
     return result
 
 
+async def _chart_payload(session: AsyncSession, instrument: Instrument, start_date: date) -> dict[str, Any]:
+    """Range-dependent chart data: prices, orders, splits, PE history/estimates.
+
+    Served by both the full instrument endpoint (initial page load) and the
+    lightweight /prices endpoint (chart range changes).
+    """
+    symbol = instrument.yahoo_symbol
+    price_attr = PRICE_FIELD.lower().replace(" ", "_") + "_price"
+    prices_result = await session.execute(
+        select(PricesDaily)
+        .where(PricesDaily.symbol == symbol, PricesDaily.date >= start_date)
+        .order_by(PricesDaily.date.asc())
+    )
+    prices = {p.date.isoformat(): getattr(p, price_attr) for p in prices_result.scalars().all()}
+
+    orders_result = await session.execute(
+        select(TransactionHistory)
+        .where(TransactionHistory.ticker == symbol, TransactionHistory.timestamp >= start_date)
+        .order_by(TransactionHistory.timestamp)
+    )
+    orders = {
+        o.timestamp.isoformat(): {"action": o.action.value, "total": o.total}
+        for o in orders_result.scalars().all()
+    }
+
+    yh = instrument.yahoo
+    pes = (yh.pes or {}) if yh else {}
+    today = date.today()
+    return {
+        "prices": prices,
+        "orders": orders,
+        "pe_history": {
+            k: v["pe_ratio"] for k, v in pes.items() if start_date <= date.fromisoformat(k) <= today
+        },
+        # Wisesheets forward year-end estimates — charted as a dashed continuation
+        "pe_estimates": {k: v["pe_ratio"] for k, v in pes.items() if date.fromisoformat(k) > today},
+        "splits": {k: v for k, v in (yh.splits or {}).items() if date.fromisoformat(k) >= start_date}
+        if yh
+        else {},
+    }
+
+
+@router.get("/api/instrument/{symbol}/prices")
+async def get_instrument_prices(
+    symbol: str, days: int = 365, session: AsyncSession = Depends(get_db_session)
+) -> dict[str, Any]:
+    """Chart-window data only — cheap endpoint for range changes on the Stock page."""
+    start_date = datetime.now(TIMEZONE).date() - timedelta(days=days)
+    instrument = (
+        await session.execute(
+            select(Instrument)
+            .filter(Instrument.yahoo_symbol == symbol)
+            .options(selectinload(Instrument.yahoo))
+        )
+    ).scalars().first()
+    if not instrument:
+        raise HTTPException(status_code=404, detail="Instrument not found")
+    return await _chart_payload(session, instrument, start_date)
+
+
 @router.get("/api/instrument/{symbol}")
 async def get_instrument(
     symbol: str, days: int = 30, session: AsyncSession = Depends(get_db_session)
@@ -132,30 +192,7 @@ async def get_instrument(
     if not instrument:
         raise HTTPException(status_code=404, detail="Instrument not found")
 
-    # Get price data for the period
-    prices_result = await session.execute(
-        select(PricesDaily)
-        .where(PricesDaily.symbol == symbol, PricesDaily.date >= start_date)
-        .order_by(PricesDaily.date.asc())
-    )
-
-    chart_price_data: dict[str, float] = {}
-    prices = prices_result.scalars().all()
-    for price in prices:
-        chart_price_data[price.date.isoformat()] = getattr(price, PRICE_FIELD.lower().replace(" ", "_") + "_price")
-
-    chart_orders_data: dict[str, dict[str, float | str]] = {}
-    orders_result = await session.execute(
-        select(TransactionHistory)
-        .where(TransactionHistory.ticker == symbol, TransactionHistory.timestamp >= start_date)
-        .order_by(TransactionHistory.timestamp)
-    )
-    orders = orders_result.scalars().all()
-    for order in orders:
-        chart_orders_data[order.timestamp.isoformat()] = {
-            "action": order.action.value,
-            "total": order.total,
-        }
+    chart = await _chart_payload(session, instrument, start_date)
 
     yd = (instrument.yahoo.info or {}) if instrument.yahoo else {}
 
@@ -333,26 +370,24 @@ async def get_instrument(
     latest_date = latest_date_result.scalar()
     if latest_date:
         holding_result = await session.execute(
-            select(HoldingDaily)
-            .where(
+            select(HoldingDaily).where(
                 HoldingDaily.instrument_id == instrument.id,
                 HoldingDaily.date == latest_date,
             )
-            .options(selectinload(HoldingDaily.instrument))
         )
         user_holding = holding_result.scalar_one_or_none()
         if user_holding and user_holding.quantity > 0:
             currency_rates = await get_rates(session)
-            all_holdings_result = await session.execute(
-                select(HoldingDaily)
-                .join(Instrument)
-                .where(HoldingDaily.date == latest_date)
-                .options(selectinload(HoldingDaily.instrument))
-            )
-            all_holdings = all_holdings_result.scalars().all()
-            total_portfolio_value = sum(
-                h.quantity * h.current_price * currency_rates.get(h.instrument.currency, 1.0) for h in all_holdings
-            )
+            # Same holdings-sum denominator as the Holdings page, aggregated in
+            # SQL instead of loading every holding row + instrument into the ORM
+            rate_expr = case(currency_rates, value=Instrument.currency, else_=1.0)
+            total_portfolio_value = (
+                await session.execute(
+                    select(func.sum(HoldingDaily.quantity * HoldingDaily.current_price * rate_expr))
+                    .join(Instrument, Instrument.id == HoldingDaily.instrument_id)
+                    .where(HoldingDaily.date == latest_date)
+                )
+            ).scalar() or 0.0
             market_value_gbp = (
                 user_holding.quantity * user_holding.current_price * currency_rates.get(instrument.currency, 1.0)
             )
@@ -465,18 +500,7 @@ async def get_instrument(
         "fundamentals": fundamentals,
         "earnings": (yh.earnings or {}) if yh else {},
         "cashflow": (yh.cashflow or {}) if yh else {},
-        "prices": chart_price_data,
-        "orders": chart_orders_data,
-        "pe_history": {
-            k: v["pe_ratio"] for k, v in (yh.pes or {}).items() if start_date <= date.fromisoformat(k) <= date.today()
-        }
-        if yh
-        else {},
-        # Wisesheets forward year-end estimates — charted as a dashed continuation
-        "pe_estimates": {k: v["pe_ratio"] for k, v in (yh.pes or {}).items() if date.fromisoformat(k) > date.today()}
-        if yh
-        else {},
-        "splits": {k: v for k, v in (yh.splits or {}).items() if date.fromisoformat(k) >= start_date} if yh else {},
+        **chart,
         "recommendations": (yh.recommendations or {}) if yh else {},
         "news": yh.news if yh else [],
         "earnings_reports": await _build_earnings_reports(instrument, yh, session),

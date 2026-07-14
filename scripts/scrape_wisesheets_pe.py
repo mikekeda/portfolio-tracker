@@ -17,12 +17,12 @@ from selenium.webdriver.firefox.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import selectinload
 
 from config import TIMEZONE, logger
-from models import Instrument, InstrumentYahoo
+from models import HoldingDaily, Instrument, InstrumentYahoo
 from scripts.update_data import get_session
 
 HEADERS = {
@@ -230,8 +230,12 @@ def _parse_date(date_text: str) -> Optional[str]:
     return None
 
 
-def update_pe_data(limit: int = 100) -> None:
-    """Update PE ratio historical data from Wisesheets for instruments with oldest PE data."""
+def update_pe_data(limit: int = 100, onboard_limit: int = 10) -> None:
+    """Update PE ratio historical data from Wisesheets for instruments with oldest PE data.
+
+    Two queues: refresh (existing histories, oldest last-PE-key first) and
+    onboarding (reserved slots for equities with no PE history, held first).
+    """
     with get_session() as session:
         # Sort tickers by pe date, old first, get pe for the first N tickers
         last_pe_date_expr = (
@@ -241,26 +245,38 @@ def update_pe_data(limit: int = 100) -> None:
             .scalar_subquery()
         )
 
-        # Onboarding: equities with no PE history yet are eligible too, but only
-        # dot-free symbols (Wisesheets covers US listings; LSE/Euronext suffixed
-        # tickers would fail the scrape every night). nulls_last so seeding only
-        # uses capacity left after every existing history has been refreshed.
-        onboarding = and_(
-            func.coalesce(InstrumentYahoo.info["quoteType"].astext, "EQUITY") == "EQUITY",
-            Instrument.yahoo_symbol.is_not(None),
-            Instrument.yahoo_symbol.not_like("%.%"),
-        )
-
-        query = (
+        refresh_query = (
             select(InstrumentYahoo)
-            .join(InstrumentYahoo.instrument)
-            .where(or_(InstrumentYahoo.pes != {}, onboarding))
-            .order_by(last_pe_date_expr.asc().nulls_last(), InstrumentYahoo.updated_at.nulls_first())
+            .where(InstrumentYahoo.pes != {})
+            .order_by(last_pe_date_expr.asc(), InstrumentYahoo.updated_at.nulls_first())
             .limit(limit)
             .options(selectinload(InstrumentYahoo.instrument))
         )
+        rows = session.execute(refresh_query).scalars().all()
 
-        rows = session.execute(query).scalars().all()
+        # Onboarding gets its own budget: sharing one queue meant seeding only
+        # ran with capacity left after every refresh (limit − populated ≈ 1/night,
+        # reaching 0 as coverage grows) — NFLX/SPOT/DUOL sat uncovered for months.
+        # Dot-free equities only (seeding sticks to Wisesheets' safest coverage);
+        # currently-held instruments are seeded first.
+        held_ids = select(HoldingDaily.instrument_id).where(
+            HoldingDaily.date == select(func.max(HoldingDaily.date)).scalar_subquery(),
+            HoldingDaily.quantity > 0,
+        )
+        onboarding_query = (
+            select(InstrumentYahoo)
+            .join(InstrumentYahoo.instrument)
+            .where(
+                or_(InstrumentYahoo.pes.is_(None), InstrumentYahoo.pes == {}),
+                func.coalesce(InstrumentYahoo.info["quoteType"].astext, "EQUITY") == "EQUITY",
+                Instrument.yahoo_symbol.is_not(None),
+                Instrument.yahoo_symbol.not_like("%.%"),
+            )
+            .order_by(Instrument.id.in_(held_ids).desc(), InstrumentYahoo.updated_at.nulls_first())
+            .limit(onboard_limit)
+            .options(selectinload(InstrumentYahoo.instrument))
+        )
+        rows += session.execute(onboarding_query).scalars().all()
         tickers = [row.instrument.yahoo_symbol for row in rows][:10]
         logger.info("Found %s instruments to update: %s,...", len(rows), tickers)
 

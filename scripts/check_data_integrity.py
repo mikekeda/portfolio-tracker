@@ -32,6 +32,9 @@ STALE_METRICS_DAYS = 2    # held instruments should get metrics every run
 # SEC 10-Q deadline is 40-45 days after quarter end, so a PR placeholder older
 # than that without a canonical row means the supersede path or a route failed.
 STALE_PR_DAYS = 45
+# A successful Wisesheets scrape leaves a year-end forward-estimate key, so a
+# newest pes key this far in the past means the scrape has failed for months.
+STALE_PE_DAYS = 120
 PORTFOLIO_DIFF_PCT = 1.0  # T212 total vs holdings sum; small FX drift is normal
 # Same bounds as the split detector: an unadjusted 2:1 split shows as ~0.5x.
 MOVE_UPPER, MOVE_LOWER = 1.8, 0.55
@@ -350,6 +353,36 @@ CHECKS: list[tuple[str, str, str, str]] = [
         WHERE e.metrics->>'report_type' = 'PR'
           AND e.date < CURRENT_DATE - {STALE_PR_DAYS}
         ORDER BY canonical_sibling DESC, e.date
+        """,
+    ),
+    (
+        "pe_history_gaps",
+        f"held equities with no PE history, or histories frozen > {STALE_PE_DAYS} days",
+        "last_pe_key IS NULL = never seeded: the Wisesheets onboarding queue should pick "
+        "it up within a night or two of the next scrape run — if it persists, the symbol "
+        "may not be dot-free or its quoteType is wrong. A dated last_pe_key = the nightly "
+        "scrape keeps failing for that symbol (it sorts first in the refresh queue, so "
+        "it IS being attempted): check the update_pe_data task logs for the parse error. "
+        "Commodity ETCs Yahoo mislabels EQUITY are excluded via the earnings requirement.",
+        f"""
+        SELECT i.yahoo_symbol,
+               (SELECT max(k) FROM jsonb_object_keys(coalesce(y.pes, '{{}}'::jsonb)) k) AS last_pe_key,
+               h.instrument_id IS NOT NULL AS held
+        FROM instruments i
+        JOIN instruments_yahoo y ON y.instrument_id = i.id
+        LEFT JOIN (
+            SELECT instrument_id FROM holdings_daily
+            WHERE date = (SELECT max(date) FROM holdings_daily) AND quantity > 0
+        ) h ON h.instrument_id = i.id
+        WHERE coalesce(y.info->>'quoteType', 'EQUITY') = 'EQUITY'
+          AND (
+            (h.instrument_id IS NOT NULL
+             AND (y.pes IS NULL OR y.pes = '{{}}'::jsonb)
+             AND y.earnings IS NOT NULL AND y.earnings != '{{}}'::jsonb)
+            OR (SELECT max(k) FROM jsonb_object_keys(coalesce(y.pes, '{{}}'::jsonb)) k)
+               < (CURRENT_DATE - {STALE_PE_DAYS})::text
+          )
+        ORDER BY (h.instrument_id IS NOT NULL) DESC, last_pe_key NULLS FIRST
         """,
     ),
 ]

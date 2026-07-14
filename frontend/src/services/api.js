@@ -127,6 +127,12 @@ export const portfolioAPI = {
     return response.data;
   },
 
+  // Get chart-window data only (prices, orders, splits, PE) — for range changes
+  getInstrumentPrices: async (symbol, days = 365) => {
+    const response = await apiClient.get(`/api/instrument/${encodeURIComponent(symbol)}/prices?days=${days}`);
+    return response.data;
+  },
+
   // Get all pies
   getPies: async () => {
     const response = await apiClient.get('/api/pies');

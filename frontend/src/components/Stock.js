@@ -463,19 +463,12 @@ const Stock = () => {
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   };
 
+  // Full payload on symbol change. Fetch 300 extra calendar days (~207 trading
+  // days) so SMA 200 is warmed up from the very first displayed data point.
   useEffect(() => {
     const load = async () => {
       try {
-        // Only show full loading on initial load (when data is null)
-        if (!data) {
-          setLoading(true);
-        } else {
-          // For period changes, just show chart loading
-          setChartLoading(true);
-        }
-
-        // Fetch 300 extra calendar days (~207 trading days) so SMA 200 is warmed up
-        // from the very first displayed data point.
+        setLoading(true);
         const daysParam = chartDays === 'ytd' ? calculateYTDDays() : chartDays;
         const res = await portfolioAPI.getInstrument(symbol, Number(daysParam) + 300);
         setData(res);
@@ -485,12 +478,31 @@ const Stock = () => {
         setError('Failed to load instrument');
       } finally {
         setLoading(false);
+      }
+    };
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol]);
+
+  // Chart window only on range change — the full payload (13F, DCF, reviews…)
+  // doesn't depend on the range, so re-fetching it per click was pure waste.
+  useEffect(() => {
+    if (!data) return; // initial load in flight; it already covers this range
+    const load = async () => {
+      try {
+        setChartLoading(true);
+        const daysParam = chartDays === 'ytd' ? calculateYTDDays() : chartDays;
+        const res = await portfolioAPI.getInstrumentPrices(symbol, Number(daysParam) + 300);
+        setData(prev => (prev ? { ...prev, ...res } : prev));
+      } catch (e) {
+        console.error(e);
+      } finally {
         setChartLoading(false);
       }
     };
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, chartDays]);
+  }, [chartDays]);
 
   // Process splits data
   const splitsData = useMemo(() => {
