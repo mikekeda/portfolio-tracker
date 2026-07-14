@@ -17,9 +17,11 @@ from backend.utils.form13f import (
     _score_reason,
 )
 from backend.utils.piotroski import get_piotroski_f_score
+from backend.utils.roic import get_roic
 from backend.views._shared import get_rates
 from config import PRICE_FIELD, TIMEZONE
 from models import (
+    FeaturesDaily,
     Form13FFiling,
     Form13FHolding,
     Form13FManager,
@@ -28,6 +30,7 @@ from models import (
     InstrumentMetricsDaily,
     PositionReview,
     PricesDaily,
+    TradeSuggestion,
     TransactionHistory,
 )
 
@@ -181,7 +184,8 @@ async def get_instrument(
         "priceToSalesTtm": yd.get("priceToSalesTrailing12Months"),
         "priceToBook": yd.get("priceToBook"),
         "ebitda": yd.get("ebitda"),
-        "recommendationMean": yd.get("recommendationMean"),
+        # Rounded to match portfolio.py so the composite score is identical on both pages
+        "recommendationMean": round(yd["recommendationMean"], 2) if yd.get("recommendationMean") else None,
         "recommendationKey": yd.get("recommendationKey"),
         "numberOfAnalystOpinions": yd.get("numberOfAnalystOpinions"),
         "fiftyTwoWeekHighChangePercent": yd.get("fiftyTwoWeekHighChangePercent"),
@@ -192,6 +196,10 @@ async def get_instrument(
         "operatingMargins": yd.get("operatingMargins"),
         "nextEarningsDate": yd.get("earningsTimestamp"),
         "_rawCurrency": yd.get("financialCurrency"),
+        # Percent, statement-based with info-proxy fallback (same as Holdings)
+        "roic": get_roic(yd, instrument.yahoo.balance_sheet, instrument.yahoo.income_stmt)
+        if instrument.yahoo
+        else None,
     }
 
     # 13F institutional holders: match by instrument_id (set from Form13FHolding.cusip vs Instrument.isin)
@@ -242,6 +250,10 @@ async def get_instrument(
     for (mid, fid), data in by_manager_filing.items():
         by_manager.setdefault(mid, []).append(data)
 
+    # (score, conviction) pairs for the aggregate 13F score — same formula as
+    # _get_form13f_for_instruments (conviction-weighted, zero scores excluded)
+    scoring_pairs: list[tuple[float, float]] = []
+
     for mid, filings_list in by_manager.items():
         filings_list.sort(key=lambda x: x["report_date"], reverse=True)
         latest = filings_list[0]
@@ -270,6 +282,8 @@ async def get_instrument(
             value_prev=value_prev_h,
             filing_total_value=filing_total,
         )
+        if score != 0:
+            scoring_pairs.append((score, latest["value"] / filing_total if filing_total > 0 else 0.0))
 
         form13f_holdings.append(
             {
@@ -303,6 +317,15 @@ async def get_instrument(
     form13f_holdings.sort(key=lambda h: (0 if h.get("scored") else 1, -_abs_flow(h), -(h.get("value") or 0)))
 
     form13f_as_of = max((h["report_date"] for h in form13f_holdings), default=None)
+
+    form13f_score: float | None = None
+    if scoring_pairs:
+        total_conviction = sum(c for _, c in scoring_pairs)
+        if total_conviction > 0:
+            weighted = sum(s * c for s, c in scoring_pairs) / total_conviction
+        else:
+            weighted = sum(s for s, _ in scoring_pairs) / len(scoring_pairs)
+        form13f_score = round(max(-2.0, min(2.0, weighted)), 1)
 
     # User's position (if held): portfolio_pct, market_value, profit, return_pct
     my_position: dict[str, Any] | None = None
@@ -374,6 +397,44 @@ async def get_instrument(
     yh = instrument.yahoo
     f_score_result = get_piotroski_f_score(yh.cashflow, yh.balance_sheet, yh.income_stmt) if yh else None
 
+    # Nightly screener snapshot (update_features.py) — the live screener needs
+    # RSI/technicals for the whole portfolio, too heavy to recompute per stock.
+    features_row = (
+        await session.execute(
+            select(FeaturesDaily.date, FeaturesDaily.screener_score, FeaturesDaily.passed_screeners)
+            .where(FeaturesDaily.instrument_id == instrument.id)
+            .order_by(FeaturesDaily.date.desc())
+            .limit(1)
+        )
+    ).first()
+
+    suggestion_row = (
+        await session.execute(
+            select(TradeSuggestion)
+            .where(TradeSuggestion.instrument_id == instrument.id)
+            .order_by(TradeSuggestion.date.desc(), TradeSuggestion.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    agent_suggestion = (
+        {
+            "id": suggestion_row.id,
+            "date": suggestion_row.date.isoformat(),
+            "strategy": suggestion_row.strategy,
+            "action": suggestion_row.action,
+            "quantity": suggestion_row.quantity,
+            "value_gbp": suggestion_row.value_gbp,
+            "weight_before": suggestion_row.weight_before,
+            "weight_after": suggestion_row.weight_after,
+            "score": suggestion_row.score,
+            "rationale": suggestion_row.rationale or {},
+            "constraint_adjustments": suggestion_row.constraint_adjustments or [],
+            "status": suggestion_row.status,
+        }
+        if suggestion_row
+        else None
+    )
+
     # Latest insider aggregates from the most recent metrics row.
     insider_row = (
         await session.execute(
@@ -421,6 +482,11 @@ async def get_instrument(
         "earnings_reports": await _build_earnings_reports(instrument, yh, session),
         "form13f_holdings": form13f_holdings,
         "form13f_as_of": form13f_as_of,
+        "form13f_score": form13f_score,
+        "screener_score": features_row[1] if features_row else None,
+        "passed_screeners": (features_row[2] or []) if features_row else [],
+        "screener_as_of": features_row[0].isoformat() if features_row else None,
+        "agent_suggestion": agent_suggestion,
         "my_position": my_position,
         "analyst_price_targets": (yh.analyst_price_targets or {}) if yh else {},
         "dcf_price": dcf_price,

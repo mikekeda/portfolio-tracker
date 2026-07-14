@@ -19,6 +19,7 @@ import {
 import { renderCountryWithFlag } from '../utils/countryUtils';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import { getPbThresholds, getPsThresholds } from '../utils/valuationUtils';
+import { computeComposite, compositeTooltip } from '../utils/compositeScore';
 import './Stock.css';
 
 // Constants
@@ -237,7 +238,7 @@ const getTransactionCategory = (action) => {
   if (TRANSACTION_CATEGORIES.DIVIDEND.includes(action)) return 'DIVIDEND';
   if (TRANSACTION_CATEGORIES.CASH.includes(action)) return 'CASH';
   if (TRANSACTION_CATEGORIES.ADMIN.includes(action)) return 'ADMIN';
-  return 'SELL'; // Default fallback
+  return 'ADMIN'; // Unknown actions render neutral, not as sells
 };
 
 const formatShort = (n) => {
@@ -748,6 +749,30 @@ const Stock = () => {
     dcfImplied == null || (dcfLow && dcfHigh && dcfLow > 0 && dcfHigh / dcfLow > 4)
   );
 
+  // Composite score — same formula and inputs as the Holdings Score column.
+  // Earnings signal comes from the newest report that has an LLM assessment.
+  const assessmentReport = (data.earnings_reports || []).find(
+    r => r.metrics?.investment_assessment?.recommendation
+  );
+  const compositeInput = {
+    quote_type: i.quote_type,
+    screener_score: data.screener_score,
+    earnings_signal: assessmentReport?.metrics.investment_assessment.recommendation ?? null,
+    earnings_conviction: assessmentReport?.metrics.investment_assessment.conviction ?? null,
+    earnings_announcement_date: assessmentReport?.announcement_date ?? null,
+    recommendation_mean: f.recommendationMean,
+    form13f_score: data.form13f_score,
+  };
+  const compositeScore = computeComposite(compositeInput);
+
+  const passedScreeners = data.passed_screeners || [];
+  const screenerTooltip = [
+    `Screener score (nightly snapshot${data.screener_as_of ? ` · ${data.screener_as_of}` : ''})`,
+    passedScreeners.length > 0
+      ? `Passed:\n${passedScreeners.map(id => `✓ ${id.replace(/_/g, ' ')}`).join('\n')}`
+      : 'No screeners passed',
+  ].join('\n');
+
   const kpiTooltips = {
     'Market Cap': 'Total market value of all outstanding shares',
     'PE': avgPeFromHistory
@@ -765,6 +790,18 @@ const Stock = () => {
   };
 
   const kpis = [
+    ...(compositeScore != null ? [{
+      label: 'Score',
+      value: compositeScore.toFixed(1),
+      className: compositeScore >= 7 ? 'positive' : compositeScore < 3 ? 'negative' : '',
+      tooltip: `${compositeTooltip(compositeScore, compositeInput)}\nSame formula as the Holdings Score column`,
+    }] : []),
+    ...(data.screener_score != null ? [{
+      label: 'Screener',
+      value: Math.round(data.screener_score),
+      className: data.screener_score >= 6 ? 'positive' : data.screener_score < 2 ? 'negative' : '',
+      tooltip: screenerTooltip,
+    }] : []),
     { label: 'Market Cap', value: formatShort(f.marketCap), tooltip: kpiTooltips['Market Cap'] },
     {
       label: 'PE',
@@ -999,6 +1036,63 @@ const Stock = () => {
     },
   ];
 
+  // Yahoo margins/growth are fractions; ROIC and Rule of 40 are already percent
+  const fmtPct = (v, digits = 1) => (v != null ? `${(v * 100).toFixed(digits)}%` : '-');
+  const ruleOf40 = (f.revenueGrowth != null && f.profitMargins != null)
+    ? (f.revenueGrowth + f.profitMargins) * 100 : null;
+
+  const quality = [
+    {
+      label: 'ROIC',
+      value: f.roic != null ? `${f.roic.toFixed(1)}%` : '-',
+      className: f.roic != null ? (f.roic > 20 ? 'positive' : f.roic < 10 ? 'negative' : '') : '',
+      tooltip: 'Return on Invested Capital (NOPAT / invested capital) · Green > 20%, Red < 10% · Primary quality gate — leverage-neutral, unlike ROE',
+    },
+    {
+      label: 'ROE',
+      value: fmtPct(f.returnOnEquity),
+      tooltip: 'Return on Equity · Not color-coded: distorted by debt and buybacks — prefer ROIC',
+    },
+    {
+      label: 'Gross Margin',
+      value: fmtPct(f.grossMargins),
+      className: f.grossMargins != null
+        ? (f.grossMargins > 0.60 ? 'positive' : f.grossMargins < 0.30 ? 'negative' : '')
+        : '',
+      tooltip: 'Gross profit / revenue · Green > 60%, Red < 30% · A proxy for pricing power / moat',
+    },
+    {
+      label: 'Op Margin',
+      value: fmtPct(f.operatingMargins),
+      className: f.operatingMargins != null
+        ? (f.operatingMargins > 0.25 ? 'positive' : f.operatingMargins < 0.05 ? 'negative' : '')
+        : '',
+      tooltip: 'Operating income / revenue · Green > 25%, Red < 5%',
+    },
+    {
+      label: 'Net Margin',
+      value: fmtPct(f.profitMargins),
+      className: f.profitMargins != null
+        ? (f.profitMargins > 0.30 ? 'positive' : f.profitMargins < 0.10 ? 'negative' : '')
+        : '',
+      tooltip: 'Net income / revenue · Green > 30%, Red < 10%',
+    },
+    {
+      label: 'Rev Growth',
+      value: fmtPct(f.revenueGrowth),
+      className: f.revenueGrowth != null
+        ? (f.revenueGrowth > 0.40 ? 'positive' : f.revenueGrowth < 0.15 ? 'negative' : '')
+        : '',
+      tooltip: 'Revenue growth (YoY) · Green > 40%, Red < 15%',
+    },
+    {
+      label: 'Rule of 40',
+      value: ruleOf40 != null ? Math.round(ruleOf40) : '-',
+      className: ruleOf40 != null ? (ruleOf40 >= 40 ? 'positive' : ruleOf40 < 20 ? 'negative' : '') : '',
+      tooltip: 'Revenue growth % + net margin % · Green ≥ 40, Red < 20 · Growth/profitability balance',
+    },
+  ];
+
   return (
     <div className="page-fixed stock-container">
       <nav className="stock-breadcrumb">
@@ -1069,6 +1163,17 @@ const Stock = () => {
               <div key={v.label} className="kpi" title={v.tooltip}>
                 <div className="kpi-label">{v.label}</div>
                 <div className={`kpi-value${v.className ? ` ${v.className}` : ''}`}>{v.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="panel">
+          <h3>Quality</h3>
+          <div className="valuation-grid">
+            {quality.map(q => (
+              <div key={q.label} className="kpi" title={q.tooltip}>
+                <div className="kpi-label">{q.label}</div>
+                <div className={`kpi-value${q.className ? ` ${q.className}` : ''}`}>{q.value}</div>
               </div>
             ))}
           </div>
@@ -1199,6 +1304,55 @@ const Stock = () => {
             <p style={{ whiteSpace: 'pre-line' }}>{thesisSummary}</p>
           </div>
         )}
+
+        {data.agent_suggestion && (() => {
+          const s = data.agent_suggestion;
+          const ageDays = Math.floor((Date.now() - new Date(s.date + 'T00:00:00').getTime()) / 86400000);
+          const isStale = ageDays > 7;
+          return (
+            <div className="panel">
+              <div className="earnings-panel-header">
+                <div>
+                  <h3>Agent Suggestion</h3>
+                  <p className="earnings-panel-dates">
+                    {s.date}
+                    {ageDays > 0 && <> · {ageDays}d ago</>}
+                    {isStale && <> · stale</>}
+                    <> · {s.strategy}</>
+                  </p>
+                </div>
+                <span
+                  className={`action-badge action-${s.action}`}
+                  style={isStale ? { opacity: 0.5 } : undefined}
+                >
+                  {s.action.toUpperCase()}
+                </span>
+              </div>
+              <div className="agent-sugg-line">
+                {s.value_gbp > 0 ? (
+                  <>
+                    <strong>{hideAmounts ? MASK : `£${s.value_gbp.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}</strong>
+                    {s.weight_before != null && s.weight_after != null && (
+                      <span className="agent-sugg-weights">
+                        {(s.weight_before * 100).toFixed(1)}% → {(s.weight_after * 100).toFixed(1)}%
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <strong>Vetoed by constraints</strong>
+                )}
+                <span className={`status-badge status-${s.status}`}>{s.status}</span>
+                <Link to="/agent" className="agent-sugg-link">All suggestions →</Link>
+              </div>
+              {s.rationale?.trigger && <p className="agent-sugg-trigger">{s.rationale.trigger}</p>}
+              {s.constraint_adjustments.length > 0 && (
+                <ul className="agent-sugg-adjustments">
+                  {s.constraint_adjustments.map((a, idx) => <li key={idx}>⚠ {a}</li>)}
+                </ul>
+              )}
+            </div>
+          );
+        })()}
 
         <div className="panel">
           <h3>Price {priceMetric === 'price_pct_change' ? '(%)' : ''}</h3>
@@ -1730,9 +1884,10 @@ const Stock = () => {
               {data.earnings_reports.length > 1 && (
                 <div className="earnings-tabs">
                   {data.earnings_reports.map((r, idx) => {
+                    // Label by period-end month — calendar-quarter labels are wrong
+                    // for companies with off-calendar fiscal years (e.g. FY ending Oct)
                     const d = new Date(r.date + 'T00:00:00');
-                    const month = d.getMonth(); // 0-based
-                    const qLabel = month <= 2 ? 'Q1' : month <= 5 ? 'Q2' : month <= 8 ? 'Q3' : 'Q4';
+                    const label = d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
                     return (
                       <button
                         key={r.id}
@@ -1740,7 +1895,7 @@ const Stock = () => {
                         onClick={() => setActiveReportIdx(idx)}
                         title={`Period ending ${r.date}${r.announcement_date ? ` · Announced ${r.announcement_date}` : ''}`}
                       >
-                        {qLabel} {d.getFullYear()}
+                        {label}
                       </button>
                     );
                   })}
@@ -1970,7 +2125,7 @@ const Stock = () => {
                 const thumbnail = content?.thumbnail;
                 const thumbnailUrl = thumbnail?.originalUrl;
                 const pubDate = new Date(content?.pubDate);
-                const timeAgo = Math.floor((Date.now() - pubDate) / (1000 * 60)); // minutes ago
+                const timeAgo = Math.max(0, Math.floor((Date.now() - pubDate) / (1000 * 60))); // minutes ago
                 const displayTime = timeAgo < 60 ? `${timeAgo}m ago` :
                                   timeAgo < 1440 ? `${Math.floor(timeAgo / 60)}h ago` :
                                   `${Math.floor(timeAgo / 1440)}d ago`;

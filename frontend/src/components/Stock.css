@@ -1284,3 +1284,89 @@
     font-size: 1.1rem;
   }
 }
+
+/* ── Agent suggestion panel ─────────────────────────────────────────────── */
+
+.action-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.action-buy {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.action-add {
+  background: #e0f2fe;
+  color: #075985;
+}
+
+.action-trim {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.action-exit {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.status-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.status-accepted {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-dismissed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.agent-sugg-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+  font-size: 0.95rem;
+}
+
+.agent-sugg-weights {
+  color: #6c757d;
+  font-size: 0.85rem;
+}
+
+.agent-sugg-link {
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: #0d6efd;
+  text-decoration: none;
+}
+
+.agent-sugg-link:hover {
+  text-decoration: underline;
+}
+
+.agent-sugg-trigger {
+  margin: 4px 0 0;
+  color: #495057;
+  font-size: 0.9rem;
+}
+
+.agent-sugg-adjustments {
+  margin: 6px 0 0;
+  padding-left: 0;
+  list-style: none;
+  color: #92400e;
+  font-size: 0.85rem;
+}
