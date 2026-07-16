@@ -419,6 +419,7 @@ const Stock = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [chartLoading, setChartLoading] = useState(false);
+  const [activeSection, setActiveSection] = useState(null);
   const [showFullSummary, setShowFullSummary] = useState(false);
   const [selectedReport, setSelectedReport] = useState(null);
   const [reportHtml, setReportHtml] = useState(null);
@@ -517,6 +518,36 @@ const Stock = () => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chartDays]);
+
+  // Scroll-spy: highlight the section nav pill for the panel nearest the top.
+  // Re-runs per symbol (panel set can change); range merges don't retrigger it.
+  useEffect(() => {
+    if (loading || !data) return;
+    const panels = Array.from(document.querySelectorAll('.stock-panels .panel[id]'));
+    if (panels.length === 0) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries.filter(e => e.isIntersecting);
+        if (visible.length > 0) {
+          const top = visible.reduce((a, b) =>
+            a.boundingClientRect.top < b.boundingClientRect.top ? a : b
+          );
+          setActiveSection(top.target.id);
+        }
+      },
+      // Active band = below the sticky bars, upper 40% of the viewport
+      { rootMargin: '-110px 0px -60% 0px', threshold: 0 }
+    );
+    panels.forEach(p => observer.observe(p));
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbol, loading]);
+
+  const handleSectionClick = (e, id) => {
+    e.preventDefault();
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setActiveSection(id);
+  };
 
   // Process splits data
   const splitsData = useMemo(() => {
@@ -1265,7 +1296,14 @@ const Stock = () => {
 
       <nav className="stock-section-nav">
         {sections.map(s => (
-          <a key={s.id} href={`#${s.id}`} className="stock-section-link">{s.label}</a>
+          <a
+            key={s.id}
+            href={`#${s.id}`}
+            className={`stock-section-link${activeSection === s.id ? ' active' : ''}`}
+            onClick={(e) => handleSectionClick(e, s.id)}
+          >
+            {s.label}
+          </a>
         ))}
       </nav>
 
@@ -2321,7 +2359,9 @@ const Stock = () => {
                         <img src={thumbnailUrl} alt={content?.title} />
                       </div>
                     ) : (
-                      <div className="news-thumbnail news-thumbnail-placeholder"></div>
+                      <div className="news-thumbnail news-thumbnail-placeholder">
+                        {(content?.provider?.displayName || '·').charAt(0)}
+                      </div>
                     )}
                     <div className="news-content">
                       <div className="news-title">{content?.title}</div>
