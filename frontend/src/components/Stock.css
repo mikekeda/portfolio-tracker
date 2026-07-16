@@ -1440,9 +1440,12 @@
 }
 
 .stock-seg-btn {
+  appearance: none;
+  -webkit-appearance: none;
   margin: 0;
   padding: 4px 10px;
   font-size: 12px;
+  font-family: inherit;
   line-height: 1.4;
   text-align: center;
   white-space: nowrap;
@@ -1454,8 +1457,15 @@
   cursor: pointer;
 }
 
+/* Inner radius matches the container (8px − 1px border) so the active fill
+   hugs the rounded corners even in browsers that don't clip children */
+.stock-seg-btn:first-child {
+  border-radius: 7px 0 0 7px;
+}
+
 .stock-seg-btn:last-child {
   border-right: none;
+  border-radius: 0 7px 7px 0;
 }
 
 .stock-seg-btn:hover {
