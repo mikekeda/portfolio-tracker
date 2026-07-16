@@ -356,6 +356,25 @@ CHECKS: list[tuple[str, str, str, str]] = [
         """,
     ),
     (
+        "escaped_summaries",
+        "earnings summaries with literal \\n instead of real newlines (LLM double-escape)",
+        "Gemini structured output double-escaped the JSON string values; the summary "
+        "renders as one blob with visible \\n on the Stock page. Run "
+        "scripts/fix_earnings_summary_escapes.sql to repair. New rows should not appear "
+        "— _undo_double_escapes in scripts/_earnings_common.py de-escapes at generation; "
+        "if they do, the model found a new escape variant: inspect the raw summary.",
+        """
+        SELECT i.yahoo_symbol, e.date, e.metrics->>'report_type' AS report_type,
+               (length(e.summary) - length(replace(e.summary, chr(92) || 'n', ''))) / 2
+                   AS literal_newlines
+        FROM earnings_reports e
+        JOIN instruments i ON i.id = e.instrument_id
+        WHERE strpos(e.summary, chr(92) || 'n') > 0
+          AND strpos(e.summary, chr(10)) = 0
+        ORDER BY e.date DESC
+        """,
+    ),
+    (
         "pe_history_gaps",
         f"held equities with no PE history, or histories frozen > {STALE_PE_DAYS} days",
         "last_pe_key IS NULL = never seeded: the Wisesheets onboarding queue should pick "
