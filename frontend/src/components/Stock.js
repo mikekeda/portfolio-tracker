@@ -1577,22 +1577,22 @@ const Stock = () => {
         <div className="panel" id="sec-price">
           <h3>Price {priceMetric === 'price_pct_change' ? '(%)' : ''}</h3>
           <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
-            <div className="segmented">
+            <div className="stock-segmented">
               {PRICE_METRICS.map(metric => (
                 <button
                   key={metric.value}
-                  className={`segmented-btn${priceMetric === metric.value ? ' active' : ''}`}
+                  className={`stock-seg-btn${priceMetric === metric.value ? ' active' : ''}`}
                   onClick={() => handlePriceMetricChange(metric.value)}
                 >
                   {metric.label}
                 </button>
               ))}
             </div>
-            <div className="segmented">
+            <div className="stock-segmented">
               {CHART_DAYS_OPTIONS.map(option => (
                 <button
                   key={option.value}
-                  className={`segmented-btn${chartDays === option.value ? ' active' : ''}`}
+                  className={`stock-seg-btn${chartDays === option.value ? ' active' : ''}`}
                   onClick={() => handleChartDaysChange(option.value)}
                 >
                   {option.label}
@@ -1763,11 +1763,11 @@ const Stock = () => {
           <h3>PE Ratio</h3>
           <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
             <div></div>
-            <div className="segmented">
+            <div className="stock-segmented">
               {CHART_DAYS_OPTIONS.map(option => (
                 <button
                   key={option.value}
-                  className={`segmented-btn${chartDays === option.value ? ' active' : ''}`}
+                  className={`stock-seg-btn${chartDays === option.value ? ' active' : ''}`}
                   onClick={() => handleChartDaysChange(option.value)}
                 >
                   {option.label}

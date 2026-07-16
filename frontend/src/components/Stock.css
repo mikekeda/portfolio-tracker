@@ -675,11 +675,11 @@
     font-size: 0.85rem;
   }
 
-  .segmented {
+  .stock-segmented {
     width: 100%;
   }
 
-  .segmented-btn {
+  .stock-seg-btn {
     flex: 1;
     padding: 6px 8px;
   }
@@ -704,7 +704,7 @@
     gap: 10px;
   }
 
-  .segmented-btn {
+  .stock-seg-btn {
     padding: 5px 6px;
     font-size: 11px;
   }
@@ -1430,7 +1430,7 @@
 
 /* ── Segmented controls (chart metric/range) ────────────────────────────── */
 
-.segmented {
+.stock-segmented {
   display: inline-flex;
   flex-wrap: wrap;
   border: 1px solid #dee2e6;
@@ -1439,25 +1439,30 @@
   background: #fff;
 }
 
-.segmented-btn {
+.stock-seg-btn {
+  margin: 0;
   padding: 4px 10px;
   font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  white-space: nowrap;
   border: none;
   border-right: 1px solid #dee2e6;
+  border-radius: 0;
   background: transparent;
   color: #495057;
   cursor: pointer;
 }
 
-.segmented-btn:last-child {
+.stock-seg-btn:last-child {
   border-right: none;
 }
 
-.segmented-btn:hover {
+.stock-seg-btn:hover {
   background: #f1f3f5;
 }
 
-.segmented-btn.active {
+.stock-seg-btn.active {
   background: #212529;
   color: #fff;
 }
