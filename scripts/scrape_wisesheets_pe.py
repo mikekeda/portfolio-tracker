@@ -230,7 +230,7 @@ def _parse_date(date_text: str) -> Optional[str]:
     return None
 
 
-def update_pe_data(limit: int = 100, onboard_limit: int = 10) -> None:
+def update_pe_data(limit: int = 100, onboard_limit: int = 40) -> None:
     """Update PE ratio historical data from Wisesheets for instruments with oldest PE data.
 
     Two queues: refresh (existing histories, oldest last-PE-key first) and
@@ -258,7 +258,8 @@ def update_pe_data(limit: int = 100, onboard_limit: int = 10) -> None:
         # ran with capacity left after every refresh (limit − populated ≈ 1/night,
         # reaching 0 as coverage grows) — NFLX/SPOT/DUOL sat uncovered for months.
         # Dot-free equities only (seeding sticks to Wisesheets' safest coverage);
-        # currently-held instruments are seeded first.
+        # currently-held instruments are seeded first. 40 keeps the nightly run
+        # (~20 s/ticker, 150 total) inside the 02:00→03:00 slot before pies sync.
         held_ids = select(HoldingDaily.instrument_id).where(
             HoldingDaily.date == select(func.max(HoldingDaily.date)).scalar_subquery(),
             HoldingDaily.quantity > 0,
