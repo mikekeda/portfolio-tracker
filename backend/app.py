@@ -59,12 +59,28 @@ app.add_middleware(
 
 
 @lru_cache(maxsize=1)
+def _get_engine():
+    db_url = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    return create_async_engine(db_url, echo=False, pool_pre_ping=True)
+
+
+@lru_cache(maxsize=1)
 def _get_session_factory() -> async_sessionmaker:
     """Create and cache the async database session factory."""
-    db_url = f"postgresql+asyncpg://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
+    return async_sessionmaker(bind=_get_engine(), autoflush=False, autocommit=False, expire_on_commit=False)
 
-    return async_sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+async def dispose_engine(close: bool = True) -> None:
+    """Release the cached engine's pooled connections.
+
+    Async Celery tasks run each job in a fresh asyncio.run() loop, but the
+    lru_cached engine outlives the loop — a pooled connection reused by the
+    next task then awaits futures bound to a closed loop (RuntimeError:
+    "attached to a different loop"). Tasks must dispose inside their own loop
+    when done; close=False only abandons the pool without touching connections
+    (safe when the pool may hold another loop's connections).
+    """
+    await _get_engine().dispose(close=close)
 
 
 @asynccontextmanager

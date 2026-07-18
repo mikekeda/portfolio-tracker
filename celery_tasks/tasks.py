@@ -1,4 +1,5 @@
 import asyncio
+from backend.app import dispose_engine
 from celery_tasks.celery_app import app
 from scripts.update_returns import update_returns
 from scripts.fix_split_prices import fix_split_prices
@@ -13,6 +14,24 @@ from scripts.update_features import update_features
 from scripts.update_market_metrics import update_market_metrics
 from scripts.update_pies import update_pies
 from scripts.sync_transactions import sync_transactions
+
+
+def _run_async_db_job(coro) -> None:
+    """Run an async DB job in a fresh event loop without leaking pooled connections.
+
+    The prefork worker reuses one process (and backend.app's lru_cached engine)
+    across tasks, but each asyncio.run() creates a new loop. Abandon any pool
+    left by a previous loop before starting, and dispose our own pool before
+    the loop closes, so no asyncpg connection is ever touched from a foreign loop.
+    """
+    async def _job():
+        await dispose_engine(close=False)
+        try:
+            await coro
+        finally:
+            await dispose_engine()
+
+    asyncio.run(_job())
 
 
 @app.task
@@ -88,7 +107,7 @@ def run_position_reviews_task():
     (thesis, rule/band state, fundamentals, latest earnings, macro regime) —
     quiet days cost zero LLM calls. See scripts/run_position_review.py.
     """
-    asyncio.run(run_position_reviews())
+    _run_async_db_job(run_position_reviews())
 
 
 @app.task
@@ -98,7 +117,7 @@ def run_trade_agent_task():
     Runs the rules strategy through the deterministic constraint layer; results
     surface on the /agent page where the user accepts or dismisses them.
     """
-    asyncio.run(run_trade_agent())
+    _run_async_db_job(run_trade_agent())
 
 
 @app.task
@@ -109,7 +128,7 @@ def update_features_task():
     that otherwise only exist in the overwritten InstrumentYahoo cache, building
     the historical series the trade-suggestion agent trains and backtests on.
     """
-    asyncio.run(update_features())
+    _run_async_db_job(update_features())
 
 
 @app.task
