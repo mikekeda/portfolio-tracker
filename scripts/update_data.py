@@ -44,7 +44,7 @@ from config import (
     logger,
 )
 from utils.insider import compute_insider_signal
-from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
+from data import ETF_COUNTRY_ALLOCATION, ETF_SECTOR_ALLOCATION, QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED, STOCKS_SUFFIX
 from models import (
     CurrencyRateDaily,
     HoldingDaily,
@@ -662,7 +662,7 @@ def update_prices(tickers_to_add: set[str]) -> None:
             session.commit()
 
         # Get prices for new tickers
-        new_tickers = list(tickers_to_add | (tickers - {row.symbol for row in existing_prices}))
+        new_tickers = list((tickers_to_add | tickers) - {row.symbol for row in existing_prices})
         start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
         _update_prices(session, new_tickers, start)  # all new tickers at once
         session.commit()
@@ -1053,7 +1053,9 @@ def update_data():
     update_holdings()
 
     # 4. Update prices
-    _tickers_to_add: set[str] = set()  # "^VIX"
+    # Index members feed the breadth/SMA200 metrics even without a T212 instrument;
+    # any member with no price history yet gets seeded (10y backfill, once).
+    _tickers_to_add: set[str] = (set(SP500) | set(QQQ)) - STOCKS_DELISTED
     update_prices(_tickers_to_add)
 
     # 5. Update portfolio
