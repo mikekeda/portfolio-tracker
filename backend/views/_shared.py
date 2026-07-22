@@ -60,8 +60,7 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
         tot = sb + b + h + s + ss
         mask = tot > 0
         if mask.sum() >= 2:
-            score = (2 * sb + b - s - 2 * ss) / (2 * tot)
-            score = score[mask]
+            score = (2 * sb + b - s - 2 * ss)[mask] / (2 * tot[mask])
             x = np.arange(score.size, dtype=float)
             if score.std() != 0:
                 trends["recommendation_trend"] = float(np.corrcoef(x, score)[0, 1])

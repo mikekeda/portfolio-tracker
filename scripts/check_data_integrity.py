@@ -19,7 +19,7 @@ import argparse
 from sqlalchemy import text
 
 from config import BENCHES, VIX, logger
-from data import QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED
+from data import QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED, WISESHEETS_NO_PE
 from scripts.update_data import get_session
 
 # Findings shown per check before truncating — keeps logs readable when a
@@ -188,15 +188,17 @@ CHECKS: list[tuple[str, str, str, str]] = [
     (
         "blob_price_drift",
         "cached Yahoo info price > 15% from latest close (stale blob)",
-        "If profile_fetched_at is old too, force a refetch (see stale_profiles). If the "
-        "blob is fresh, the drift is real (big move since the last fetch) or the "
-        "instrument's yahoo_symbol points at a different listing/currency than its "
-        "prices_daily rows — compare the two quotes manually.",
+        "quote_age_days in the hundreds = Yahoo's quote endpoint is frozen for that line "
+        "(SMSN.L/KAP.L GDR case): the blob refetches daily but serves years-old data — "
+        "only prices_daily is trustworthy for it, nothing to fix locally. Small "
+        "quote_age_days = real drift (big move since last fetch) or the yahoo_symbol "
+        "points at a different listing/currency than its prices_daily rows.",
         """
         SELECT i.yahoo_symbol,
                (y.info->>'regularMarketPrice')::float AS blob_price,
                round(p.close_price::numeric, 2) AS close_price,
-               round(abs((y.info->>'regularMarketPrice')::float / p.close_price - 1)::numeric * 100) AS drift_pct
+               round(abs((y.info->>'regularMarketPrice')::float / p.close_price - 1)::numeric * 100) AS drift_pct,
+               CURRENT_DATE - to_timestamp((y.info->>'regularMarketTime')::bigint)::date AS quote_age_days
         FROM instruments i
         JOIN instruments_yahoo y ON y.instrument_id = i.id
         JOIN LATERAL (SELECT close_price FROM prices_daily
@@ -240,11 +242,13 @@ CHECKS: list[tuple[str, str, str, str]] = [
     ),
     (
         "portfolio_vs_holdings",
-        f"snapshot value diverging > {PORTFOLIO_DIFF_PCT}% from GBP sum of holdings",
+        f"snapshot value (ex cash) diverging > {PORTFOLIO_DIFF_PCT}% from GBP sum of holdings",
         "Single old day with a big diff = one corrupted holdings row: compare per-holding "
         "quantity * current_price against adjacent days to find it, then fix that row "
-        "(often a GBX/GBP or pre-split scale error). Persistent small diffs = rate or "
-        "timing skew, usually fine.",
+        "(often a GBX/GBP or pre-split scale error). Big diff on a crash/rally day whose "
+        "holdings rows were last written before the US close (check max(updated_at)) = "
+        "intraday timing skew vs the backfilled close-based value — real and expected. "
+        "Persistent small diffs = rate or timing skew, usually fine.",
         f"""
         WITH hs AS (
             SELECT h.date,
@@ -264,23 +268,23 @@ CHECKS: list[tuple[str, str, str, str]] = [
             ) r ON true
             GROUP BY h.date
         )
-        SELECT p.date, round(p.value::numeric, 2) AS portfolio_value,
+        SELECT p.date, round((p.value - p.cash)::numeric, 2) AS invested_value,
                round(hs.holdings_sum::numeric, 2) AS holdings_sum,
-               round((100 * (hs.holdings_sum - p.value) / p.value)::numeric, 2) AS diff_pct
+               round((100 * (hs.holdings_sum - (p.value - p.cash)) / (p.value - p.cash))::numeric, 2) AS diff_pct
         FROM portfolio_daily p
         JOIN hs USING (date)
-        WHERE p.value > 0
-          AND abs(p.value - hs.holdings_sum) / p.value > {PORTFOLIO_DIFF_PCT / 100}
+        WHERE p.value - p.cash > 0
+          AND abs(p.value - p.cash - hs.holdings_sum) / (p.value - p.cash) > {PORTFOLIO_DIFF_PCT / 100}
         ORDER BY p.date DESC
         """,
     ),
     (
         "holdings_gaps",
-        "holes inside a position's daily snapshots (5-90 days)",
-        "Cross-check against transaction_history: if the position was open through the "
-        "gap, snapshots are missing (update_data didn't run) — backfill_portfolio_daily "
-        "covers portfolio totals but per-holding rows stay lost; note it and move on. "
-        "If it was closed and reopened, the gap is real and correct.",
+        "holes inside a position's daily snapshots (5-90 days) with no sell in the gap",
+        "The position was open through the gap yet has no snapshots — update_data didn't "
+        "run those days. backfill_portfolio_daily covers portfolio totals but per-holding "
+        "rows stay lost; note it and move on. (Closed-and-reopened positions are excluded "
+        "automatically via a sell transaction inside the gap window.)",
         """
         SELECT i.yahoo_symbol, t.prev_date, t.date, t.date - t.prev_date AS gap_days
         FROM (SELECT instrument_id, date,
@@ -288,6 +292,12 @@ CHECKS: list[tuple[str, str, str, str]] = [
               FROM holdings_daily) t
         JOIN instruments i ON i.id = t.instrument_id
         WHERE t.date - t.prev_date BETWEEN 5 AND 90
+          AND NOT EXISTS (
+            SELECT 1 FROM transaction_history th
+            WHERE th.isin = i.isin
+              AND th.action::text LIKE '%SELL%'
+              AND th.timestamp >= t.prev_date AND th.timestamp < t.date
+          )
         ORDER BY gap_days DESC
         """,
     ),
@@ -379,9 +389,10 @@ CHECKS: list[tuple[str, str, str, str]] = [
         f"held equities with no PE history, or histories frozen > {STALE_PE_DAYS} days",
         "last_pe_key IS NULL = never seeded: the Wisesheets onboarding queue should pick "
         "it up within a night or two of the next scrape run — if it persists, the symbol "
-        "may not be dot-free or its quoteType is wrong. A dated last_pe_key = the nightly "
-        "scrape keeps failing for that symbol (it sorts first in the refresh queue, so "
-        "it IS being attempted): check the update_pe_data task logs for the parse error. "
+        "may not be dot-free or its quoteType is wrong. A dated last_pe_key with scrape "
+        "errors in the update_pe_data logs = the nightly scrape is failing. A dated key "
+        "with clean logs (EU semi-annual reporters frozen at 12-31, cluster of .PA/.L "
+        "names) = Wisesheets has no newer period yet — clears when H1 results publish. "
         "Commodity ETCs Yahoo mislabels EQUITY are excluded via the earnings requirement.",
         f"""
         SELECT i.yahoo_symbol,
@@ -394,6 +405,7 @@ CHECKS: list[tuple[str, str, str, str]] = [
             WHERE date = (SELECT max(date) FROM holdings_daily) AND quantity > 0
         ) h ON h.instrument_id = i.id
         WHERE coalesce(y.info->>'quoteType', 'EQUITY') = 'EQUITY'
+          AND i.yahoo_symbol != ALL(:wisesheets_no_pe)
           AND (
             (h.instrument_id IS NOT NULL
              AND (y.pes IS NULL OR y.pes = '{{}}'::jsonb)
@@ -415,6 +427,8 @@ def run_check(session, name: str, description: str, fix: str, sql: str) -> int:
         params["allowed"] = SP500 + QQQ + list(BENCHES) + [VIX]
     if ":delisted" in sql:
         params["delisted"] = list(STOCKS_DELISTED)
+    if ":wisesheets_no_pe" in sql:
+        params["wisesheets_no_pe"] = list(WISESHEETS_NO_PE)
     if ":alias_old" in sql:
         # Known renames: a finding on an old symbol means rows/instruments still
         # need migrating; one on a new symbol means an instrument likely still

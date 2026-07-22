@@ -22,6 +22,7 @@ from sqlalchemy import text as sql_text
 from sqlalchemy.orm import selectinload
 
 from config import TIMEZONE, logger
+from data import STOCKS_DELISTED, WISESHEETS_NO_PE
 from models import HoldingDaily, Instrument, InstrumentYahoo
 from scripts.update_data import get_session
 
@@ -236,6 +237,10 @@ def update_pe_data(limit: int = 100, onboard_limit: int = 40) -> None:
     Two queues: refresh (existing histories, oldest last-PE-key first) and
     onboarding (reserved slots for equities with no PE history, held first).
     """
+    # WISESHEETS_NO_PE gaps are often temporary (new IPOs Wisesheets hasn't onboarded);
+    # probing once a week auto-detects coverage arriving without nightly error noise.
+    skip = STOCKS_DELISTED if datetime.now(TIMEZONE).weekday() == 6 else STOCKS_DELISTED | WISESHEETS_NO_PE
+
     with get_session() as session:
         # Sort tickers by pe date, old first, get pe for the first N tickers
         last_pe_date_expr = (
@@ -247,7 +252,11 @@ def update_pe_data(limit: int = 100, onboard_limit: int = 40) -> None:
 
         refresh_query = (
             select(InstrumentYahoo)
-            .where(InstrumentYahoo.pes != {})
+            .join(InstrumentYahoo.instrument)
+            .where(
+                InstrumentYahoo.pes != {},
+                Instrument.yahoo_symbol.notin_(skip),
+            )
             .order_by(last_pe_date_expr.asc(), InstrumentYahoo.updated_at.nulls_first())
             .limit(limit)
             .options(selectinload(InstrumentYahoo.instrument))
@@ -272,6 +281,7 @@ def update_pe_data(limit: int = 100, onboard_limit: int = 40) -> None:
                 func.coalesce(InstrumentYahoo.info["quoteType"].astext, "EQUITY") == "EQUITY",
                 Instrument.yahoo_symbol.is_not(None),
                 Instrument.yahoo_symbol.not_like("%.%"),
+                Instrument.yahoo_symbol.notin_(skip),
             )
             .order_by(Instrument.id.in_(held_ids).desc(), InstrumentYahoo.updated_at.nulls_first())
             .limit(onboard_limit)

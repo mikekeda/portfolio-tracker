@@ -48,6 +48,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "CCIV": "LCID",
     "CECE": "CECO",
     "CHKK": "EXE",
+    "CLA": "OUST",    # Colonnade Acquisition SPAC → Ouster; T212 kept the pre-merger code
     "CNHI": "CNH",
     "DAI": "MBG",
     "DMYI": "IONQ",
@@ -83,6 +84,9 @@ STOCKS_ALIASES: dict[str, str] = {
     "RBS": "NWG",
     "RE": "EG",
     "RTP": "JOBY",
+    "RTPY": "AUR",    # Reinvent Technology Partners Y SPAC → Aurora Innovation
+    "SATS": "ECHO",   # EchoStar ticker rebrand on Nasdaq, Jun 2026; Yahoo froze SATS mid-Jul
+    "SERV1": "SERV",  # Serve Robotics - stale T212 line, live Yahoo ticker is SERV
     "SFTW": "BKSY",
     "SL": "ABDN",
     "SNDK1": "SNDK",
@@ -127,6 +131,14 @@ STOCKS_DELISTED: set[str] = {
     "HOLX",      # Hologic - taken private by Blackstone/TPG, Apr 2026
     "HYUDl_EQ",  # raw T212 code (rejected by convert_ticker, filtered in fetch_holdings)
     "MASI",      # Masimo - acquired by Danaher, Jun 2026
+}
+
+# Live tickers whose Wisesheets page currently has no PE block. Skipped by the nightly
+# scrape but re-probed weekly (Sunday run), so coverage arriving — likely for recent
+# IPOs — is picked up automatically; remove an entry once its probe starts succeeding.
+# Also excluded from the pe_history_gaps audit while listed here.
+WISESHEETS_NO_PE: set[str] = {
+    "SWMR",      # Swarmer - 2025 IPO, not yet covered by Wisesheets
 }
 
 SP500 = [
@@ -212,7 +224,6 @@ SP500 = [
     "CHRW",
     "CDNS",
     "CPT",
-    "CPB",
     "COF",
     "CAH",
     "CCL",
@@ -248,7 +259,6 @@ SP500 = [
     "COIN",
     "CL",
     "CMCSA",
-    "CAG",
     "COP",
     "ED",
     "STZ",
@@ -257,11 +267,9 @@ SP500 = [
     "CPRT",
     "GLW",
     "CPAY",
-    "CRH",
     "CTVA",
     "CSGP",
     "COST",
-    "CTRA",
     "CRWD",
     "CCI",
     "CSX",
@@ -301,7 +309,6 @@ SP500 = [
     "EMR",
     "ETR",
     "EOG",
-    "EPAM",
     "EQT",
     "EFX",
     "EQIX",
@@ -362,7 +369,6 @@ SP500 = [
     "HSY",
     "HPE",
     "HLT",
-    "HOLX",
     "HD",
     "HON",
     "HRL",
@@ -385,7 +391,6 @@ SP500 = [
     "ICE",
     "IFF",
     "IP",
-    "IPG",
     "INTU",
     "ISRG",
     "IVZ",
@@ -399,7 +404,6 @@ SP500 = [
     "JNJ",
     "JCI",
     "JPM",
-    "K",
     "KVUE",
     "KDP",
     "KEY",
@@ -414,7 +418,6 @@ SP500 = [
     "LHX",
     "LH",
     "LRCX",
-    "LW",
     "LVS",
     "LDOS",
     "LEN",
@@ -430,11 +433,10 @@ SP500 = [
     "MTB",
     "MPC",
     "MAR",
-    "MMC",
+    "MRSH",
     "MLM",
     "MAS",
     "MA",
-    "MTCH",
     "MKC",
     "MCD",
     "MCK",
@@ -449,7 +451,6 @@ SP500 = [
     "MSFT",
     "MAA",
     "MRNA",
-    "MOH",
     "TAP",
     "MDLZ",
     "MPWR",
@@ -493,7 +494,6 @@ SP500 = [
     "PSKY",
     "PH",
     "PAYX",
-    "PAYC",
     "PYPL",
     "PNR",
     "PEP",
@@ -503,7 +503,6 @@ SP500 = [
     "PSX",
     "PNW",
     "PNC",
-    "POOL",
     "PPG",
     "PPL",
     "PFG",
@@ -633,6 +632,21 @@ SP500 = [
     "ZBRA",
     "ZBH",
     "ZTS",
+    # 2025-26 index changes (synced against Wikipedia constituents, 2026-07-22);
+    # includes spinoff listings FDXF (FedEx Freight) and HONA (Honeywell split)
+    "ARES",
+    "CASY",
+    "COHR",
+    "CRH",
+    "ECHO",
+    "FDXF",
+    "FLEX",
+    "HONA",
+    "LITE",
+    "MRVL",
+    "SNDK",
+    "VEEV",
+    "VRT",
 ]
 
 QQQ = [
@@ -651,7 +665,6 @@ QQQ = [
     "APP",
     "ARM",
     "ASML",
-    "TEAM",
     "ADSK",
     "ADP",
     "AXON",
@@ -659,15 +672,12 @@ QQQ = [
     "BKNG",
     "AVGO",
     "CDNS",
-    "CHTR",
     "CTAS",
     "CSCO",
     "CCEP",
-    "CTSH",
     "CMCSA",
     "CEG",
     "CPRT",
-    "CSGP",
     "COST",
     "CRWD",
     "CSX",
@@ -684,7 +694,6 @@ QQQ = [
     "GILD",
     "HON",
     "IDXX",
-    "INSM",
     "INTC",
     "INTU",
     "ISRG",
@@ -729,14 +738,23 @@ QQQ = [
     "TSLA",
     "TXN",
     "TRI",
-    "VRSK",
     "VRTX",
     "WMT",
     "WBD",
     "WDC",
     "WDAY",
     "XEL",
-    "ZS",
+    # 2025-26 reconstitution + fast-track adds (synced vs Wikipedia, 2026-07-22);
+    # SPCX = SpaceX (Jun 2026 IPO, fast-tracked Jul 7 — index holds 103 listings)
+    "ALAB",
+    "CRWV",
+    "HONA",
+    "LITE",
+    "NBIS",
+    "RKLB",
+    "SNDK",
+    "SPCX",
+    "TER",
 ]
 
 FTSE_100 = [
@@ -755,7 +773,6 @@ FTSE_100 = [
     "BARC.L",
     "BTRW.L",
     "BEZ.L",
-    "BKG.L",
     "BP.L",
     "BATS.L",
     "BLND.L",
@@ -804,7 +821,6 @@ FTSE_100 = [
     "MKS.L",
     "MRO.L",
     "MTLN.L",
-    "MNDI.L",
     "NG.L",
     "NWG.L",
     "NXT.L",
@@ -816,7 +832,6 @@ FTSE_100 = [
     "RKT.L",
     "REL.L",
     "RTO.L",
-    "RMV.L",
     "RIO.L",
     "RR.L",
     "SGE.L",
@@ -840,6 +855,10 @@ FTSE_100 = [
     "VOD.L",
     "WEIR.L",
     "WTB.L",
+    # 2025-26 promotions (synced vs Wikipedia, 2026-07-22)
+    "ABDN.L",
+    "CCC.L",
+    "INVP.L",
 ]
 
 
