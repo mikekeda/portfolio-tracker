@@ -1026,6 +1026,8 @@ const Stock = () => {
       if (dcfLow != null && dcfHigh != null) tooltipParts.push(`Range: ${fmt(dcfLow)} – ${fmt(dcfHigh)}`);
       tooltipParts.push(`${direction} by ${Math.abs(Number(pct))}% vs current price`);
       if (dcfImplied != null) tooltipParts.push(`Market-implied growth: ${(dcfImplied * 100).toFixed(1)}%`);
+      else if (data.dcf_implied_growth_status === 'above_band') tooltipParts.push('Market prices in >50% initial growth');
+      else if (data.dcf_implied_growth_status === 'below_band') tooltipParts.push('Market prices in < -10% initial growth');
       if (dcfLowConfidence) tooltipParts.push('Low confidence — model over-sensitive or disagrees with market');
       tooltipParts.push('Green > +10%, Red < -10%');
       return [{

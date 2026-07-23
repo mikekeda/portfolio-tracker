@@ -1017,6 +1017,8 @@ const Holdings = () => {
           if (dcfPrice) tooltipParts.push(`Fair value: ${dcfPrice.toFixed(2)}`);
           if (dcfLow && dcfHigh) tooltipParts.push(`Range: ${dcfLow.toFixed(2)} – ${dcfHigh.toFixed(2)}`);
           if (dcfImplied != null) tooltipParts.push(`Market-implied growth: ${(dcfImplied * 100).toFixed(1)}%`);
+          else if (row.dcf_implied_growth_status === 'above_band') tooltipParts.push('Market prices in >50% initial growth');
+          else if (row.dcf_implied_growth_status === 'below_band') tooltipParts.push('Market prices in < -10% initial growth');
           if (lowConfidence) tooltipParts.push('Low confidence — model over-sensitive or disagrees with market');
 
           return (

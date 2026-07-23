@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import EQUITY_RISK_PREMIUM, RISK_FREE_RATE, SPY, TERMINAL_GROWTH_RATE, TIMEZONE
-from models import Instrument, PricesDaily
+from models import CurrencyRateDaily, Instrument, PricesDaily
 from utils.market_data import get_risk_free_rates
 from backend.utils.technical import PRICE_COLUMN, calculate_annualized_volatility
 
@@ -32,6 +32,11 @@ IMPLIED_GROWTH_TOLERANCE = 1e-4
 # Sectors where FCF-based DCF is meaningless. Banks' "free cash flow" is not
 # comparable to an industrial company's; use P/BV or DDM for these instead.
 SECTORS_WITHOUT_DCF: frozenset[str] = frozenset({"Financial Services"})
+
+# Yahoo quotes UK listings in pence ("GBp"/"GBX") while marketCap and financial
+# statements are in pounds; all internal math runs in major units and converts
+# back to pence at the output so dcf_price stays comparable to the quote.
+_PENCE_CURRENCIES: frozenset[str] = frozenset({"GBp", "GBX"})
 
 # Effective beta for CAPM.
 # Reported Yahoo beta is the regression slope against the S&P 500. For non-US
@@ -95,15 +100,18 @@ class DcfInputs(TypedDict):
 
 class DcfAnalysis(TypedDict):
     """DCF output: point estimate, sensitivity band, and reverse-DCF implied
-    growth. All fields are None when DCF can't be computed (unsupported
-    sector, no positive trailing FCF, missing shares). The frontend treats
-    a DCF as "low confidence" when implied_growth is None (market pricing
-    outside [-10%, +50%] g0) or the high/low band spans more than ~4x."""
+    growth. Value fields are None when DCF can't be computed (unsupported
+    sector, no positive trailing FCF, missing shares or FX rate).
+
+    implied_growth_status disambiguates a None implied_growth:
+      "ok" — solved; "above_band"/"below_band" — market prices growth outside
+      [IMPLIED_GROWTH_LO, IMPLIED_GROWTH_HI]; "unavailable" — inputs missing."""
 
     price: Optional[float]  # point estimate intrinsic value per share
     low: Optional[float]  # pessimistic (higher WACC, lower g0)
     high: Optional[float]  # optimistic (lower WACC, higher g0)
     implied_growth: Optional[float]  # g0 that solves price == current market price
+    implied_growth_status: str
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -195,8 +203,9 @@ def _calculate_cagr(first: float, last: float, periods: int) -> Optional[float]:
 
 def _extract_trailing_fcf(cashflow: dict[str, Any]) -> tuple[Optional[float], Optional[float]]:
     """
-    Extracts a smoothed, forward-looking Free Cash Flow (FCF) from historical data.
-    Also returns the historical FCF CAGR to inform the growth rate assumption.
+    Extracts a smoothed, forward-looking Free Cash Flow (FCF) from historical
+    data, net of stock-based compensation. Also returns the historical FCF CAGR
+    to inform the growth rate assumption.
 
     Returns:
         A tuple containing (smoothed_fcf, fcf_cagr).
@@ -216,6 +225,12 @@ def _extract_trailing_fcf(cashflow: dict[str, Any]) -> tuple[Optional[float], Op
             if ocf is not None and capex is not None:
                 fcf = ocf + capex  # Note: Capex is usually negative
         if fcf is not None:
+            # SBC is a real cost to shareholders that OCF adds back — it runs
+            # 7–44% of FCF across current holdings, so leaving it in flatters
+            # heavy-SBC names in cross-sectional comparisons.
+            sbc = _safe_number(row.get("Stock Based Compensation"))
+            if sbc is not None and sbc > 0:
+                fcf -= sbc
             series.append(fcf)
 
     # 2) Require the most recent FCF to be positive — we can't project forward
@@ -257,8 +272,14 @@ def _extract_trailing_fcf(cashflow: dict[str, Any]) -> tuple[Optional[float], Op
     return final_fcf, fcf_cagr
 
 
-def _derive_shares_if_needed(info: dict[str, Any], candidate_shares: Optional[float]) -> Optional[float]:
-    """Uses market cap and price to derive or validate shares outstanding."""
+def _derive_shares_if_needed(
+    info: dict[str, Any], candidate_shares: Optional[float], pence_factor: float = 1.0
+) -> Optional[float]:
+    """Uses market cap and price to derive or validate shares outstanding.
+
+    `pence_factor` (100 for GBp/GBX listings) converts the quoted price to
+    major units so it matches marketCap's currency.
+    """
     if not isinstance(candidate_shares, (int, float)) or candidate_shares <= 0:
         candidate_shares = None
 
@@ -267,7 +288,7 @@ def _derive_shares_if_needed(info: dict[str, Any], candidate_shares: Optional[fl
     if mcap is None or price is None or price <= 0:
         return candidate_shares
 
-    derived_shares = mcap / price
+    derived_shares = mcap / (price / pence_factor)
     if candidate_shares is None:
         return derived_shares
 
@@ -283,12 +304,18 @@ def _estimate_dcf_inputs(
     instrument: Instrument,
     risk_free_rate: float,
     effective_beta_override: Optional[float] = None,
+    fx_price_to_fin: float = 1.0,
+    pence_factor: float = 1.0,
 ) -> DcfInputs:
     """Estimates all necessary inputs for a DCF valuation from instrument data.
 
     `effective_beta_override`, when supplied, replaces the reported Yahoo beta
     for CAPM/WACC purposes. Used to correct for non-US stocks whose reported
     beta (regressed against the S&P 500) understates systematic risk.
+
+    `fx_price_to_fin` converts price-currency amounts (marketCap) into the
+    reporting currency so WACC capital-structure weights compare like with
+    like; `pence_factor` is 100 for GBp/GBX listings (see _PENCE_CURRENCIES).
     """
     if instrument.yahoo is None:
         return {
@@ -308,7 +335,7 @@ def _estimate_dcf_inputs(
     current_fcf, fcf_cagr = _extract_trailing_fcf(cashflow)
 
     raw_shares = info.get("sharesOutstanding") or info.get("impliedSharesOutstanding")
-    shares = _derive_shares_if_needed(info, _safe_number(raw_shares))
+    shares = _derive_shares_if_needed(info, _safe_number(raw_shares), pence_factor)
 
     total_cash: float = _safe_number(info.get("totalCash")) or 0.0
     total_debt: float = _safe_number(info.get("totalDebt")) or 0.0
@@ -339,7 +366,11 @@ def _estimate_dcf_inputs(
 
     initial_growth = _clamp(initial_growth, -0.20, 0.30)
 
+    # marketCap is in the price currency; totalDebt in the reporting currency —
+    # convert so the E/D weights inside WACC are same-currency.
     market_cap = _safe_number(info.get("marketCap"))
+    if market_cap is not None:
+        market_cap *= fx_price_to_fin
     beta_for_wacc = effective_beta_override if effective_beta_override is not None else info.get("beta")
     wacc = estimate_wacc_dynamic(market_cap, total_debt, beta_for_wacc, risk_free_rate, country)
 
@@ -423,12 +454,14 @@ def _solve_implied_growth(
     target_price: float,
     lo: float = IMPLIED_GROWTH_LO,
     hi: float = IMPLIED_GROWTH_HI,
-) -> Optional[float]:
+) -> tuple[Optional[float], str]:
     """Reverse DCF: bisect on g0 to find the growth rate that produces target_price.
 
-    Returns the implied initial growth rate, or None if target_price is outside
-    the achievable range [price@lo, price@hi] — meaning the market is pricing
-    either less than a -10% growth scenario or more than a +50% one.
+    Returns (implied_growth, status): "ok" when solved; "above_band" /
+    "below_band" when target_price is outside the achievable range
+    [price@lo, price@hi] — the market prices more than a +50% growth scenario
+    (or less than a -10% one) — with implied_growth None; "unavailable" when
+    inputs are missing.
     """
     if (
         target_price <= 0
@@ -437,7 +470,7 @@ def _solve_implied_growth(
         or not est["shares_outstanding"]
         or est["shares_outstanding"] <= 0
     ):
-        return None
+        return None, "unavailable"
 
     def price_at(g: float) -> float:
         return _compute_equity_value_per_share(
@@ -454,28 +487,37 @@ def _solve_implied_growth(
     p_lo = price_at(lo)
     p_hi = price_at(hi)
     # price is monotonically increasing in g0 within the search band
-    if target_price < min(p_lo, p_hi) or target_price > max(p_lo, p_hi):
-        return None
+    if target_price > p_hi:
+        return None, "above_band"
+    if target_price < p_lo:
+        return None, "below_band"
 
     for _ in range(IMPLIED_GROWTH_MAX_ITERATIONS):
         mid = 0.5 * (lo + hi)
         p_mid = price_at(mid)
         if abs(p_mid - target_price) / target_price < IMPLIED_GROWTH_TOLERANCE:
-            return mid
+            return mid, "ok"
         if p_mid < target_price:
             lo = mid
         else:
             hi = mid
-    return 0.5 * (lo + hi)
+    return 0.5 * (lo + hi), "ok"
 
 
 def _empty_analysis() -> DcfAnalysis:
-    return {"price": None, "low": None, "high": None, "implied_growth": None}
+    return {
+        "price": None,
+        "low": None,
+        "high": None,
+        "implied_growth": None,
+        "implied_growth_status": "unavailable",
+    }
 
 
 def _compute_dcf_full(
     instrument: Instrument,
     risk_free_rates: dict[str, float],
+    fx_to_gbp: dict[str, float],
     years: int = 10,
     wacc_override: Optional[float] = None,
     growth_override: Optional[float] = None,
@@ -484,6 +526,10 @@ def _compute_dcf_full(
 ) -> DcfAnalysis:
     """Compute DCF analysis (point estimate + sensitivity band + reverse-DCF
     implied growth) for a single instrument.
+
+    Valuation runs in the reporting currency (FCF/cash/debt units, discounted
+    at that currency's risk-free rate); per-share results are converted to the
+    quote currency at spot via GBP cross rates, and to pence for GBp listings.
     """
     info = (instrument.yahoo.info or {}) if instrument.yahoo else {}
 
@@ -492,14 +538,37 @@ def _compute_dcf_full(
     if info.get("sector") in SECTORS_WITHOUT_DCF:
         return _empty_analysis()
 
-    # Risk-free rate matched to reporting currency so EUR cash flows discount at
-    # EUR rates, GBP at GBP, etc. GBp / GBX both map to GBP.
-    currency = info.get("currency") or "USD"
-    if currency.upper() in ("GBX", "GBP"):
-        currency = "GBP"
-    risk_free_rate = risk_free_rates.get(currency, risk_free_rates.get("USD", RISK_FREE_RATE))
+    # ADRs and cross-listed names (AZN.L, ASML, SAABY) report financials in a
+    # different currency than the share price is quoted in.
+    price_ccy = info.get("currency") or "USD"
+    pence_factor = 100.0 if price_ccy in _PENCE_CURRENCIES else 1.0
+    if pence_factor != 1.0:
+        price_ccy = "GBP"
+    fin_ccy = info.get("financialCurrency") or price_ccy
 
-    est = _estimate_dcf_inputs(instrument, risk_free_rate, effective_beta_override=effective_beta_override)
+    if fin_ccy != price_ccy:
+        gbp_fin, gbp_price = fx_to_gbp.get(fin_ccy), fx_to_gbp.get(price_ccy)
+        if gbp_fin is None or gbp_price is None:
+            # No FX rate (e.g. SEK/DKK ADRs): a valuation off by the exchange
+            # rate is worse than none.
+            return _empty_analysis()
+        fx_fin_to_price = gbp_fin / gbp_price
+    else:
+        fx_fin_to_price = 1.0
+    # fin-ccy per-share value → quoted price units (pence for GBp listings)
+    to_price_units = fx_fin_to_price * pence_factor
+
+    # Discount at the rate of the cash-flow (reporting) currency so EUR flows
+    # discount at EUR rates, USD at USD, etc.
+    risk_free_rate = risk_free_rates.get(fin_ccy, risk_free_rates.get("USD", RISK_FREE_RATE))
+
+    est = _estimate_dcf_inputs(
+        instrument,
+        risk_free_rate,
+        effective_beta_override=effective_beta_override,
+        fx_price_to_fin=1.0 / fx_fin_to_price,
+        pence_factor=pence_factor,
+    )
 
     if est["current_fcf"] is None or est["current_fcf"] <= 0:
         return _empty_analysis()
@@ -523,23 +592,23 @@ def _compute_dcf_full(
             horizon,
         )
 
-    base = price_at(wacc, g0)
+    base = price_at(wacc, g0) * to_price_units
     # Pessimistic: higher discount rate + slower growth
     low_wacc = min(0.20, wacc + SENSITIVITY_WACC_PP)
     low_g = max(-0.30, g0 - SENSITIVITY_GROWTH_PP)
-    low = price_at(low_wacc, low_g)
+    low = price_at(low_wacc, low_g) * to_price_units
     # Optimistic: lower discount rate + faster growth (respects the same +30% cap
     # applied to the base estimate so sensitivity doesn't exceed validated bounds)
     high_wacc = max(0.05, wacc - SENSITIVITY_WACC_PP)
     high_g = min(0.30, g0 + SENSITIVITY_GROWTH_PP)
-    high = price_at(high_wacc, high_g)
+    high = price_at(high_wacc, high_g) * to_price_units
 
     current_price = _safe_number(info.get("currentPrice"))
-    implied = (
-        _solve_implied_growth(est, wacc, gT, horizon, current_price)
-        if current_price is not None and current_price > 0
-        else None
-    )
+    if current_price is not None and current_price > 0:
+        # Target converted into fin-ccy per-share units to match price_at.
+        implied, implied_status = _solve_implied_growth(est, wacc, gT, horizon, current_price / to_price_units)
+    else:
+        implied, implied_status = None, "unavailable"
 
     def pos_or_none(p: float) -> Optional[float]:
         return p if p > 0 else None
@@ -549,11 +618,26 @@ def _compute_dcf_full(
         "low": pos_or_none(low),
         "high": pos_or_none(high),
         "implied_growth": implied,
+        "implied_growth_status": implied_status,
     }
+
+
+async def _get_fx_to_gbp(session: AsyncSession) -> dict[str, float]:
+    """Latest available rate into GBP per source currency (GBP itself = 1.0)."""
+    rows = (
+        await session.execute(
+            select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate)
+            .where(CurrencyRateDaily.to_currency == "GBP")
+            .distinct(CurrencyRateDaily.from_currency)
+            .order_by(CurrencyRateDaily.from_currency, CurrencyRateDaily.date.desc())
+        )
+    ).all()
+    return {"GBP": 1.0, **{r.from_currency: r.rate for r in rows}}
 
 
 async def get_dcf_analyses(
     instruments: list[Instrument],
+    session: AsyncSession,
     years: int = 10,
     wacc: Optional[float] = None,
     growth: Optional[float] = None,
@@ -563,19 +647,22 @@ async def get_dcf_analyses(
     """Calculate DCF analyses (point estimate + sensitivity band + implied
     growth) for a list of instruments.
 
-    Pass `effective_betas` (keyed by `yahoo_symbol`) to override reported Yahoo
-    betas for non-US or low-beta stocks. Build the dict with
-    :func:`get_effective_betas`.
+    `session` supplies FX cross rates for names whose reporting currency
+    differs from the quote currency. Pass `effective_betas` (keyed by
+    `yahoo_symbol`) to override reported Yahoo betas for non-US or low-beta
+    stocks. Build the dict with :func:`get_effective_betas`.
     """
     async with aiohttp.ClientSession(
         connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
     ) as aiohttp_session:
         risk_free_rates = await get_risk_free_rates(aiohttp_session)
+    fx_to_gbp = await _get_fx_to_gbp(session)
     betas = effective_betas or {}
     return [
         _compute_dcf_full(
             instrument,
             risk_free_rates,
+            fx_to_gbp,
             years,
             wacc,
             growth,

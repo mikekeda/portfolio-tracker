@@ -57,7 +57,7 @@ def _row_from_holding(h: dict, instrument_id: int, margins: dict) -> dict:
         "screener_score": _num(h.get("screener_score")),
         "passed_screeners": h.get("passedScreeners") or [],
         "thesis_rule_eval": h.get("thesis_rule_eval"),
-        "extras": None,
+        "extras": {"dcf_implied_growth_status": h.get("dcf_implied_growth_status")},
         # Column is timestamp without time zone; asyncpg rejects aware datetimes
         "updated_at": datetime.now(TIMEZONE).replace(tzinfo=None),
     }

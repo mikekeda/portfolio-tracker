@@ -446,9 +446,17 @@ async def get_instrument(
             }
 
     effective_betas = await get_effective_betas([instrument], session)
-    dcf_analyses = await get_dcf_analyses([instrument], effective_betas=effective_betas)
+    dcf_analyses = await get_dcf_analyses([instrument], session, effective_betas=effective_betas)
     dcf_analysis = (
-        dcf_analyses[0] if dcf_analyses else {"price": None, "low": None, "high": None, "implied_growth": None}
+        dcf_analyses[0]
+        if dcf_analyses
+        else {
+            "price": None,
+            "low": None,
+            "high": None,
+            "implied_growth": None,
+            "implied_growth_status": "unavailable",
+        }
     )
     dcf_price: float | None = dcf_analysis["price"]
     dcf_low: float | None = dcf_analysis["low"]
@@ -607,6 +615,7 @@ async def get_instrument(
         "dcf_low": dcf_low,
         "dcf_high": dcf_high,
         "dcf_implied_growth": dcf_analysis["implied_growth"],
+        "dcf_implied_growth_status": dcf_analysis["implied_growth_status"],
         "position_review": position_review,
         "f_score": f_score_result["score"] if f_score_result else None,
         "f_score_details": f_score_result["details"] if f_score_result else None,

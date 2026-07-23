@@ -371,7 +371,7 @@ async def get_current_portfolio(
         symbols_for_technical, session, currencies=currencies_for_technical
     )
     effective_betas = await get_effective_betas(instruments_for_dcf, session)
-    dcf_analyses = await get_dcf_analyses(instruments_for_dcf, effective_betas=effective_betas)
+    dcf_analyses = await get_dcf_analyses(instruments_for_dcf, session, effective_betas=effective_betas)
     dcf_analyses_dict = dict(zip(symbols_for_technical, dcf_analyses))
 
     instrument_ids = [h.instrument.id for h in items]
@@ -391,6 +391,7 @@ async def get_current_portfolio(
             "low": None,
             "high": None,
             "implied_growth": None,
+            "implied_growth_status": "unavailable",
         }
         dcf_price = dcf_analysis["price"]
         dcf_low = dcf_analysis["low"]
@@ -428,6 +429,7 @@ async def get_current_portfolio(
                 "dcf_low": dcf_low,
                 "dcf_high": dcf_high,
                 "dcf_implied_growth": dcf_analysis["implied_growth"],
+                "dcf_implied_growth_status": dcf_analysis["implied_growth_status"],
                 "ppl": holding.ppl,
                 "fx_ppl": holding.fx_ppl,
                 "market_cap": info.get("marketCap"),
