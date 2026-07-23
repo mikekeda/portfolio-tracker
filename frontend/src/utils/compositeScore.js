@@ -68,11 +68,13 @@ export function computeComposite(h) {
   if (signalRaw != null && h.earnings_conviction) {
     signalRaw = Math.min(1, signalRaw * (CONV_MULT[h.earnings_conviction] ?? 1));
   }
-  // Decay signal weight by age: full weight < 12 months, 60% for 12–24 months, zero after 24 months
+  // Decay signal by age: full weight < 12 months, 60% for 12–24 months, excluded after 24 months.
+  // Excluded means null (remaining components reweight) — a zero-value signal
+  // would score a stale report worse than a fresh "avoid".
   if (signalRaw != null && h.earnings_announcement_date) {
     const monthsOld = earningsReportAgeMonths(h.earnings_announcement_date);
     const { freshness } = earningsAgeDecay(monthsOld);
-    signalRaw = signalRaw * freshness;
+    signalRaw = freshness === 0 ? null : signalRaw * freshness;
   }
 
   // recommendation_mean: 1=strong buy … 5=strong sell → normalise to [0, 1]
@@ -110,7 +112,8 @@ export function computeComposite(h) {
  */
 export function compositeTooltip(score, h) {
   const hasScreener = h.screener_score != null;
-  const hasSignal   = !!h.earnings_signal;
+  const signalAge   = earningsAgeDecay(earningsReportAgeMonths(h.earnings_announcement_date));
+  const hasSignal   = !!h.earnings_signal && signalAge.freshness > 0;
   const hasRec      = h.recommendation_mean != null &&
                       h.recommendation_mean >= 1 &&
                       h.recommendation_mean <= 5;
@@ -128,7 +131,9 @@ export function compositeTooltip(score, h) {
     : 'Screener: no data';
   const signalLine = hasSignal
     ? `Signal: ${h.earnings_signal}${h.earnings_conviction ? ` (${h.earnings_conviction})` : ''}  (eff. ${eff(25)}%)`
-    : 'Signal: no earnings report analysed yet';
+    : h.earnings_signal
+      ? `Signal: ${h.earnings_signal} — ${signalAge.ageLabel}`
+      : 'Signal: no earnings report analysed yet';
   const recLine = hasRec
     ? `Analyst rec: ${h.recommendation_mean?.toFixed(1)}/5  (eff. ${eff(10)}%)`
     : 'Analyst rec: no data';
