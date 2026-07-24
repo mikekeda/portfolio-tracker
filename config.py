@@ -150,7 +150,9 @@ DAYS_PER_YEAR = 365.25  # Gregorian calendar average; used for TWRR/MWRR/alpha a
 TRADING_DAYS_PER_YEAR = 252  # US/UK equity market trading days; used for volatility scaling
 
 # Currency Configuration
-CURRENCIES = ("USD", "EUR", "CAD")
+# USD/EUR/CAD are instrument listing currencies; SEK/DKK are reporting
+# currencies of US-listed ADRs (SAABY, NVO) needed for DCF FX conversion.
+CURRENCIES = ("USD", "EUR", "CAD", "SEK", "DKK")
 
 # CELERY STUFF
 CELERY_BROKER_URL = "redis://localhost:6379/11"
