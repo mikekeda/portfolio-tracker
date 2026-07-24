@@ -56,6 +56,11 @@ EFFECTIVE_BETA_LOOKBACK_DAYS = 420
 # Blume (1971): sample betas mean-revert toward 1; 2/3 sample + 1/3 prior damps
 # single-name noise over the ~1y regression window.
 BETA_BLUME_SAMPLE_WEIGHT = 0.67
+# CAPM taken literally at low betas values defensive names at ~6% discount
+# rates, producing +200% "undervaluations" (BSX, Thales). The low-beta anomaly
+# is a portfolio-construction fact, not a required return for a concentrated
+# book, so valuation floors the beta; estimates themselves stay unfloored.
+DCF_BETA_FLOOR = 0.8
 MIN_BETA_OBS = 120  # ~6 months of aligned daily returns for a usable regression
 MAX_RETURN_GAP_DAYS = 5  # drop returns spanning price holes instead of lumping the move
 
@@ -131,6 +136,7 @@ def calculate_cost_of_equity(risk_free_rate: float, beta: Optional[float]) -> fl
     """Calculates Cost of Equity using CAPM."""
     # If beta is missing (None), assume market average of 1.0
     safe_beta = beta if isinstance(beta, (int, float)) else 1.0
+    safe_beta = max(safe_beta, DCF_BETA_FLOOR)
 
     # CAPM Formula
     ke = risk_free_rate + (safe_beta * EQUITY_RISK_PREMIUM)
