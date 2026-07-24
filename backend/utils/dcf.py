@@ -1,4 +1,6 @@
-from datetime import datetime, timedelta
+import statistics
+from bisect import bisect_right
+from datetime import date, datetime, timedelta
 from typing import Any, Optional, TypedDict
 
 import aiohttp
@@ -8,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import EQUITY_RISK_PREMIUM, RISK_FREE_RATE, SPY, TERMINAL_GROWTH_RATE, TIMEZONE
 from models import CurrencyRateDaily, Instrument, PricesDaily
 from utils.market_data import get_risk_free_rates
-from backend.utils.technical import PRICE_COLUMN, calculate_annualized_volatility
+from backend.utils.technical import PRICE_COLUMN
 
 # --- Constants ---
 # Plateau + fade projection: the first N years run at the initial growth rate,
@@ -39,17 +41,23 @@ SECTORS_WITHOUT_DCF: frozenset[str] = frozenset({"Financial Services"})
 _PENCE_CURRENCIES: frozenset[str] = frozenset({"GBp", "GBX"})
 
 # Effective beta for CAPM.
-# Reported Yahoo beta is the regression slope against the S&P 500. For non-US
-# stocks that move out of sync with the S&P, beta can be artificially low and
-# produce absurdly low WACC (e.g. Saab at beta≈0.3 with true annualised vol of
-# ~45%). We override such cases with a volatility-ratio proxy so the discount
-# rate reflects actual systematic risk rather than correlation to the wrong
-# benchmark.
+# Reported Yahoo beta is the regression slope against the S&P 500 — the wrong
+# benchmark for non-US stocks, where it can come out absurdly low (e.g. Saab
+# reported ≈0.3 while rearming Europe). We override such cases with our own
+# regression beta against SPY (VUAG.L) from GBP daily returns, so FX moves
+# count toward systematic risk the way the portfolio experiences them. A
+# volatility *ratio* is deliberately not used: it prices idiosyncratic risk as
+# systematic (AZN.L: vol ratio 2.4 vs near-zero market correlation).
 EFFECTIVE_BETA_LO = 0.3  # floor — prevents non-US stocks ducking under realistic risk
 EFFECTIVE_BETA_HI = 2.5  # ceiling — prevents meme spikes dominating WACC
 REPORTED_BETA_TRUST_THRESHOLD = 0.3  # reported betas below this are treated as unreliable
 # 420 calendar days ≈ 1 trading year plus buffer for holidays/missing days.
 EFFECTIVE_BETA_LOOKBACK_DAYS = 420
+# Blume (1971): sample betas mean-revert toward 1; 2/3 sample + 1/3 prior damps
+# single-name noise over the ~1y regression window.
+BETA_BLUME_SAMPLE_WEIGHT = 0.67
+MIN_BETA_OBS = 120  # ~6 months of aligned daily returns for a usable regression
+MAX_RETURN_GAP_DAYS = 5  # drop returns spanning price holes instead of lumping the move
 
 # Corporate tax rates by company domicile country.
 # Used to compute after-tax cost of debt in WACC.
@@ -673,6 +681,35 @@ async def get_dcf_analyses(
     ]
 
 
+def _daily_returns_gbp(
+    prices_by_date: dict[date, float],
+    fx_dates: Optional[list[date]],
+    fx_rates: Optional[list[float]],
+) -> dict[date, float]:
+    """Consecutive-day GBP returns keyed by the later date.
+
+    `fx_dates`/`fx_rates` (sorted, parallel) convert non-GBP prices at the most
+    recent rate on or before each date; pass None for GBP/pence listings, where
+    the constant scale factor cancels in returns. Returns spanning a price hole
+    longer than MAX_RETURN_GAP_DAYS are dropped rather than lumped.
+    """
+    out: dict[date, float] = {}
+    prev_d = prev_p = None
+    for d in sorted(prices_by_date):
+        rate = 1.0
+        if fx_dates is not None:
+            i = bisect_right(fx_dates, d) - 1
+            if i < 0:  # price predates FX history — can't normalise yet
+                prev_d = prev_p = None
+                continue
+            rate = fx_rates[i]
+        p = prices_by_date[d] * rate
+        if prev_p is not None and prev_p > 0 and (d - prev_d).days <= MAX_RETURN_GAP_DAYS:
+            out[d] = p / prev_p - 1.0
+        prev_d, prev_p = d, p
+    return out
+
+
 async def get_effective_betas(
     instruments: list[Instrument],
     session: AsyncSession,
@@ -686,13 +723,10 @@ async def get_effective_betas(
         benchmark), or
       - the reported beta is < 0.3 (implausibly low for any listed equity).
 
-    In those cases the override is the realised 1-year volatility ratio
-    (stock σ / VUAG.L σ), floored by the reported beta when available (so we
-    never *reduce* the risk reading below what Yahoo reports). Every override
-    is clamped to [0.3, 2.5].
-
-    US stocks with a healthy reported beta are omitted; DCF falls back to the
-    Yahoo value in that case.
+    The override is the regression beta of the stock's GBP daily returns
+    against SPY (VUAG.L) over the lookback window, Blume-shrunk toward 1.0
+    and clamped to [0.3, 2.5]. Symbols without enough aligned history or FX
+    coverage are omitted; DCF falls back to the Yahoo value for those.
     """
     if not instruments:
         return {}
@@ -701,7 +735,7 @@ async def get_effective_betas(
     # price data required). This lets us skip the PricesDaily query entirely
     # when the whole portfolio is US stocks with healthy reported betas —
     # which is the common case for this app.
-    eligible: list[tuple[Instrument, Optional[float]]] = []
+    eligible: list[Instrument] = []
     for inst in instruments:
         if not inst.yahoo_symbol:
             continue
@@ -710,39 +744,73 @@ async def get_effective_betas(
         country = (info.get("country") or "").strip()
         is_non_us = bool(country) and country != "United States"
         if is_non_us or (reported is not None and reported < REPORTED_BETA_TRUST_THRESHOLD):
-            eligible.append((inst, reported))
+            eligible.append(inst)
 
     if not eligible:
         return {}
 
-    query_symbols = list({*(inst.yahoo_symbol for inst, _ in eligible), SPY})
+    query_symbols = list({*(inst.yahoo_symbol for inst in eligible), SPY})
     cutoff = datetime.now(TIMEZONE).date() - timedelta(days=lookback_days)
 
     price_rows = (
         await session.execute(
-            select(PricesDaily.symbol, PRICE_COLUMN)
-            .filter(PricesDaily.symbol.in_(query_symbols), PricesDaily.date >= cutoff)
-            .order_by(PricesDaily.date)
+            select(PricesDaily.symbol, PricesDaily.date, PRICE_COLUMN).filter(
+                PricesDaily.symbol.in_(query_symbols), PricesDaily.date >= cutoff
+            )
+        )
+    ).all()
+    fx_rows = (
+        await session.execute(
+            select(CurrencyRateDaily.date, CurrencyRateDaily.from_currency, CurrencyRateDaily.rate).where(
+                CurrencyRateDaily.to_currency == "GBP", CurrencyRateDaily.date >= cutoff
+            )
         )
     ).all()
 
-    price_history: dict[str, list[float]] = {}
+    price_map: dict[str, dict[date, float]] = {}
     for row in price_rows:
-        price_history.setdefault(row.symbol, []).append(row.price)
+        price_map.setdefault(row.symbol, {})[row.date] = row.price
 
-    reference_vol = calculate_annualized_volatility(price_history.get(SPY, []))
+    fx_by_ccy: dict[str, dict[date, float]] = {}
+    for row in fx_rows:
+        fx_by_ccy.setdefault(row.from_currency, {})[row.date] = row.rate
+    fx_series = {ccy: (sorted(d2r), [d2r[d] for d in sorted(d2r)]) for ccy, d2r in fx_by_ccy.items()}
+
+    bench_returns = _daily_returns_gbp(price_map.get(SPY, {}), None, None)  # VUAG.L quotes in pence
+    if len(bench_returns) < MIN_BETA_OBS:
+        return {}
+    bench_dates = sorted(bench_returns)
+    bench_idx = {d: i for i, d in enumerate(bench_dates)}
+    bench_vals = [bench_returns[d] for d in bench_dates]
 
     result: dict[str, float] = {}
-    for inst, reported in eligible:
-        stock_vol = calculate_annualized_volatility(price_history.get(inst.yahoo_symbol, []))
-        vol_ratio = (stock_vol / reference_vol) if (stock_vol and reference_vol) else None
-        if vol_ratio is None:
-            continue  # no usable volatility — leave DCF to use the reported beta
+    for inst in eligible:
+        if inst.currency == "GBP" or inst.currency in _PENCE_CURRENCIES:
+            fx_dates, fx_rates = None, None
+        elif inst.currency in fx_series:
+            fx_dates, fx_rates = fx_series[inst.currency]
+        else:
+            continue  # no FX history for this listing currency — use the reported beta
+        stock_returns = _daily_returns_gbp(price_map.get(inst.yahoo_symbol, {}), fx_dates, fx_rates)
 
-        # Prefer the higher of vol ratio and reported beta: we triggered the
-        # override because we suspect the reported figure, so we never want to
-        # replace it with something even lower.
-        effective = max(vol_ratio, reported) if reported is not None else vol_ratio
-        result[inst.yahoo_symbol] = _clamp(effective, EFFECTIVE_BETA_LO, EFFECTIVE_BETA_HI)
+        # Dimson (1979) aggregated-coefficients beta: US listings close ~4.5h
+        # after VUAG's LSE close, pushing part of the same-day covariance into
+        # the adjacent day; summing the lag -1/0/+1 slopes recovers it. For
+        # synchronous listings the lag terms are ~0, so this is safe globally.
+        xs, y_same, y_prev, y_next = [], [], [], []
+        for d, r in stock_returns.items():
+            i = bench_idx.get(d)
+            if i is None or i == 0 or i == len(bench_dates) - 1:
+                continue
+            xs.append(r)
+            y_same.append(bench_vals[i])
+            y_prev.append(bench_vals[i - 1])
+            y_next.append(bench_vals[i + 1])
+        if len(xs) < MIN_BETA_OBS:
+            continue
+        var_b = statistics.variance(y_same)
+        beta = sum(statistics.covariance(xs, ys) for ys in (y_same, y_prev, y_next)) / var_b
+        shrunk = BETA_BLUME_SAMPLE_WEIGHT * beta + (1.0 - BETA_BLUME_SAMPLE_WEIGHT)
+        result[inst.yahoo_symbol] = _clamp(shrunk, EFFECTIVE_BETA_LO, EFFECTIVE_BETA_HI)
 
     return result
