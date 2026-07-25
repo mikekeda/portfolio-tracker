@@ -362,6 +362,16 @@
   white-space: nowrap;
 }
 
+/* Amber rather than red: a cap breach is a policy state, not a data fault. */
+.risk-flag-blocked {
+  background: #fffbeb;
+  color: #b45309;
+}
+
+.risk-row-blocked td {
+  opacity: 0.55;
+}
+
 .risk-excluded {
   margin: 14px 0 0;
   font-size: 12px;

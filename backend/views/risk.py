@@ -9,7 +9,9 @@ CurrencyRateDaily, estimates a Ledoit-Wolf shrunk covariance, then returns:
     and the volatility impact of adding NEW_MONEY_GBP to that position
   * the same volatility impact for every non-held monitored instrument
     (closed form against the portfolio return series; see _candidate_vol_deltas)
-  * per-tag-cluster value weight vs risk share (against the soft caps)
+  * per-tag-cluster value weight vs risk share (against the soft caps), and the
+    breached tags blocking each holding from receiving new money
+  * the latest stored Sharpe / Sortino / Jensen's alpha / beta alongside
 
 Holdings with too little price history (recent IPOs) are excluded from the
 model and reported separately. The payload is cached in-process; it only
@@ -30,7 +32,7 @@ from backend.app import get_db_session
 from backend.utils.risk_math import correlation_clusters, hrp_weights, ledoit_wolf_cov, risk_contributions
 from backend.views._shared import PRICE_COLUMN
 from config import SPY, TAG_CLUSTER_SOFT_CAPS, TRADING_DAYS_PER_YEAR
-from models import CurrencyRateDaily, HoldingDaily, Instrument, PricesDaily
+from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 
 router = APIRouter()
 
@@ -343,6 +345,14 @@ def build_risk_payload(
         )
     clusters.sort(key=lambda c: c["risk_share"], reverse=True)
 
+    # A cluster at or over its soft cap is closed to new money (STRATEGY.md R2/R3:
+    # caps are enforced by withholding contributions, never by forced selling), so
+    # mark every holding carrying a breached tag. Computed after `clusters` because
+    # holdings_payload is assembled before the cluster risk shares exist.
+    breached = {c["tag"] for c in clusters if c["risk_share"] >= c["soft_cap"]}
+    for h in holdings_payload:
+        h["blocked_tags"] = sorted(breached.intersection(h["tags"]))
+
     return {
         "as_of": latest_date.isoformat(),
         "window": {
@@ -372,11 +382,45 @@ def build_risk_payload(
     }
 
 
+async def _risk_adjusted_stats(session: AsyncSession) -> dict[str, Any]:
+    """Latest stored risk-adjusted returns, to sit beside the modelled volatility.
+
+    Volatility alone says how much risk is being run, not whether it is being
+    paid for; these are the fields that answer that. Read from the newest row
+    that has them rather than the newest row outright, since they are written by
+    a separate job (scripts/update_returns.py) and can lag by a day.
+    """
+    row = (
+        await session.execute(
+            select(
+                PortfolioDaily.date,
+                PortfolioDaily.sharpe_ratio,
+                PortfolioDaily.sortino_ratio,
+                PortfolioDaily.jensens_alpha,
+                PortfolioDaily.beta,
+            )
+            .where(PortfolioDaily.sharpe_ratio.is_not(None))
+            .order_by(PortfolioDaily.date.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return {}
+    return {
+        "as_of": row.date.isoformat(),
+        "sharpe_ratio": row.sharpe_ratio,
+        "sortino_ratio": row.sortino_ratio,
+        "jensens_alpha": row.jensens_alpha,
+        "beta": row.beta,
+    }
+
+
 @router.get("/api/risk")
 async def get_risk(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     now = time.time()
     if _cache["payload"] is not None and now - _cache["fetched_at"] < CACHE_TTL_SECONDS:
         return _cache["payload"]
     payload = build_risk_payload(*await _load_inputs(session))
+    payload["risk_adjusted"] = await _risk_adjusted_stats(session)
     _cache.update(payload=payload, fetched_at=now)
     return payload

@@ -168,6 +168,7 @@ const Risk = () => {
   }
 
   const { portfolio, window: win, holdings, clusters, excluded, warnings, groups } = data;
+  const riskAdjusted = data.risk_adjusted;
   const maskable = (v) => (hideAmounts ? MASK : formatGbp(v));
 
   const dailyMove = portfolio.annual_volatility / Math.sqrt(252);
@@ -200,7 +201,9 @@ const Risk = () => {
         <p className="risk-subtitle">
           Where portfolio risk is concentrated, and where new money would diversify it. Model:{' '}
           {win.n_obs} days of GBP daily returns ({win.start} → {win.end}), Ledoit-Wolf shrunk
-          covariance (δ = {portfolio.shrinkage.toFixed(2)}). As of {data.as_of}.
+          covariance (δ = {portfolio.shrinkage.toFixed(2)}). As of {data.as_of}. Covers this ISA
+          only — holdings in other accounts are not modelled, so concentration measured here
+          understates total-wealth exposure.
         </p>
       </div>
 
@@ -261,11 +264,24 @@ const Risk = () => {
             independent ones — see the groups below
           </div>
         </div>
+        {riskAdjusted?.sharpe_ratio != null && (
+          <div className="risk-card">
+            <div className="risk-card-label">Risk-adjusted return</div>
+            <div className="risk-card-value">{riskAdjusted.sharpe_ratio.toFixed(2)}</div>
+            <div className="risk-card-note">
+              Sharpe
+              {riskAdjusted.sortino_ratio != null && ` · Sortino ${riskAdjusted.sortino_ratio.toFixed(2)}`}
+              {riskAdjusted.jensens_alpha != null && ` · alpha ${riskAdjusted.jensens_alpha.toFixed(1)}%`}
+              {riskAdjusted.beta != null && ` · beta ${riskAdjusted.beta.toFixed(2)}`}
+              {' — whether the volatility above is being paid for'}
+            </div>
+          </div>
+        )}
         <div className="risk-card">
           <div className="risk-card-label">Modelled value</div>
           <div className="risk-card-value">{maskable(portfolio.model_value_gbp)}</div>
           <div className="risk-card-note">
-            {formatPct(portfolio.model_value_gbp / portfolio.total_value_gbp)} of portfolio
+            {formatPct(portfolio.model_value_gbp / portfolio.total_value_gbp)} of this ISA
           </div>
         </div>
       </div>
@@ -375,12 +391,24 @@ const Risk = () => {
             </tr>
           </thead>
           <tbody>
+            {/* Blocked names sort last rather than being hidden — a cap breach is
+                information, and silently dropping rows reads as a bug. Filtering
+                happens before the slice so they can't crowd out fundable ones. */}
             {sortRows(rows, buySort)
+              .sort((a, b) => (a.blocked_tags?.length ? 1 : 0) - (b.blocked_tags?.length ? 1 : 0))
               .slice(0, 12)
               .map((h) => (
-                <tr key={h.symbol}>
+                <tr key={h.symbol} className={h.blocked_tags?.length ? 'risk-row-blocked' : undefined}>
                   <td>
                     <StockLink symbol={h.symbol} />
+                    {h.blocked_tags?.length > 0 && (
+                      <span
+                        className="risk-flag risk-flag-blocked"
+                        title={`Cluster at or over its soft cap: ${h.blocked_tags.join(', ')} — closed to new money`}
+                      >
+                        capped
+                      </span>
+                    )}
                   </td>
                   <td className="risk-name-cell">{h.name}</td>
                   <td className={`num ${volDeltaClass(h.next_1k_vol_delta_bp)}`}>
