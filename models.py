@@ -579,6 +579,13 @@ class TransactionHistory(Base):
     # Notes field from CSV
     notes: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
 
+    # Hand-written record of *why* this transaction was made — the reasoning behind a
+    # deposit, buy or sell ("looked oversold, deposited £300 from salary"). Distinct
+    # from `notes`, which is broker-supplied: update_history_from_csv.py fills that
+    # from the CSV export and sync_transactions.py sets it to None. Importers must
+    # never write this column, or a re-import would erase the annotations.
+    decision_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     # Fees (CSV fee columns: "Currency conversion fee", "Stamp duty reserve tax", etc.)
     # Structure: [{"name": "CURRENCY_CONVERSION_FEE", "quantity": -0.05, "timeCharged": "2024-04-18 18:03:20"}, ...]
     fees: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSONB, nullable=True)

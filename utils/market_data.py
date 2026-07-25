@@ -88,6 +88,41 @@ async def gen_fear_greed_index(session: aiohttp.ClientSession) -> Optional[dict[
         return None
 
 
+async def gen_fear_greed_history(
+    session: aiohttp.ClientSession, start: date
+) -> Optional[list[dict[str, Union[date, float, str]]]]:
+    """Fetch the daily Fear & Greed series from `start` to today.
+
+    Returns [{"date": date, "value": float, "label": str}, ...] oldest first, or
+    None if the request fails.
+
+    Same CNN endpoint as gen_fear_greed_index, which reads only the current
+    `fear_and_greed` block and discards the `fear_and_greed_historical` series in
+    the same payload. Appending a start date to the path widens that series, so no
+    third-party archive is needed to backfill MarketMetricsDaily.fear_greed_index.
+    """
+    url = f"https://production.dataviz.cnn.io/index/fearandgreed/graphdata/{start.isoformat()}"
+
+    headers = {"User-Agent": UA}
+
+    try:
+        async with session.get(url, headers=headers) as response:
+            points = (await response.json())["fear_and_greed_historical"]["data"]
+    except Exception as e:
+        logger.warning("Error fetching Fear & Greed history from %s: %s", start, e)
+        return None
+
+    # x is a unix timestamp in milliseconds, UTC.
+    return [
+        {
+            "date": datetime.fromtimestamp(point["x"] / 1000, tz=TIMEZONE).date(),
+            "value": float(point["y"]),
+            "label": point.get("rating"),
+        }
+        for point in sorted(points, key=lambda p: p["x"])
+    ]
+
+
 async def gen_fred_latest(
     session: aiohttp.ClientSession, series_id: str, limit: int = 1
 ) -> Optional[list[dict[str, float]]]:
