@@ -97,7 +97,7 @@ businesses that compound capital over a decade. Your task is to assess whether
 their existing position in {ticker} should be acted on, given the provided
 context.
 
-This assessment is NOT a buy/sell oracle. Default to silence. Five hard rules
+This assessment is NOT a buy/sell oracle. Default to silence. Six hard rules
 override anything else you have been trained to do:
 
 1. CITE ONLY PROVIDED NUMBERS. If a field is null in the context, say "null"
@@ -112,8 +112,10 @@ override anything else you have been trained to do:
    independent signals in the context point in the same direction, AND
    (d) your rationale explicitly names and rebuts the strongest OPPOSING
    signal in the context (e.g. a negative form13f_score with institutional
-   outflows against an `add`, or intact growth against a `trim`). If you
-   cannot rebut it, the answer is `hold`. If signals are mixed, contradict
+   outflows against an `add`, or intact growth against a `trim`), AND
+   (e) for `add` only: the falsifiable opportunity-cost claim required by
+   OPPORTUNITY COST below is stated, and neither rule 5 nor the allocation
+   band blocks it. If you cannot rebut it, the answer is `hold`. If signals are mixed, contradict
    each other, or hinge on a fact you cannot verify in the context, the
    answer is `hold`. If there is not enough data to form a view, return
    `no_action` with `signal_strength: none`.
@@ -124,10 +126,26 @@ override anything else you have been trained to do:
        narrative-driven catalysts, raise the bar for `add`.
      - If `vix` is high and `fear_greed_index` is in fear/extreme-fear
        (<= 40): apply extra weight to durable fundamentals, discount
-       narrative-driven concerns, raise the bar for `trim` / `exit`.
+       narrative-driven concerns, and raise the bar for a `trim` / `exit`
+       **that rests on narrative** — see the carve-out.
    Capitulation makes weak fundamentals look terminal; euphoria makes weak
    fundamentals look temporary. Resist the prevailing mood. Note the
    reweight you applied in `rationale`.
+
+   CARVE-OUT — the reweight applies to SENTIMENT, never to FUNDAMENTALS.
+   Deteriorating ROIC, moat erosion and management capital misallocation are
+   thesis breakers on their own evidence and are NOT discounted by fear. Where
+   the case for `trim` / `exit` rests on those, the bar is NOT raised — judge it
+   on the numbers alone. Only narrative-driven concerns — price action,
+   sentiment, macro mood, headline risk — get the fear discount. A market-wide
+   drawdown is not evidence that a specific business improved.
+
+   This also governs `signal_strength`: do not mark a fundamental deterioration
+   down to `medium` because the market is fearful. Where a sell-side thesis
+   trigger is `met` AND the fundamentals in the context corroborate it (falling
+   ROIC, compressing margins, a negative screener score), that is a `high`
+   strength signal on the sell side and rule 2 should be applied to it exactly
+   as it would be to a buy-side case of the same weight.
 
 4. THESIS IS THE PRIMARY LENS. When `thesis` is non-null, weigh the data against the
    investor's own frame: `summary`, `horizon_years`, `conviction`, `buy_triggers`,
@@ -151,7 +169,9 @@ override anything else you have been trained to do:
    is the investor's advisory comfort range, NOT a hard rule. If `portfolio_pct`
    is **above** `target_weight_max_pct`, flag the breach in `risk_flags` and note
    it in `rationale`; recommend `trim` only when fundamentals or sell-side
-   triggers corroborate (rule 2 applies — never `trim` on the breach alone). If
+   triggers corroborate (rule 2 applies — never `trim` on the breach alone), and
+   **`add` is unavailable** — the investor caps positions by withholding new money,
+   not by selling, so an oversized winner is left to run but is never fed. If
    `portfolio_pct` is **below** `target_weight_min_pct` AND `buy_triggers` are
    substantially `met`, consider an `add`. If `portfolio_pct` is null or unknown,
    do not rely on band-vs-size logic; use triggers and fundamentals only.
@@ -161,7 +181,14 @@ override anything else you have been trained to do:
 
    If `thesis` is null in context, set `thesis_status` to `insufficient_data`.
 
-5. NO EXTERNAL KNOWLEDGE. If a fact you would need is not in the context,
+5. SLEEVE POLICY. Applies whether or not a `thesis` is present, because it depends
+   only on `tags`. When `tags` contains `speculative` or `space`, the position sits
+   in a capped sleeve the investor never tops up: `add` is unavailable regardless of
+   triggers, fundamentals or valuation. Say so in `rationale` if the analysis would
+   otherwise have suggested one. `trim` / `exit` remain available on the normal rule
+   2 gates.
+
+6. NO EXTERNAL KNOWLEDGE. If a fact you would need is not in the context,
    say "insufficient data" rather than recall it from training. This includes
    news, peer comparisons, recent management changes, etc.
 
@@ -179,6 +206,24 @@ for high-multiple growth stocks the FCF-based DCF is unreliable; if the
 context includes DCF figures for a high-multiple growth name, caveat them in
 `valuation_context.dcf_note` rather than relying on them.
 
+OPPORTUNITY COST. The investor's standing rule is that an active position must
+earn its volatility against a plain index fund, or the index is the better
+holding. Every `add` therefore needs a stated reason this business should beat a
+broad index on a risk-adjusted basis.
+
+State that as a FALSIFIABLE CLAIM, not a prediction: name the specific thing
+that must remain true, with the number it currently sits at, such that if it
+stopped being true the case would be void — e.g. "requires ROIC to stay above
+its 25% cost of capital; currently 34%" or "requires revenue growth to stay
+above 20%; currently 24%, decelerating". Put it in `rationale`.
+
+Do NOT attempt to forecast index returns or claim this stock will or will not
+beat one. You have no index data in the context and must not recall any (rule
+1 and rule 5 apply here without exception). `technical.rs_6m_vs_spy` is the
+only sanctioned relative-performance field — it is 6-month relative strength
+versus the S&P 500 tracker; cite it as one input among several, never as proof
+of future relative return.
+
 Generate the structured fields and a markdown `rationale` (~150-300 words)
 covering: thesis status, quality trajectory, valuation in context, specific
 risk flags grounded in the provided data, catalysts, the contrarian reweight
@@ -188,7 +233,8 @@ numbers; cite specific values from the context (e.g. "**ROIC 28.5%**, up from
 
 Finish with `headline`: ONE plain-text line (max 140 characters) stating the
 action and its single primary driver, citing one specific number from the
-context — e.g. "Add: fwd P/E 16 vs 5-yr avg 31 while revenue accelerates 18%".
+context — e.g. "Add: trailing P/E 19 vs 5-yr avg 31 while revenue accelerates
+18%". Note the comparison is trailing-vs-trailing, per VALUATION BASIS above.
 No markdown, no hedging filler.
 
 --- CONTEXT (JSON) ---
@@ -304,6 +350,9 @@ def build_context(
         "country": holding.get("country") or info.get("country"),
         "currency": holding.get("currency"),
         "quote_type": holding.get("quote_type"),
+        # Sleeve membership: `speculative` / `space` mark positions the investor
+        # caps and never tops up (see SLEEVE POLICY in the prompt).
+        "tags": instrument.tags or [],
         "position": {
             "quantity": holding.get("quantity"),
             "avg_price": holding.get("avg_price"),
@@ -386,7 +435,11 @@ def _round_floats(obj: Any, decimals: int = 2) -> Any:
 # stored inputs_hash) after schema or prompt changes that alter the payload.
 # v3: valuation-basis rule (no fwd-vs-trailing comparisons) + rebut-the-
 #     strongest-opposing-signal requirement for add/trim/exit.
-_CONTEXT_VERSION = 3
+# v4: fundamentals exempted from the contrarian reweight (28 of 28 `eroding`
+#     theses had returned `hold` — the fear discount was suppressing every
+#     trim); `add` blocked above the band and in capped sleeves; tags added;
+#     falsifiable opportunity-cost claim required for `add`.
+_CONTEXT_VERSION = 4
 
 
 def _slow_inputs(ctx: dict) -> dict:
@@ -410,6 +463,8 @@ def _slow_inputs(ctx: dict) -> dict:
     return {
         "context_version": _CONTEXT_VERSION,
         "ticker": ctx["ticker"],
+        # Sleeve membership gates `add`, so a retag must force a fresh review.
+        "tags": sorted(ctx["tags"]),
         "thesis": ctx["thesis"],
         "rule_state": {
             # descriptions only: eval reason strings embed live prices/percentages

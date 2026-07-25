@@ -265,7 +265,13 @@ while generating a comprehensive summary.
 
 {regional_notes}
 
-**CRITICAL: EPS Guidance is the highest priority** - Stock price = EPS × PE ratio. If EPS guidance grows 10%, stock should theoretically grow 10% with same PE.
+**Guidance is the most important field to EXTRACT** — it is the most decision-relevant
+number in the filing and the most often buried. Extract it thoroughly.
+
+That is a priority about extraction, not about judgement. Guidance for one quarter or one
+year does not outrank the long-term criteria above when you score the investment: a raised
+guide on a business with deteriorating returns on capital is not a `buy`, and a soft guide
+on a compounder with an intact moat is not an `avoid`.
 
 **Extract the following structured data:**
 
@@ -296,14 +302,37 @@ while generating a comprehensive summary.
 3. **Investment Assessment (REQUIRED - answer "is this a good buy?"):**
    - **recommendation**: "buy" (attractive), "hold" (neutral), "avoid" (unattractive), or "consider" (worth researching)
    - **conviction**: "high", "medium", or "low" — strength of the investment signal (consistent evidence vs mixed vs contradictory), not merely how clear the filing text is
-   - **Calibration**: most filings describe routine quarters. Across a large sample expect
-     roughly 20% "buy", 30% "consider", 35% "hold", 15% "avoid" — an in-line quarter with no
-     change to the long-term thesis is a "hold", not a "buy". Reserve "buy" for concrete
-     positive evidence in THIS report (accelerating growth, expanding margins or returns on
-     capital, raised guidance) and "high" conviction for the strongest ~10% of reports.
-     Never pair "buy" with "high" conviction unless key_concerns are identified and clearly
-     outweighed by the evidence. Companies narrate their own results favourably — judge the
-     numbers, not the framing.
+
+   - **THE DEFAULT IS "hold".** Most filings describe routine quarters that change nothing
+     about a ten-year thesis. Start at "hold" and move away from it only when THIS report
+     clears a gate below. Do not reason about how often each verdict "should" occur — judge
+     this filing on its own evidence. Companies narrate their own results favourably; judge
+     the numbers, not the framing.
+
+   - **Gate for "buy" — at least TWO of the following, each cited with the specific number
+     from this report:**
+       (a) revenue growth accelerating versus the prior comparable period;
+       (b) operating or gross margin expanding year over year;
+       (c) guidance raised versus the company's own previous guidance;
+       (d) returns on capital improving (ROIC/ROCE/ROI stated or clearly inferable);
+       (e) free cash flow growing faster than net income.
+     If you cannot cite two with numbers, the answer is at most "consider".
+
+   - **Gate for "avoid" — at least ONE of the following, cited with the number:**
+       deteriorating returns on capital; margin compression with no stated one-off cause;
+       guidance cut; evidence of moat erosion (share loss, pricing pressure); or capital
+       misallocation (dilution funding operations, debt raised for buybacks, acquisitions
+       at premium multiples outside the core).
+
+   - **"consider"** is for genuinely mixed evidence, or where the decisive numbers are not
+     disclosed in this filing.
+
+   - **Gate for "high" conviction:** name the single strongest piece of OPPOSING evidence in
+     this report — with its number — and explain in `rationale` why it is outweighed. If you
+     cannot name one, or cannot rebut it, conviction is at most "medium". A report whose
+     evidence all points one way with nothing to rebut is usually incomplete reading, not
+     high conviction. "buy" + "high" additionally requires at least one entry in
+     `key_concerns`.
    - **rationale**: 2-3 sentences explaining why (e.g., "Strong guidance raise and margin expansion support buy. Debt paydown reduces risk.")
    - **key_catalysts**: 2-4 positive drivers (e.g., "AI revenue accelerating", "Market share gains", "Buyback program")
    - **key_concerns**: 2-4 risks (e.g., "Macro headwinds", "Customer concentration", "Margin pressure")
