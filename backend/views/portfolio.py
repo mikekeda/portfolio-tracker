@@ -706,8 +706,30 @@ async def get_portfolio_history(
 
     # Zero-index every line at the window start so the chart answers
     # "return within this time window" for portfolio and benchmarks alike.
-    portfolio_start_return = snapshots[0].return_pct or 0.0
+    #
+    # The portfolio line comes from the TWRR wealth index rather than differencing
+    # `return_pct`. `return_pct` is lifetime P&L over the cost basis of *currently
+    # held* positions, so a deposit inflates its denominator and drags the line
+    # down with no price move at all: the April 2026 deposit alone put the 6-month
+    # window 11pp below the true time-weighted return, flipping it from +3.1% to
+    # -8.0%. Differencing two such values is also arithmetic where the benchmark
+    # lines are geometric, so the two were never comparable. `twrr` is annualised
+    # from inception, so the index must be built over the full history (see
+    # `_twrr_wealth_index`) before being re-based to this window.
+    twrr_res = await session.execute(
+        select(PortfolioDaily.date, PortfolioDaily.twrr).order_by(PortfolioDaily.date)
+    )
+    wealth_rows = twrr_res.all()
+    wealth_by_date = dict(
+        zip(
+            (row.date for row in wealth_rows),
+            _twrr_wealth_index([(row.date, row.twrr) for row in wealth_rows]),
+        )
+    )
+    window_base = next((wealth_by_date[s.date] for s in snapshots if wealth_by_date.get(s.date)), None)
+
     bench = [0.0 for _bench_symbol in BENCHES]
+    portfolio_return = 0.0
 
     history_data = []
     for snapshot in snapshots:
@@ -717,12 +739,15 @@ async def get_portfolio_history(
             else bench[i]
             for i, bench_symbol in enumerate(BENCHES)
         ]
+        wealth = wealth_by_date.get(snapshot.date)
+        if wealth and window_base:
+            portfolio_return = (wealth / window_base - 1) * 100
         history_data.append(
             {
                 "date": snapshot.date.isoformat(),
                 "total_value": snapshot.value,
                 "total_profit": snapshot.unrealised_profit,
-                "total_return_pct": (snapshot.return_pct or 0.0) - portfolio_start_return,
+                "total_return_pct": portfolio_return,
                 "country_allocation": snapshot.country_allocation,
                 "sector_allocation": snapshot.sector_allocation,
                 "currency_allocation": snapshot.currency_allocation,
