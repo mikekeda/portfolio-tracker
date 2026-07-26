@@ -322,27 +322,42 @@ const Risk = () => {
       )}
 
       <div className="risk-section">
-        <h2>Theme clusters vs soft caps</h2>
+        <h2>Theme clusters</h2>
         <p className="risk-section-note">
-          Share of portfolio risk per tag cluster. The bar fills toward the cluster&apos;s soft cap
-          — red means the theme carries more risk than the cap allows. Tags overlap, so shares
-          don&apos;t sum to 100%.
+          Two separate readings. The bar is share of portfolio <em>risk</em>, filling toward the
+          cluster&apos;s alert threshold — red means risk is disproportionate to the money in it.
+          &quot;Buyable&quot; is the <em>value</em> weight the buy gate tests, which excludes ETFs
+          from thematic clusters; &quot;closed&quot; means the cluster is at its cap and takes no
+          new money. Tags overlap, so shares don&apos;t sum to 100%.
         </p>
         <div className="risk-cluster-list">
           {clusters.map((c) => {
-            const over = c.risk_share > c.soft_cap;
+            // Two independent signals. `capped` is a policy state — the cluster is
+            // closed to new money on the same basis the agent uses. `alert` is a
+            // warning that risk is disproportionate to the money, and blocks nothing.
+            const capped = c.gated_weight >= c.soft_cap;
+            const alert = c.risk_alert_breached;
             return (
               <div className="risk-cluster-row" key={c.tag}>
                 <div className="risk-cluster-name">{c.tag}</div>
                 <div className="risk-cluster-bar">
+                  {/* Fills toward the risk alert, not the value cap — the two are
+                      measured on different quantities and the ratio of one to the
+                      other means nothing. The cap is reported as text instead. */}
                   <div
-                    className={`risk-cluster-fill ${over ? 'over' : ''}`}
-                    style={{ width: `${Math.min((c.risk_share / c.soft_cap) * 100, 100)}%` }}
+                    className={`risk-cluster-fill ${alert ? 'over' : ''}`}
+                    style={{
+                      width: `${Math.min((c.risk_share / (c.risk_alert ?? c.soft_cap)) * 100, 100)}%`,
+                    }}
                   />
                 </div>
-                <div className={`risk-cluster-values ${over ? 'over-text' : ''}`}>
-                  risk {formatPct(c.risk_share)} / cap {formatPct(c.soft_cap, 0)}
-                  <span className="risk-cluster-value-weight"> · value {formatPct(c.value_weight)}</span>
+                <div className={`risk-cluster-values ${alert ? 'over-text' : ''}`}>
+                  risk {formatPct(c.risk_share)}
+                  {c.risk_alert != null && ` / alert ${formatPct(c.risk_alert, 0)}`}
+                  <span className="risk-cluster-value-weight">
+                    {' · '}buyable {formatPct(c.gated_weight)} / cap {formatPct(c.soft_cap, 0)}
+                  </span>
+                  {capped && <span className="risk-cluster-capped">closed</span>}
                 </div>
               </div>
             );

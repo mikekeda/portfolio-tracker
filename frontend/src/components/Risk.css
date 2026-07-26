@@ -227,6 +227,16 @@
   background: #ef4444;
 }
 
+/* The bar shows risk only; "closed" is a value-weight state and rides as a badge. */
+.risk-cluster-capped {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fffbeb;
+  color: #b45309;
+  font-size: 11px;
+}
+
 .risk-cluster-values {
   color: #6b7280;
   text-align: right;

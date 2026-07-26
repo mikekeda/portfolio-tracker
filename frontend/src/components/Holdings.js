@@ -341,6 +341,7 @@ const Holdings = () => {
   const [ruleRecommendations, setRuleRecommendations] = useState({ buy: [], sell: [] });
   // yahoo_symbol -> +£1k Δvol (bp) from /api/risk (held + monitored candidates)
   const [riskDeltas, setRiskDeltas] = useState(null);
+  const [cappedTags, setCappedTags] = useState(new Set());
 
   // Calculate min/max values for bar columns
   const barRanges = useMemo(() => {
@@ -1542,6 +1543,7 @@ const Holdings = () => {
           map[symbol] = bp;
         });
         setRiskDeltas(map);
+        setCappedTags(new Set(risk.capped_tags || []));
       })
       .catch((err) => {
         console.error('Error fetching risk deltas:', err);
@@ -1802,17 +1804,23 @@ const Holdings = () => {
             >
               All ({holdings.length})
             </button>
-            {availableTags.map((tag) => (
+            {availableTags.map((tag) => {
+              // Amber, not red: a capped theme is closed to new money, not a bad
+              // holding. The chip counts positions while the cap is on weight, so
+              // the reason has to live in the tooltip or the colour misleads.
+              const capped = cappedTags.has(tag);
+              return (
                 <button
                   key={tag}
                   type="button"
-                  className={`instrument-tag-filter ${selectedTags.includes(tag) ? 'active' : ''}`}
+                  className={`instrument-tag-filter ${selectedTags.includes(tag) ? 'active' : ''}${capped ? ' capped' : ''}`}
                   onClick={() => handleTagChange(tag)}
-                  title={`Filter by ${tag}`}
+                  title={capped ? `${tag} is at its soft cap — closed to new money` : `Filter by ${tag}`}
                 >
                   {tag} ({tagCounts[tag] || 0})
                 </button>
-            ))}
+              );
+            })}
           </div>
         </div>
         )}

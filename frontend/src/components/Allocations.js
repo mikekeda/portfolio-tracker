@@ -74,7 +74,9 @@ function groupByTag(holdings, caps) {
 }
 
 const fmtPct  = (v)  => v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
-const fmtPnl  = (v)  => v == null ? '—' : `${v >= 0 ? '+' : ''}£${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+// Math.abs strips the sign, so losses must get an explicit one — without it a
+// −£1,111 renders as "£1,111" and reads as a gain to anyone not seeing colour.
+const fmtPnl  = (v)  => v == null ? '—' : `${v >= 0 ? '+' : '−'}£${Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const fmtGBP  = (v)  => v == null ? '—' : `£${v.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 
 // ── Subcomponents ─────────────────────────────────────────────────────────────
@@ -235,6 +237,7 @@ const Allocations = () => {
   const [showAllCountries, setShowAllCountries] = useState(false);
   const [popover,          setPopover]          = useState(null);
   const [chartLoading,     setChartLoading]     = useState(false);
+  const [capState,         setCapState]         = useState(null);
   const popoverTimer = useRef(null);
 
   useEffect(() => () => clearTimeout(popoverTimer.current), []);
@@ -246,12 +249,17 @@ const Allocations = () => {
     const fetchStaticData = async () => {
       try {
         setLoading(true);
-        const [allocationsData, holdingsData] = await Promise.all([
+        // Cap state comes from /api/risk, which computes it on the same basis as
+        // the agent's buy gate (value weight, ETFs exempt from thematic tags).
+        // Deriving it here from raw weights would flag clusters the agent funds.
+        const [allocationsData, holdingsData, riskData] = await Promise.all([
           portfolioAPI.getAllocations(),
           portfolioAPI.getCurrentHoldings(false),
+          portfolioAPI.getRisk().catch(() => null),
         ]);
         setAllocations(allocationsData);
         setHoldings(holdingsData.holdings);
+        setCapState(riskData?.clusters ?? null);
         setError(null);
       } catch (err) {
         setError('Failed to fetch allocation data');
@@ -302,6 +310,11 @@ const Allocations = () => {
   const tagRows     = useMemo(
     () => groupByTag(holdings, allocations?.tag_soft_caps || {}),
     [holdings, allocations],
+  );
+  // tag -> buyable weight (%), from the server so this page and the agent agree.
+  const capByTag = useMemo(
+    () => new Map((capState || []).map((c) => [c.tag, c.gated_weight * 100])),
+    [capState],
   );
 
   const currencyFxPnl = useMemo(() => {
@@ -586,17 +599,30 @@ const Allocations = () => {
             </thead>
             <tbody>
               {tagRows.map(row => {
-                const over = row.capPct != null && row.weightPct > row.capPct;
-                const near = row.capPct != null && !over && row.weightPct > row.capPct * 0.85;
-                const barPct = row.capPct
-                  ? Math.min(100, (row.weightPct / row.capPct) * 100)
+                // Buyable weight excludes ETFs from thematic clusters, so it can sit
+                // well below the displayed weight; null when /api/risk is unavailable,
+                // in which case no flag is shown rather than one on the wrong basis.
+                const gated = capByTag.get(row.tag);
+                const over = gated != null && row.capPct != null && gated >= row.capPct;
+                const near = gated != null && row.capPct != null && !over && gated > row.capPct * 0.85;
+                // Fill toward the cap on the same weight the flag tests, or the bar
+                // reads full while the badge says there is headroom.
+                const barPct = row.capPct && gated != null
+                  ? Math.min(100, (gated / row.capPct) * 100)
                   : Math.min(100, row.weightPct);
                 return (
                   <tr key={row.tag} className={over ? 'tag-over-cap' : near ? 'tag-near-cap' : ''}>
                     <td className="tag-name">{row.tag}</td>
                     <td>{row.count}</td>
                     <td>
-                      <div className="tag-weight-cell">
+                      <div
+                        className="tag-weight-cell"
+                        title={
+                          gated != null && Math.abs(gated - row.weightPct) > 0.05
+                            ? `${row.weightPct.toFixed(1)}% held · ${gated.toFixed(1)}% counts toward the cap (ETFs exempt)`
+                            : undefined
+                        }
+                      >
                         <div className="tag-weight-bar-track">
                           <div
                             className={`tag-weight-bar${over ? ' over' : near ? ' near' : ''}`}

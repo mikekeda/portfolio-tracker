@@ -332,6 +332,19 @@
   color: #0a58ca;
 }
 
+/* Theme at its soft cap — closed to new money. Amber, since it says nothing
+   about the quality of the holdings, only that the cluster is full. */
+.instrument-tag-filter.capped {
+  background: #fffbeb;
+  border-color: #f59e0b;
+  color: #b45309;
+}
+
+.instrument-tag-filter.capped.active {
+  background: #fef3c7;
+  border-color: #b45309;
+}
+
 .instrument-tag-filter.all-tags.active {
   background: #e9ecef;
   border-color: #6c757d;

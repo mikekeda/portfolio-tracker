@@ -382,6 +382,9 @@ def build_risk_payload(
             "shrinkage": float(shrinkage),
             "new_money_gbp": NEW_MONEY_GBP,
         },
+        # Tags closed to new money. The single source of truth for every surface
+        # that shows cap state, so no page can drift from the agent's gate.
+        "capped_tags": sorted(breached),
         "groups": {"correlated": groups, "independent_count": single_count, "min_corr": GROUP_MIN_CORR},
         "candidates": _candidate_vol_deltas(
             returns, matrix, weights, port_var, ann_vol, model_value, set(info)
