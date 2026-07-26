@@ -106,6 +106,8 @@ TERMINAL_GROWTH_RATE = 0.025  # 2.5%
 # growth is the declared strategy, not a risk cluster: its cap guards the ~25%
 # non-growth ballast floor (banks, defense primes, UKDV, gold), so the alarm
 # only rings when diversifiers get sold down, not when growth rallies.
+# Tested against value weight by _cluster_headroom_gbp, which exempts ETFs from
+# every entry but `etf`. Risk share is a separate question — see TAG_RISK_ALERT_PCT.
 TAG_CLUSTER_SOFT_CAPS: dict[str, float] = {
     "ai": 45,
     "semiconductor": 35,
@@ -118,9 +120,30 @@ TAG_CLUSTER_SOFT_CAPS: dict[str, float] = {
     "healthcare": 12,
     "financial": 12,
     "EU": 30,
-    "etf": 30,
+    # Deliberately slack: the glide path targets an index sleeve past 50% (STRATEGY.md §6.1).
+    "etf": 80,
     "commodity": 5,
 }
+
+# Risk-share alarms for the Risk page — counts ETFs and never blocks a trade.
+# Set above current readings so an alert means deterioration, except `speculative`
+# and `space`, which fire today on ~22%/18% of risk for ~12%/9% of the money.
+TAG_RISK_ALERT_PCT: dict[str, float] = {
+    "ai": 60,
+    "semiconductor": 55,
+    "growth": 80,
+    "defense": 25,
+    "space": 15,
+    "speculative": 20,
+    "software": 20,
+    "cloud": 25,
+    "healthcare": 15,
+    "financial": 15,
+    "EU": 35,
+    "etf": 40,
+    "commodity": 8,
+}
+
 # MSCI World long-run reference figures used on the Projection page (1970–present, rough expectations).
 # Nominal 8.5% / inflation ~2.5% ≈ real 6.5%. σ ~16% p.a. from monthly returns.
 # Reference: https://www.msci.com/documents/10199/178e6643-6ae6-47b9-82be-e1fc565ededb

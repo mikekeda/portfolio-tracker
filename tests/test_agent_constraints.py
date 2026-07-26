@@ -115,6 +115,32 @@ def test_cluster_cap_binds_across_holdings():
     assert "'ai' cluster cap" in orders["AMD"].adjustments[0]
 
 
+def test_etfs_exempt_from_thematic_cluster_caps():
+    # ai = 37% of a 45% cap, plus a 10% ai-tagged ETF: counting it would put the
+    # cluster at 47% and veto every ai buy, index core included.
+    state = make_state(cash_gbp=50_000.0)
+    limits = AgentLimits(**{**LIMITS.__dict__, "max_daily_turnover": 0.50})
+    state.weights["XNAS.L"] = 0.10
+    state.quantities["XNAS.L"] = 100
+    state.currencies["XNAS.L"] = "GBP"
+    state.tags["XNAS.L"] = ["ai", "growth", "etf"]
+    state.etf_symbols = frozenset({"VUAG.L", "XNAS.L"})
+    prices = {**PRICES, "XNAS.L": 100.0}
+
+    etf_order = by_symbol(
+        apply_constraints([TradeIntent("XNAS.L", "add", 0.16, 4.0)], state, prices, limits)
+    )["XNAS.L"]
+    assert etf_order.executable, etf_order
+    assert not any("cluster cap" in a for a in etf_order.adjustments), etf_order.adjustments
+
+    # A direct ai name still gets exactly the £8k it had before the ETF existed.
+    state.tags["AMD"] = ["ai"]
+    state.currencies["AMD"] = "USD"
+    direct = by_symbol(apply_constraints([TradeIntent("AMD", "buy", 0.12, 4.0)], state, prices, limits))["AMD"]
+    assert approx(direct.value_gbp, 8_000.0), direct
+    assert "'ai' cluster cap" in direct.adjustments[0]
+
+
 def test_sell_proceeds_fund_buys():
     # Cash £0: buy alone is unaffordable, but paired with an exit it proceeds.
     state = make_state(cash_gbp=0.0)

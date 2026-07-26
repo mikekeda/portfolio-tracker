@@ -28,10 +28,11 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.agent.constraints import ETF_TAG
 from backend.app import get_db_session
 from backend.utils.risk_math import correlation_clusters, hrp_weights, ledoit_wolf_cov, risk_contributions
 from backend.views._shared import PRICE_COLUMN
-from config import SPY, TAG_CLUSTER_SOFT_CAPS, TRADING_DAYS_PER_YEAR
+from config import SPY, TAG_CLUSTER_SOFT_CAPS, TAG_RISK_ALERT_PCT, TRADING_DAYS_PER_YEAR
 from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 
 router = APIRouter()
@@ -334,24 +335,34 @@ def build_risk_payload(
         value_weight = float(
             sum(info[s]["value_gbp"] for s in tagged if pd.notna(info[s]["value_gbp"])) / total_value
         )
+        # What the buy gate actually tests: ETFs excluded from thematic clusters.
+        direct = [s for s in tagged if tag == ETF_TAG or ETF_TAG not in info[s]["tags"]]
+        gated_weight = float(
+            sum(info[s]["value_gbp"] for s in direct if pd.notna(info[s]["value_gbp"])) / total_value
+        )
         risk_share = float(sum(rc_by_symbol[s] for s in tagged if s in rc_by_symbol))
+        alert_pct = TAG_RISK_ALERT_PCT.get(tag)
         clusters.append(
             {
                 "tag": tag,
                 "value_weight": value_weight,
+                "gated_weight": gated_weight,
                 "risk_share": risk_share,
                 "soft_cap": cap / 100.0,
+                "risk_alert": None if alert_pct is None else alert_pct / 100.0,
+                "risk_alert_breached": alert_pct is not None and risk_share >= alert_pct / 100.0,
             }
         )
     clusters.sort(key=lambda c: c["risk_share"], reverse=True)
 
-    # A cluster at or over its soft cap is closed to new money (STRATEGY.md R2/R3:
-    # caps are enforced by withholding contributions, never by forced selling), so
-    # mark every holding carrying a breached tag. Computed after `clusters` because
-    # holdings_payload is assembled before the cluster risk shares exist.
-    breached = {c["tag"] for c in clusters if c["risk_share"] >= c["soft_cap"]}
+    # Which holdings are closed to new money. Must mirror _cluster_headroom_gbp
+    # exactly, or the page promises what the agent will veto.
+    breached = {c["tag"] for c in clusters if c["gated_weight"] >= c["soft_cap"]}
     for h in holdings_payload:
-        h["blocked_tags"] = sorted(breached.intersection(h["tags"]))
+        is_etf = ETF_TAG in h["tags"]
+        h["blocked_tags"] = sorted(
+            t for t in breached.intersection(h["tags"]) if t == ETF_TAG or not is_etf
+        )
 
     return {
         "as_of": latest_date.isoformat(),

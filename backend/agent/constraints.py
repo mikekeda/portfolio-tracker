@@ -27,6 +27,9 @@ from backend.agent.types import AgentLimits, PortfolioState, TradeIntent, TradeO
 SELL_ACTIONS = ("exit", "trim")
 BUY_ACTIONS = ("buy", "add")
 
+# The one cap tag describing a wrapper rather than a theme.
+ETF_TAG = "etf"
+
 
 def _fee_rate(symbol: str, side: str, state: PortfolioState, limits: AgentLimits) -> float:
     return trade_fee_rate(symbol, state.currencies.get(symbol), symbol in state.etf_symbols, side, limits)
@@ -35,14 +38,28 @@ def _fee_rate(symbol: str, side: str, state: PortfolioState, limits: AgentLimits
 def _cluster_headroom_gbp(
     symbol: str, weights: dict[str, float], state: PortfolioState, limits: AgentLimits
 ) -> tuple[float, str | None]:
-    """Most-binding tag-cluster headroom for adding to `symbol`, and that tag."""
+    """Most-binding tag-cluster headroom for adding to `symbol`, and that tag.
+
+    ETFs are exempt from every cap but `etf`, as buyer and as cluster member.
+    """
+    # Caps limit single-name theme concentration; an index fund is diversified by
+    # construction. Counting them also self-blocks the glide path, since XNAS.L is
+    # tagged `ai` and XUTC.L `semiconductor` — the clusters they exist to dilute.
+    is_etf = symbol in state.etf_symbols
     headroom = float("inf")
     binding_tag = None
     for tag in state.tags.get(symbol, []):
         cap_pct = limits.cluster_caps.get(tag)
         if cap_pct is None:
             continue
-        cluster_weight = sum(w for s, w in weights.items() if tag in state.tags.get(s, []))
+        thematic = tag != ETF_TAG
+        if thematic and is_etf:
+            continue
+        cluster_weight = sum(
+            w
+            for s, w in weights.items()
+            if tag in state.tags.get(s, []) and not (thematic and s in state.etf_symbols)
+        )
         tag_headroom = (cap_pct / 100.0 - cluster_weight) * state.total_value_gbp
         if tag_headroom < headroom:
             headroom, binding_tag = tag_headroom, tag
