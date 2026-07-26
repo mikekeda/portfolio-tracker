@@ -610,6 +610,7 @@ const Allocations = () => {
                 const barPct = row.capPct && gated != null
                   ? Math.min(100, (gated / row.capPct) * 100)
                   : Math.min(100, row.weightPct);
+                const showGated = gated != null && Math.abs(gated - row.weightPct) > 0.05;
                 return (
                   <tr key={row.tag} className={over ? 'tag-over-cap' : near ? 'tag-near-cap' : ''}>
                     <td className="tag-name">{row.tag}</td>
@@ -618,8 +619,8 @@ const Allocations = () => {
                       <div
                         className="tag-weight-cell"
                         title={
-                          gated != null && Math.abs(gated - row.weightPct) > 0.05
-                            ? `${row.weightPct.toFixed(1)}% held · ${gated.toFixed(1)}% counts toward the cap (ETFs exempt)`
+                          showGated
+                            ? 'ETFs are diversified by construction, so they are exempt from thematic caps'
                             : undefined
                         }
                       >
@@ -629,7 +630,13 @@ const Allocations = () => {
                             style={{ width: `${barPct}%` }}
                           />
                         </div>
-                        <span>{row.weightPct.toFixed(1)}%</span>
+                        <span>
+                          {row.weightPct.toFixed(1)}%
+                          {/* Named because the bar tracks this, not the held weight. */}
+                          {showGated && (
+                            <span className="tag-weight-gated"> · {gated.toFixed(1)}% buyable</span>
+                          )}
+                        </span>
                       </div>
                     </td>
                     <td>
@@ -766,6 +773,8 @@ const Allocations = () => {
                     />
                     <Legend />
                     {keys.map((k, i) => (
+                      // Unanimated per PortfolioChart: Recharts 3 + React 19 leaves
+                      // marks at zero extent when the mount animation doesn't fire.
                       <Line
                         key={k}
                         type="monotone"
@@ -774,6 +783,7 @@ const Allocations = () => {
                         stroke={CHART_COLORS[i % CHART_COLORS.length]}
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={false}
                       />
                     ))}
                   </LineChart>

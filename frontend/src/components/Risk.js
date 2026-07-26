@@ -379,7 +379,9 @@ const Risk = () => {
             <YAxis type="category" dataKey="symbol" width={70} interval={0} tick={{ fontSize: 12 }} />
             <Tooltip content={<DivergingTooltip />} />
             <ReferenceLine x={0} stroke="#9ca3af" />
-            <Bar dataKey="delta" barSize={14}>
+            {/* Unanimated per PortfolioChart: Recharts 3 + React 19 leaves marks
+                at zero extent when the mount animation doesn't fire. */}
+            <Bar dataKey="delta" barSize={14} isAnimationActive={false}>
               {chartData.map((d) => (
                 <Cell key={d.symbol} fill={d.delta > 0 ? '#ef4444' : '#10b981'} />
               ))}

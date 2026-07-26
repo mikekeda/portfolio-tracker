@@ -593,6 +593,13 @@
   gap: 8px;
 }
 
+/* Secondary to the held weight beside it — the bar tracks this one, not that one. */
+.tag-weight-gated {
+  color: #868e96;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .tag-weight-bar-track {
   flex: 1;
   min-width: 80px;
