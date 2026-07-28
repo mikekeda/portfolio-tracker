@@ -30,9 +30,11 @@
   color: #0056b3;
 }
 
+/* Gap and link padding are kept tight so ten links fit above the 1200px
+   breakpoint; loosening either brings back the horizontal page scroll. */
 .nav-links {
   display: flex;
-  gap: 30px;
+  gap: 14px;
   align-items: center;
   margin-left: auto;
 }
@@ -49,7 +51,7 @@
   color: #6c757d;
   text-decoration: none;
   font-weight: 500;
-  padding: 8px 16px;
+  padding: 8px 10px;
   border-radius: 0;
   transition: all 0.2s ease;
   position: relative;
@@ -160,8 +162,8 @@
   transform: translateY(-50%) rotate(-45deg);
 }
 
-/* Responsive Design */
-@media (max-width: 768px) {
+/* Responsive Design — breakpoint must match MOBILE_BREAKPOINT in Navigation.js */
+@media (max-width: 1200px) {
   .nav-container {
     padding: 0 15px;
     height: 50px;
@@ -195,8 +197,10 @@
     transition: max-height 0.3s ease, padding 0.3s ease, opacity 0.3s ease, visibility 0.3s ease;
   }
 
+  /* Viewport-relative so adding a nav link can never clip the last entry. */
   .nav-links.mobile-open {
-    max-height: 400px;
+    max-height: calc(100vh - 50px);
+    overflow-y: auto;
     padding: 10px 0;
     opacity: 1;
     visibility: visible;

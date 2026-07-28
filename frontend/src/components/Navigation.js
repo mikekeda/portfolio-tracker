@@ -3,6 +3,9 @@ import { Link, useLocation } from 'react-router-dom';
 import { useHideAmounts } from '../context/HideAmountsContext';
 import './Navigation.css';
 
+// Must match the responsive breakpoint in Navigation.css.
+const MOBILE_BREAKPOINT = 1200;
+
 const EyeIcon = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -30,7 +33,7 @@ const Navigation = () => {
   // Close mobile menu when window resizes to desktop
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth > 768 && isMobileMenuOpen) {
+      if (window.innerWidth > MOBILE_BREAKPOINT && isMobileMenuOpen) {
         setIsMobileMenuOpen(false);
       }
     };
