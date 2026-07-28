@@ -5,6 +5,7 @@ import {
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
+import { nativePrice } from '../utils/currency';
 import './Transactions.css';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -46,8 +47,6 @@ const fmtAmt = (v, hide, { sign = false } = {}) => {
   return abs;
 };
 
-const CURRENCY_SYMBOLS = { GBP: '£', USD: '$', EUR: '€', GBX: 'p', CHF: 'Fr', JPY: '¥', CAD: 'CA$', AUD: 'A$', SEK: 'kr', NOK: 'kr', DKK: 'kr', HKD: 'HK$', SGD: 'S$' };
-const currencySymbol = (code) => CURRENCY_SYMBOLS[code] || (code ? `${code} ` : '');
 
 const fmtDate = (iso) =>
   new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
@@ -246,8 +245,8 @@ const Transactions = () => {
         meta.label,
         txn.quantity != null ? Math.abs(txn.quantity)  : '',
         txn.price    != null ? (() => {
-          const isGBX = txn.currency === 'GBX';
-          return `${isGBX ? '£' : currencySymbol(txn.currency)}${(isGBX ? txn.price / 100 : txn.price).toFixed(4)}`;
+          const { symbol, value } = nativePrice(txn.price, txn.currency);
+          return `${symbol}${value.toFixed(4)}`;
         })() : '',
         txn.total    != null ? txn.total.toFixed(2)    : '',
         txn.result   != null ? txn.result.toFixed(2)   : '',
@@ -509,13 +508,10 @@ const Transactions = () => {
                     </td>
                     <td className="r txn-mono">
                       {txn.price != null ? (() => {
-                        // GBX (pence) → convert to £ for consistency with Total column
-                        const isGBX = txn.currency === 'GBX';
-                        const price = isGBX ? txn.price / 100 : txn.price;
-                        const sym   = isGBX ? '£' : currencySymbol(txn.currency);
+                        const { symbol, value } = nativePrice(txn.price, txn.currency);
                         return (
                           <span title={txn.currency || ''}>
-                            {sym}{price.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
+                            {symbol}{value.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                           </span>
                         );
                       })() : '—'}

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
+import { nativePrice } from '../utils/currency';
 import './TopMovers.css';
 
 const TopMovers = ({ selectedPeriod, setSelectedPeriod }) => {
@@ -69,8 +70,9 @@ const TopMovers = ({ selectedPeriod, setSelectedPeriod }) => {
     );
   };
 
-  const formatPrice = (price) => {
-    return `$${price.toFixed(2)}`;
+  const formatPrice = (price, currency) => {
+    const { symbol, value } = nativePrice(price, currency);
+    return `${symbol}${value.toFixed(2)}`;
   };
 
   if (loading) {
@@ -144,7 +146,7 @@ const TopMovers = ({ selectedPeriod, setSelectedPeriod }) => {
                     >
                       <span>{formatGain(stock.gain_pct)}</span>
                     </td>
-                    <td className="price">{formatPrice(stock.current_price)}</td>
+                    <td className="price">{formatPrice(stock.current_price, stock.currency)}</td>
                     <td
                       className={`change-cell ${stock.change_pct < 0 ? 'neg' : 'pos'}`}
                       style={{ '--bar-width': `${Math.min(Math.abs(stock.change_pct), 100)}%` }}
@@ -191,7 +193,7 @@ const TopMovers = ({ selectedPeriod, setSelectedPeriod }) => {
                     >
                       <span>{formatGain(stock.gain_pct)}</span>
                     </td>
-                    <td className="price">{formatPrice(stock.current_price)}</td>
+                    <td className="price">{formatPrice(stock.current_price, stock.currency)}</td>
                     <td
                       className={`change-cell ${stock.change_pct < 0 ? 'neg' : 'pos'}`}
                       style={{ '--bar-width': `${Math.min(Math.abs(stock.change_pct), 100)}%` }}

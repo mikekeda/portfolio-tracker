@@ -105,6 +105,7 @@ async def get_movers(
                         "name": symbol_data[0].name,
                         "change_pct": change_pct,
                         "current_price": last_price,
+                        "currency": symbol_data[-1].currency,
                         "t212_code": symbol_data[0].t212_code,
                         "gain_pct": gain_pct,
                         "value": market_value_gbp,
