@@ -34,6 +34,15 @@
   display: flex;
   gap: 30px;
   align-items: center;
+  margin-left: auto;
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 12px;
+  flex-shrink: 0;
 }
 
 .nav-links a {
@@ -64,60 +73,31 @@
   border-radius: 0;
 }
 
-/* Hide amounts – custom toggle (hidden checkbox + slider track) */
+/* Hide amounts – icon button; open eye = amounts visible, crossed = hidden */
 .nav-hide-amounts {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  user-select: none;
-  margin-left: 8px;
-  padding: 6px 0;
-}
-.nav-hide-amounts-label {
-  font-size: 13px;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
   color: #6c757d;
-  font-weight: 500;
-  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.2s ease, background-color 0.2s ease;
 }
-.nav-hide-amounts input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
+.nav-hide-amounts svg {
+  width: 20px;
+  height: 20px;
 }
-.nav-hide-amounts-slider {
-  position: relative;
-  display: inline-block;
-  width: 40px;
-  height: 22px;
-  background-color: #ccc;
-  border-radius: 22px;
-  transition: background-color 0.2s ease;
+.nav-hide-amounts:hover {
+  color: #007bff;
+  background-color: #f1f3f5;
 }
-.nav-hide-amounts-slider::after {
-  content: '';
-  position: absolute;
-  width: 18px;
-  height: 18px;
-  left: 2px;
-  top: 2px;
-  background-color: white;
-  border-radius: 50%;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
-  transition: transform 0.2s ease;
-}
-.nav-hide-amounts input:checked + .nav-hide-amounts-slider {
-  background-color: #007bff;
-}
-.nav-hide-amounts input:checked + .nav-hide-amounts-slider::after {
-  transform: translateX(18px);
-}
-.nav-hide-amounts:hover .nav-hide-amounts-slider {
-  background-color: #bbb;
-}
-.nav-hide-amounts input:checked:hover + .nav-hide-amounts-slider {
-  background-color: #0056b3;
+.nav-hide-amounts[aria-pressed='true'] {
+  color: #007bff;
 }
 
 /* Mobile menu toggle button */

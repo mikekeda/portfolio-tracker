@@ -90,6 +90,10 @@ _CASH_ACTIONS = (
 )
 _DIVIDEND_ACTIONS = tuple(_DIVIDEND_TYPE_MAP.values())
 
+# The history API has no interest type — interest-on-cash arrives as "DEPOSIT".
+# T212's minimum deposit is £1, so anything smaller is interest, not a subscription.
+_MIN_DEPOSIT_GBP = 1.0
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
@@ -501,6 +505,9 @@ def _import_cash(
 
             ts = _parse_dt(date_str)
             total_abs = abs(item.get("amount") or 0.0)  # cash uses 'amount', not 'total'
+
+            if action == TransactionAction.DEPOSIT and total_abs < _MIN_DEPOSIT_GBP:
+                action = TransactionAction.INTEREST
 
             dup = _find_semantic_duplicate(
                 session, action=action, ticker=None, timestamp=ts, quantity=0.0, total=total_abs
