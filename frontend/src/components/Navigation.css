@@ -36,7 +36,8 @@
   display: flex;
   gap: 14px;
   align-items: center;
-  margin-left: auto;
+  margin-left: 28px;
+  margin-right: auto;
 }
 
 .nav-actions {

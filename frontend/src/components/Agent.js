@@ -46,11 +46,6 @@ const Agent = () => {
     load();
   }, [load]);
 
-  const setStatus = async (id, status) => {
-    await portfolioAPI.setAgentSuggestionStatus(id, status);
-    load();
-  };
-
   if (error) {
     return (
       <div className="page-fixed agent-container">
@@ -102,18 +97,7 @@ const Agent = () => {
           {s.constraint_adjustments.length > 0 && <span className="agent-reason-flag"> ⚠</span>}
         </td>
         <td>
-          {s.status === 'proposed' && s.value_gbp > 0 ? (
-            <span className="agent-actions" onClick={(e) => e.stopPropagation()}>
-              <button className="btn-accept" onClick={() => setStatus(s.id, 'accepted')}>
-                Accept
-              </button>
-              <button className="btn-dismiss" onClick={() => setStatus(s.id, 'dismissed')}>
-                Dismiss
-              </button>
-            </span>
-          ) : (
-            <span className={`status-badge status-${s.status}`}>{s.status}</span>
-          )}
+          <span className={`status-badge status-${s.status}`}>{s.status}</span>
         </td>
       </tr>
       {expandedId === s.id && (

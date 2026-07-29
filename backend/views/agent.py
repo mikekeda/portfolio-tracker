@@ -1,10 +1,9 @@
-"""Trade-agent suggestion endpoints (suggest-only — nothing executes trades)."""
+"""Trade-agent suggestion endpoints (read-only — the API never mutates suggestions)."""
 
 from datetime import date, timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,12 +11,6 @@ from backend.app import get_db_session
 from models import Instrument, TradeSuggestion
 
 router = APIRouter()
-
-VALID_STATUSES = ("proposed", "accepted", "dismissed")
-
-
-class StatusUpdate(BaseModel):
-    status: str
 
 
 def _row(s: TradeSuggestion, inst: Instrument) -> dict[str, Any]:
@@ -78,20 +71,3 @@ async def get_suggestions_history(
         )
     ).all()
     return {"since": since.isoformat(), "suggestions": [_row(s, inst) for s, inst in rows]}
-
-
-@router.post("/api/agent/suggestions/{suggestion_id}/status")
-async def set_suggestion_status(
-    suggestion_id: int, body: StatusUpdate, session: AsyncSession = Depends(get_db_session)
-) -> dict[str, Any]:
-    """Record the user's decision on a suggestion (future ML training label)."""
-    if body.status not in VALID_STATUSES:
-        raise HTTPException(status_code=400, detail=f"status must be one of {VALID_STATUSES}")
-    suggestion = (
-        await session.execute(select(TradeSuggestion).where(TradeSuggestion.id == suggestion_id))
-    ).scalar_one_or_none()
-    if suggestion is None:
-        raise HTTPException(status_code=404, detail="suggestion not found")
-    suggestion.status = body.status
-    await session.commit()
-    return {"id": suggestion.id, "status": suggestion.status}

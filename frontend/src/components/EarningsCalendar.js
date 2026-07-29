@@ -359,7 +359,10 @@ const MonthStats = ({ monthEvents }) => {
   const withSurprise = past.filter((e) => e.surprise_pct != null);
   const beats = withSurprise.filter((e) => e.surprise_pct >= 0).length;
   const misses = withSurprise.filter((e) => e.surprise_pct < 0).length;
-  const beatRate = withSurprise.length > 0 ? Math.round((beats / withSurprise.length) * 100) : null;
+  // An estimate with no actual means Yahoo has not published the result yet;
+  // neither means it has no EPS coverage for that listing at all.
+  const awaiting = past.filter((e) => e.surprise_pct == null && e.eps_estimate != null).length;
+  const noData = past.length - withSurprise.length - awaiting;
 
   if (past.length === 0 && upcoming.length === 0) {
     return <p className="ec-detail-empty">No events this month.</p>;
@@ -377,7 +380,7 @@ const MonthStats = ({ monthEvents }) => {
         )}
         {beats > 0 && (
           <div className="ec-stats-item beat">
-            <span className="ec-stats-num">{beats}{beatRate != null ? ` (${beatRate}%)` : ''}</span>
+            <span className="ec-stats-num">{beats}/{withSurprise.length}</span>
             <span className="ec-stats-label">Beat</span>
           </div>
         )}
@@ -385,6 +388,18 @@ const MonthStats = ({ monthEvents }) => {
           <div className="ec-stats-item miss">
             <span className="ec-stats-num">{misses}</span>
             <span className="ec-stats-label">Missed</span>
+          </div>
+        )}
+        {awaiting > 0 && (
+          <div className="ec-stats-item">
+            <span className="ec-stats-num">{awaiting}</span>
+            <span className="ec-stats-label">Awaiting EPS</span>
+          </div>
+        )}
+        {noData > 0 && (
+          <div className="ec-stats-item">
+            <span className="ec-stats-num">{noData}</span>
+            <span className="ec-stats-label">No EPS data</span>
           </div>
         )}
         {upcoming.length > 0 && (

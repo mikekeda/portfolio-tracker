@@ -47,7 +47,6 @@ const fmtAmt = (v, hide, { sign = false } = {}) => {
   return abs;
 };
 
-
 const fmtDate = (iso) =>
   new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 

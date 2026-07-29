@@ -224,12 +224,6 @@ export const portfolioAPI = {
     const response = await apiClient.get(`/api/agent/suggestions/history?days=${days}`);
     return response.data;
   },
-
-  // Record accept/dismiss decision on a trade suggestion
-  setAgentSuggestionStatus: async (id, status) => {
-    const response = await apiClient.post(`/api/agent/suggestions/${id}/status`, { status });
-    return response.data;
-  },
 };
 
 // Export the apiClient for use in other modules
