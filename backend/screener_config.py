@@ -9,7 +9,8 @@ maintainable way. It serves as the single source of truth for screener definitio
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Iterable, Union
+from itertools import combinations
+from typing import Any, Callable, Iterable, Optional, Union
 
 
 def _is_finite_value(value: Any) -> bool:
@@ -107,15 +108,32 @@ class ScreenerDefinition:
     excluded_sectors: frozenset[Sector] = frozenset()
     # Derived at __post_init__ time for O(1) lookup in the combination-bonus hot path.
     combine_with_set: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
+    # Every field the criteria read — two screeners over the same inputs are one
+    # signal counted twice, not two confirmations.
+    field_set: frozenset[str] = field(default_factory=frozenset, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.combine_with_set = frozenset(self.combine_with)
+
+        referenced: set[str] = set()
+        for criteria in self.criteria:
+            referenced.add(criteria.field)
+            if isinstance(criteria.value, FieldRef):
+                referenced.add(criteria.value.name)
+        self.field_set = frozenset(referenced)
 
 
 # Quality/FCF/ROIC rules don't apply to banks (leverage by design) or REITs (use FFO, not FCF).
 _QUALITY_EXCLUDED: frozenset[Sector] = frozenset({Sector.FINANCIAL_SERVICES, Sector.REAL_ESTATE})
 # Debt rules additionally exclude utilities (structural high D/E from regulated rate-base model).
 _DEBT_EXCLUDED: frozenset[Sector] = frozenset({Sector.FINANCIAL_SERVICES, Sector.REAL_ESTATE, Sector.UTILITIES})
+
+# Denominator for turning a raw score into a 0..1 ratio. Empirical, not the sum of
+# all weights: technical screeners are mutually exclusive, so that sum is unreachable.
+SCORE_NORMALIZER = 50
+# Above this share of shared inputs, two screeners are one signal counted twice
+# rather than independent confirmation, so the pair earns no combination bonus.
+MAX_FIELD_OVERLAP = 0.5
 
 
 class ScreenerConfig:
@@ -125,6 +143,50 @@ class ScreenerConfig:
         self.screeners = self._initialize_screeners()
         # Validate configuration on initialization
         self.validate()
+        self._applicable_weight = self._compute_applicable_weight()
+
+    def _compute_applicable_weight(self) -> dict[Optional[str], int]:
+        """Total positive weight reachable in each sector, keyed by sector name (None = unrestricted)."""
+        sectors: list[Optional[str]] = [None, *(s.value for s in Sector)]
+        return {
+            sector: sum(
+                s.weight
+                for s in self.screeners.values()
+                if s.available and s.weight > 0 and not (sector and sector in s.excluded_sectors)
+            )
+            for sector in sectors
+        }
+
+    def combination_bonus(self, passed_screeners: list[str]) -> int:
+        """Bonus for passing screeners that endorse each other *and* read different inputs.
+
+        Diminishing returns (pairs ** 0.85) stop a stock with many passes from
+        saturating the score while leaving exceptional ones room to stand out.
+        """
+        if len(passed_screeners) < 2:
+            return 0
+
+        pair_count = 0
+        for a, b in combinations(passed_screeners, 2):
+            first, second = self.screeners[a], self.screeners[b]
+            if b not in first.combine_with_set and a not in second.combine_with_set:
+                continue
+            smaller = min(len(first.field_set), len(second.field_set))
+            if smaller == 0 or len(first.field_set & second.field_set) / smaller > MAX_FIELD_OVERLAP:
+                continue
+            pair_count += 1
+
+        return round(2 * pair_count**0.85) if pair_count else 0
+
+    def score_normalizer(self, sector: Optional[str]) -> float:
+        """Scale a raw score by what its sector could actually earn.
+
+        Financials and REITs are excluded from several screeners, so their raw
+        scores are not comparable with the rest of the universe without this.
+        """
+        unrestricted = self._applicable_weight[None]
+        applicable = self._applicable_weight.get(sector, unrestricted)
+        return SCORE_NORMALIZER * applicable / unrestricted
 
     def _initialize_screeners(self) -> dict[str, ScreenerDefinition]:
         """Initialize all available screeners."""
@@ -133,13 +195,15 @@ class ScreenerConfig:
             "qarp": ScreenerDefinition(
                 id="qarp",
                 name="Quality at Reasonable Price",
-                description="ROIC >= 8% & PEG <= 2.0 & FCF Yield >= 4%",
+                description="ROIC >= 8% & PEG <= 2.0 & FCF Margin >= 10%",
                 category=ScreenerCategory.FUNDAMENTALS,
                 criteria=[
                     ScreenerCriteria("roic", ">=", 8, "Return on Invested Capital >= 8%"),
                     ScreenerCriteria("peg_ratio", "<=", 2.0, "PEG Ratio <= 2.0"),
                     ScreenerCriteria("peg_ratio", ">", 0.0, "PEG Ratio > 0.0"),
-                    ScreenerCriteria("free_cashflow_yield", ">=", 4, "Free Cash Flow Yield >= 4%"),
+                    # Margin, not yield: a yield gate rejects any compounder in a
+                    # heavy capex cycle, which is the opposite of the intent.
+                    ScreenerCriteria("fcf_margin", ">=", 10, "Free Cash Flow Margin >= 10%"),
                     ScreenerCriteria("profit_margins", ">", 0, "Profitable"),
                 ],
                 requires_historical_data=False,
@@ -174,7 +238,7 @@ class ScreenerConfig:
                 requires_historical_data=False,
                 requires_yahoo_data=True,
                 available=True,
-                weight=6,
+                weight=4,
                 combine_with=[
                     "golden_cross",
                     "oversold_uptrend",
@@ -201,7 +265,7 @@ class ScreenerConfig:
                 requires_historical_data=False,
                 requires_yahoo_data=True,
                 available=True,
-                weight=7,
+                weight=6,
                 combine_with=[
                     "r40_momentum",
                     "momentum_pullback",
@@ -329,7 +393,7 @@ class ScreenerConfig:
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,
-                weight=5,
+                weight=4,
                 combine_with=["breakout_quiet_base", "r40_momentum"],
             ),
             # Rule-of-40 + Momentum
@@ -369,8 +433,8 @@ class ScreenerConfig:
                 description="Near 52W high with tightness and confirming volume",
                 category=ScreenerCategory.MOMENTUM,
                 criteria=[
-                    ScreenerCriteria("fifty_two_week_high_distance", ">=", -1.5, "Within 1.5% below 52W high"),
-                    ScreenerCriteria("fifty_two_week_high_distance", "<=", 2.5, "No more than 2.5% above high"),
+                    # The field is (price - high)/high, so it is <= 0 by construction.
+                    ScreenerCriteria("fifty_two_week_high_distance", ">=", -2.5, "Within 2.5% below 52W high"),
                     ScreenerCriteria("bb_width_20", "<=", FieldRef("bb_width_20_p30_6m"), "Tight vs 6m"),
                     ScreenerCriteria("volume_ratio", ">=", 1.3, "Volume confirmation"),
                     ScreenerCriteria("rs_6m_vs_spy", ">=", 10, "Leader"),
@@ -423,13 +487,15 @@ class ScreenerConfig:
                     # recommendation_trend is a correlation in [-1, 1] (see
                     # calculate_historical_trends); 0.5 = consistent improvement.
                     ScreenerCriteria("recommendation_trend", ">=", 0.5, "Sentiment trend consistently positive"),
+                    # The correlation alone passes a drift from 0.70 to 0.71.
+                    ScreenerCriteria("recommendation_delta_12m", ">=", 0.05, "Improvement is large enough to matter"),
                     ScreenerCriteria("pe_ratio", "<=", 40, "Valuation is not excessive"),
                     ScreenerCriteria("pe_ratio", ">", 0, "Company is profitable"),
                 ],
                 requires_historical_data=True,  # Requires recommendation history
                 requires_yahoo_data=True,
                 available=True,
-                weight=6,
+                weight=4,
                 combine_with=["qarp", "momentum_pullback", "oversold_uptrend", "pe_vs_history"],
             ),
             # PE Compression
@@ -446,7 +512,7 @@ class ScreenerConfig:
                 requires_historical_data=True,  # Requires PE history
                 requires_yahoo_data=True,
                 available=True,
-                weight=8,
+                weight=5,
                 combine_with=[
                     "quality_growth_pullback",
                     "golden_cross",
@@ -495,7 +561,9 @@ class ScreenerConfig:
                 requires_historical_data=True,  # Requires PE history
                 requires_yahoo_data=True,
                 available=True,
-                weight=9,  # This is a very strong signal
+                # Mean-reversion on a multiple, and the current-vs-history basis
+                # gap is wide enough that this cannot carry a top weight.
+                weight=5,
                 combine_with=[
                     "r40_momentum",
                     "qarp",
@@ -522,16 +590,17 @@ class ScreenerConfig:
                 requires_historical_data=True,
                 requires_yahoo_data=True,
                 available=True,  # Disabled by default
-                weight=-3,  # Short-term technical signal, shouldn't dominate the composite
+                weight=-2,  # Short-term technical signal, shouldn't dominate the composite
                 combine_with=[],
             ),
             "red_flag_low_roic": ScreenerDefinition(
                 id="red_flag_low_roic",
                 name="Red Flag: Low ROIC",
-                description="""Company generates poor returns on invested capital (< 5%).""",
+                description="""Company generates poor returns on invested capital (< 5%). High-growth pre-profit companies are exempt — low ROIC is the expected state, not a red flag.""",
                 category=ScreenerCategory.QUALITY,
                 criteria=[
                     ScreenerCriteria("roic", "<", 5, "ROIC is very low (< 5%)"),
+                    ScreenerCriteria("revenue_growth", "<", 25, "Not high-growth (low ROIC is not a scaling phase)"),
                 ],
                 available=True,
                 weight=-4,  # Apply a partial penalty
@@ -540,10 +609,10 @@ class ScreenerConfig:
             "red_flag_high_debt": ScreenerDefinition(
                 id="red_flag_high_debt",
                 name="Red Flag: High Debt",
-                description="""Company has excessive debt burden (Debt/Equity > 150%).""",
+                description="""Company has excessive debt burden (net debt > 3x EBITDA).""",
                 category=ScreenerCategory.QUALITY,
                 criteria=[
-                    ScreenerCriteria("debtToEquity", ">", 150, "Debt is high (>150% of equity)"),
+                    ScreenerCriteria("net_debt_to_ebitda", ">", 3.0, "Net debt exceeds 3x EBITDA"),
                 ],
                 available=True,
                 weight=-3,
@@ -579,12 +648,11 @@ Check those criteria:
                 category=ScreenerCategory.QUALITY,
                 criteria=[
                     ScreenerCriteria("revenue_growth", ">=", 10, "Revenue Growth >= 10% (TTM)"),
-                    # This is the proxy for "Positive free cash flow 4 to 6 quarters"
-                    # We use TTM FCF Yield, which you already have.
-                    ScreenerCriteria("free_cashflow_yield", ">=", 3, "Positive FCF Yield >= 3% (TTM)"),
-                    # This is the proxy for "Net cash positive"
-                    # We use a very strict Debt/Equity ratio.
-                    ScreenerCriteria("debtToEquity", "<", 60, "Low Debt to Equity (< 60%)"),
+                    # Proxy for "positive free cash flow 4 to 6 quarters".
+                    ScreenerCriteria("fcf_margin", ">=", 8, "Positive FCF Margin >= 8% (TTM)"),
+                    # Proxy for "net cash positive". Debt/equity is distorted by
+                    # buybacks the same way ROE is; leverage vs earnings is not.
+                    ScreenerCriteria("net_debt_to_ebitda", "<=", 1.0, "Net debt <= 1x EBITDA"),
                     # These are proxies for "Clear moat"
                     ScreenerCriteria("roic", ">=", 10, "High ROIC (Moat proxy) >= 10%"),
                     ScreenerCriteria("profit_margins", ">=", 10, "High Profit Margins (Moat proxy) >= 10%"),
@@ -592,7 +660,7 @@ Check those criteria:
                 requires_historical_data=False,  # We are using current/TTM data
                 requires_yahoo_data=True,
                 available=True,
-                weight=9,  # This is a very strong, high-quality signal
+                weight=10,  # This is a very strong, high-quality signal
                 combine_with=[
                     "momentum_pullback",
                     "oversold_uptrend",
@@ -605,6 +673,60 @@ Check those criteria:
                 ],
                 excluded_sectors=_DEBT_EXCLUDED,
                 # Combines well with entry points and other quality/growth validators
+            ),
+            # Durable compounding — the only screener that looks past a single TTM snapshot.
+            "roic_consistency": ScreenerDefinition(
+                id="roic_consistency",
+                name="Consistent High ROIC",
+                description="ROIC >= 12% in each of the last 3 fiscal years — separates durable compounders from cyclical rebounds that flatter a single TTM window.",
+                category=ScreenerCategory.QUALITY,
+                criteria=[
+                    ScreenerCriteria("roic_3y_min", ">=", 12, "ROIC >= 12% in every one of the last 3 years"),
+                    ScreenerCriteria("revenue_growth", ">", 0, "Still growing"),
+                ],
+                requires_historical_data=False,
+                requires_yahoo_data=True,
+                available=True,
+                weight=10,
+                combine_with=[
+                    "r40_momentum",
+                    "growth_at_reasonable_price",
+                    "momentum_pullback",
+                    "oversold_uptrend",
+                    "quality_growth_pullback",
+                    "breakout_quiet_base",
+                    "insider_buying",
+                ],
+                excluded_sectors=_QUALITY_EXCLUDED,
+            ),
+            # Pre-profit growth: every other positive screener needs a positive
+            # P/E, PEG, FCF or ROIC, so without this the sleeve can only score negative.
+            "pre_profit_growth": ScreenerDefinition(
+                id="pre_profit_growth",
+                name="Funded Pre-Profit Growth",
+                description="Revenue Growth >= 25% & Gross Margin >= 30% & net cash & above 200DMA. Gross margin is the test of whether the unit economics can eventually carry fixed costs; net cash is the test of whether it survives to find out.",
+                category=ScreenerCategory.GROWTH,
+                criteria=[
+                    # Without this a profitable compounder scores here as well as
+                    # on the quality screeners, double-counting the same growth.
+                    ScreenerCriteria("profit_margins", "<=", 0, "Not yet profitable"),
+                    ScreenerCriteria("revenue_growth", ">=", 25, "Revenue Growth >= 25%"),
+                    ScreenerCriteria("gross_margin", ">=", 30, "Gross Margin >= 30% (viable unit economics)"),
+                    ScreenerCriteria("net_cash", "==", True, "Net cash (funded through to profitability)"),
+                    ScreenerCriteria("current_price", ">", FieldRef("sma_200"), "Primary uptrend"),
+                ],
+                requires_historical_data=True,
+                requires_yahoo_data=True,
+                available=True,
+                weight=6,
+                combine_with=[
+                    "r40_momentum",
+                    "breakout_quiet_base",
+                    "momentum_pullback",
+                    "volatility_contraction",
+                    "insider_buying",
+                ],
+                excluded_sectors=_QUALITY_EXCLUDED,
             ),
         }
 
@@ -619,17 +741,15 @@ Check those criteria:
     def get_available_fields(self) -> list[str]:
         """Get list of available field names."""
         return [
-            "return_on_equity",
-            "return_on_assets",
             "free_cashflow_yield",
+            "fcf_margin",
             "peg_ratio",
             "revenue_growth",
             "profit_margins",
+            "gross_margin",
             "pe_ratio",
             "short_percent_of_float",
-            "fifty_two_week_change",
             "rsi",
-            "institutional_ownership",
             "current_price",
             "rule_of_40_score",
             "sma_20",
@@ -644,10 +764,13 @@ Check those criteria:
             "rs_6m_vs_spy",
             "fifty_two_week_high_distance",
             "recommendation_trend",
+            "recommendation_delta_12m",
             "pe_1y_trend_pct",
             "pe_5y_avg_vs_current_pct",
             "roic",
-            "debtToEquity",
+            "roic_3y_min",
+            "net_cash",
+            "net_debt_to_ebitda",
             "total_revenue",
             "insider_buy_count_90d",
             "insider_net_value_90d",

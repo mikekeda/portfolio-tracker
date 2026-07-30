@@ -1,6 +1,86 @@
 """ROIC helper utilities."""
 
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
+
+DEFAULT_TAX_RATE = 0.25
+MAX_TAX_RATE = 0.5
+
+
+def _invested_capital(bs: dict[str, Any]) -> Optional[float]:
+    """Total assets less current liabilities and cash, or debt + equity - cash."""
+    cash_and_equiv = (
+        bs.get("Cash And Cash Equivalents") or bs.get("Cash Cash Equivalents And Short Term Investments") or 0.0
+    )
+
+    total_assets = bs.get("Total Assets")
+    current_liabilities = bs.get("Current Liabilities") or bs.get("Total Current Liabilities")
+    if total_assets is not None and current_liabilities is not None:
+        return total_assets - current_liabilities - cash_and_equiv
+
+    total_debt = bs.get("Total Debt") or (bs.get("Long Term Debt", 0.0) + bs.get("Current Debt", 0.0))
+    total_equity = bs.get("Stockholders Equity") or bs.get("Total Stockholders Equity")
+    if total_debt is not None and total_equity is not None:
+        return total_debt + total_equity - cash_and_equiv
+
+    return None
+
+
+def _roic_for_period(bs: dict[str, Any], is_stmt: dict[str, Any]) -> Optional[float]:
+    """ROIC as a percentage for one balance-sheet / income-statement pair."""
+    ebit = is_stmt.get("Operating Income") or is_stmt.get("EBIT")
+    if ebit is None:
+        return None
+
+    tax_expense = is_stmt.get("Tax Provision") or is_stmt.get("Income Tax Expense") or 0.0
+    ebt = is_stmt.get("Pretax Income") or is_stmt.get("Income Before Tax")
+    tax_rate = DEFAULT_TAX_RATE
+    if ebt and ebt > 0 and tax_expense > 0:
+        tax_rate = max(0.0, min(MAX_TAX_RATE, tax_expense / ebt))
+
+    invested_capital = _invested_capital(bs)
+    if invested_capital is None or invested_capital <= 0:
+        return None
+
+    return float((ebit * (1.0 - tax_rate) / invested_capital) * 100.0)
+
+
+def _paired_periods(
+    balance_sheet: dict[str, Any], income_stmt: dict[str, Any]
+) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+    """Statement pairs newest first, matching each balance sheet to the closest prior income statement."""
+    is_dates = sorted(income_stmt.keys(), reverse=True)
+    for bs_date in sorted(balance_sheet.keys(), reverse=True):
+        is_date = next((d for d in is_dates if d <= bs_date), None)
+        if is_date is not None:
+            yield balance_sheet[bs_date], income_stmt[is_date]
+
+
+def get_roic_history(
+    balance_sheet: Optional[dict[str, Any]],
+    income_stmt: Optional[dict[str, Any]],
+    periods: int = 3,
+) -> list[float]:
+    """ROIC percentages for the most recent `periods` fiscal years, newest first.
+
+    Empty unless every one of those periods is computable — a partial run would
+    let a 2-year sample pass a 3-year consistency test.
+    """
+    if not balance_sheet or not income_stmt:
+        return []
+
+    history: list[float] = []
+    try:
+        for bs, is_stmt in _paired_periods(balance_sheet, income_stmt):
+            if len(history) == periods:
+                break
+            roic = _roic_for_period(bs, is_stmt)
+            if roic is None:
+                return []
+            history.append(roic)
+    except (TypeError, ValueError, KeyError, ZeroDivisionError):
+        return []
+
+    return history if len(history) == periods else []
 
 
 def get_roic(
@@ -13,62 +93,16 @@ def get_roic(
     Prefers statement-based calculation (NOPAT / Invested Capital) using
     balance_sheet and income_stmt. Falls back to info-based proxy if missing.
     """
-    # 1. Try statement-based calculation
     if balance_sheet and income_stmt:
         try:
-            # Get latest period date
-            dates = sorted(balance_sheet.keys(), reverse=True)
-            if dates:
-                latest_date = dates[0]
-                bs = balance_sheet[latest_date]
-
-                # Find matching or closest prior period in income statement
-                is_dates = sorted(income_stmt.keys(), reverse=True)
-                closest_is_date = next((d for d in is_dates if d <= latest_date), None)
-
-                if closest_is_date:
-                    is_stmt = income_stmt[closest_is_date]
-
-                    # Extract EBIT and taxes
-                    ebit = is_stmt.get("Operating Income") or is_stmt.get("EBIT")
-                    tax_expense = is_stmt.get("Tax Provision") or is_stmt.get("Income Tax Expense") or 0.0
-                    ebt = is_stmt.get("Pretax Income") or is_stmt.get("Income Before Tax")
-
-                    if ebit is not None:
-                        tax_rate = 0.25  # default/fallback tax rate
-                        if ebt and ebt > 0 and tax_expense > 0:
-                            tax_rate = tax_expense / ebt
-                            tax_rate = max(0.0, min(0.5, tax_rate))
-
-                        nopat = ebit * (1.0 - tax_rate)
-
-                        # Calculate Invested Capital (Total Assets - Current Liabilities - Cash)
-                        total_assets = bs.get("Total Assets")
-                        current_liabilities = bs.get("Current Liabilities") or bs.get("Total Current Liabilities")
-                        cash_and_equiv = (
-                            bs.get("Cash And Cash Equivalents")
-                            or bs.get("Cash Cash Equivalents And Short Term Investments")
-                            or 0.0
-                        )
-
-                        invested_capital = None
-                        if total_assets is not None and current_liabilities is not None:
-                            invested_capital = total_assets - current_liabilities - cash_and_equiv
-                        else:
-                            # Fallback: Debt + Equity - Cash
-                            total_debt = bs.get("Total Debt") or (
-                                bs.get("Long Term Debt", 0.0) + bs.get("Current Debt", 0.0)
-                            )
-                            total_equity = bs.get("Stockholders Equity") or bs.get("Total Stockholders Equity")
-                            if total_debt is not None and total_equity is not None:
-                                invested_capital = total_debt + total_equity - cash_and_equiv
-
-                        if invested_capital is not None and invested_capital > 0:
-                            return float((nopat / invested_capital) * 100.0)
+            for bs, is_stmt in _paired_periods(balance_sheet, income_stmt):
+                roic = _roic_for_period(bs, is_stmt)
+                if roic is not None:
+                    return roic
+                break
         except (TypeError, ValueError, KeyError, ZeroDivisionError):
             pass  # Fall back to info-based proxy if statements are malformed
 
-    # 2. Fallback: Info-based proxy
     roic = None
     try:
         total_debt = info.get("totalDebt")
@@ -80,8 +114,7 @@ def get_roic(
             total_equity = (total_debt / (debt_to_equity_ratio / 100.0)) if debt_to_equity_ratio > 0 else 0
             invested_capital = total_debt + total_equity - total_cash
 
-            tax_rate = 0.25
-            nopat = ebit * (1 - tax_rate)
+            nopat = ebit * (1 - DEFAULT_TAX_RATE)
 
             if invested_capital > 0:
                 roic = (nopat / invested_capital) * 100.0

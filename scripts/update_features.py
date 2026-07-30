@@ -20,7 +20,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from backend.app import get_session
 from backend.views.portfolio import get_current_portfolio
 from config import TIMEZONE, logger
-from models import FeaturesDaily, Instrument, InstrumentYahoo
+from models import FeaturesDaily, Instrument
 
 
 def _num(value) -> float | None:
@@ -30,13 +30,13 @@ def _num(value) -> float | None:
     return None
 
 
-def _row_from_holding(h: dict, instrument_id: int, margins: dict) -> dict:
+def _row_from_holding(h: dict, instrument_id: int) -> dict:
     return {
         "instrument_id": instrument_id,
         "date": datetime.now(TIMEZONE).date(),
         "roic": _num(h.get("roic")),
-        "gross_margin": margins.get("gross"),
-        "operating_margin": margins.get("operating"),
+        "gross_margin": _num(h.get("gross_margin")),
+        "operating_margin": _num(h.get("operating_margin")),
         "profit_margin": _num(h.get("profit_margins")),
         "revenue_growth": _num(h.get("revenue_growth")),
         "fcf_yield": _num(h.get("free_cashflow_yield")),
@@ -55,6 +55,7 @@ def _row_from_holding(h: dict, instrument_id: int, margins: dict) -> dict:
         "rule_of_40": _num(h.get("rule_of_40_score")),
         "f_score": h.get("f_score"),
         "screener_score": _num(h.get("screener_score")),
+        "screener_score_max": _num(h.get("screener_score_max")),
         "passed_screeners": h.get("passedScreeners") or [],
         "thesis_rule_eval": h.get("thesis_rule_eval"),
         "extras": {"dcf_implied_growth_status": h.get("dcf_implied_growth_status")},
@@ -74,22 +75,6 @@ async def update_features() -> None:
         )
         id_by_symbol = {sym: inst_id for inst_id, sym in id_rows.all()}
 
-        # Gross/operating margins aren't in the holding dict; extract just those
-        # two keys in SQL rather than loading ~1k full info blobs.
-        margin_rows = await session.execute(
-            select(
-                InstrumentYahoo.instrument_id,
-                InstrumentYahoo.info["grossMargins"].astext,
-                InstrumentYahoo.info["operatingMargins"].astext,
-            )
-        )
-        margins_by_id: dict[int, dict] = {}
-        for inst_id, gross, operating in margin_rows.all():
-            margins_by_id[inst_id] = {
-                "gross": float(gross) * 100.0 if gross is not None else None,
-                "operating": float(operating) * 100.0 if operating is not None else None,
-            }
-
         rows = []
         skipped = 0
         for h in holdings:
@@ -97,7 +82,7 @@ async def update_features() -> None:
             if instrument_id is None:
                 skipped += 1
                 continue
-            rows.append(_row_from_holding(h, instrument_id, margins_by_id.get(instrument_id, {})))
+            rows.append(_row_from_holding(h, instrument_id))
 
         if not rows:
             logger.warning("Features: nothing to write (0 holdings resolved)")

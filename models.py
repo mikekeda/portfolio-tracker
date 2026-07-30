@@ -9,7 +9,6 @@ import enum
 from datetime import date, datetime
 from typing import Any, Literal, Optional, TypedDict
 
-from dateutil.relativedelta import relativedelta
 from sqlalchemy import (
     BigInteger,
     Date,
@@ -29,6 +28,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from backend.schemas.instrument_thesis import ThesisConviction
+from backend.utils.pe_history import avg_pe
 from config import TIMEZONE
 
 InstrumentTag = Literal[
@@ -272,31 +272,9 @@ class InstrumentYahoo(Base):
 
     @hybrid_property
     def avg_pe_5y(self) -> Optional[float]:
-        """Return the average PE ratio over the last 5 years"""
+        """Return the representative PE ratio over the last 5 years"""
 
-        if not self.pes:
-            return None
-
-        today = datetime.now(TIMEZONE).date()
-        start = today + relativedelta(years=-5)
-
-        values: list[float] = []
-        for k, v in self.pes.items():
-            d = datetime.strptime(k, "%Y-%m-%d").date()
-
-            # d > today: Wisesheets rows include forward year-end estimates —
-            # a historical average must not contain forecasts.
-            if d < start or d > today:
-                continue
-
-            pe = float(v["pe_ratio"])
-            if pe > 0:
-                values.append(pe)
-
-        if not values:
-            return None
-
-        return float(sum(values) / len(values))
+        return avg_pe(self.pes, datetime.now(TIMEZONE).date())
 
 
 class InstrumentMetricsDaily(Base):
@@ -374,6 +352,9 @@ class FeaturesDaily(Base):
     rule_of_40: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     f_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     screener_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Score reachable in this instrument's sector — the denominator that makes
+    # screener_score comparable across sectors with different exclusions.
+    screener_score_max: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     passed_screeners: Mapped[Optional[list[str]]] = mapped_column(JSONB, nullable=True)
     thesis_rule_eval: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 

@@ -205,7 +205,9 @@ def _fetch_rates_batch(currencies: tuple[str, ...]) -> dict[str, float]:
             # Invert the rate since we want TO GBP, not FROM GBP
             rates[currency] = 1.0 / data["rates"][currency]
         else:
-            raise KeyError(f"Currency {currency} not found in fallback API response")
+            # Downstream code treats a missing rate as "unconvertible" and emits
+            # None; one exotic currency must not fail the whole nightly update.
+            logger.warning("Currency %s not offered by the rates API — skipping", currency)
 
     return rates
 
@@ -217,7 +219,7 @@ def update_currency_rates(currencies: tuple[str, ...]) -> dict[str, float]:
     rates = _fetch_rates_batch(currencies)
 
     with get_session() as session:
-        for currency in currencies:
+        for currency in rates:
             existing = (
                 session.query(CurrencyRateDaily)
                 .filter(

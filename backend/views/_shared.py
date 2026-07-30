@@ -11,11 +11,39 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.utils.pe_history import avg_pe, basis_matches, pe_series
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE
 from models import CurrencyRateDaily, HoldingDaily, PricesDaily
 
 # SQLAlchemy column expression for the configured price field (used in chart and portfolio queries)
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
+
+# Yahoo quotes GBp/GBX listings in pence but reports their marketCap in pounds.
+_PENCE_QUOTE_CURRENCIES = frozenset({"GBp", "GBX"})
+
+
+def statement_to_quote_factor(info: dict, rates: dict[str, float]) -> Optional[float]:
+    """Multiplier converting `financialCurrency` amounts into marketCap's currency.
+
+    Yahoo reports marketCap in the quote currency but freeCashflow, totalRevenue
+    and ebitda in the reporting currency; dividing them without this is wrong for
+    ~22% of the universe. None when either rate is unavailable.
+    """
+    quote = info.get("currency")
+    statement = info.get("financialCurrency")
+    if not quote or not statement:
+        return None
+
+    if quote in _PENCE_QUOTE_CURRENCIES:
+        quote = "GBP"
+    if quote == statement:
+        return 1.0
+
+    statement_rate = rates.get(statement)
+    quote_rate = rates.get(quote)
+    if not statement_rate or not quote_rate:
+        return None
+    return statement_rate / quote_rate
 
 
 async def get_rates(session: AsyncSession) -> dict[str, float]:
@@ -40,6 +68,7 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
     """Calculates trend metrics from historical data stored in the yahoo object"""
     trends: dict[str, Optional[float]] = {
         "recommendation_trend": None,
+        "recommendation_delta_12m": None,
         "pe_1y_trend_pct": None,
         "pe_5y_avg_vs_current_pct": None,
     }
@@ -50,6 +79,7 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
     # --- 1. Recommendation Trend ---
     recs = holding.instrument.yahoo.recommendations
     trends["recommendation_trend"] = 0.0
+    trends["recommendation_delta_12m"] = 0.0
     if recs and len(recs) >= 2:
         items = sorted(recs.items())
         sb = np.array([m.get("strongBuy", 0) for _, m in items], dtype=float)
@@ -64,29 +94,25 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
             x = np.arange(score.size, dtype=float)
             if score.std() != 0:
                 trends["recommendation_trend"] = float(np.corrcoef(x, score)[0, 1])
+            # The correlation only says the drift is monotone; this says whether
+            # it is large enough to be worth acting on.
+            trends["recommendation_delta_12m"] = float(score[-1] - score[0])
 
     # --- 2. PE Trend and PE vs History ---
     pes = holding.instrument.yahoo.pes
     current_pe = holding.instrument.yahoo.info.get("trailingPE")
 
-    if pes and current_pe and current_pe > 0:
-        one_year_ago = (datetime.now() - relativedelta(years=1)).strftime("%Y-%m-%d")
-        five_years_ago = (datetime.now() - relativedelta(years=5)).strftime("%Y-%m-%d")
-
-        # PE 1 Year Trend
-        past_pe_date = next((d for d in sorted(pes.keys(), reverse=True) if d <= one_year_ago), None)
-        if past_pe_date and pes[past_pe_date].get("pe_ratio", 0) > 0:
-            past_pe = pes[past_pe_date]["pe_ratio"]
+    # Yahoo's trailingPE and the scraped series must be on a comparable EPS basis
+    # before either can be read as a re-rating.
+    today = datetime.now(TIMEZONE).date()
+    if pes and current_pe and current_pe > 0 and basis_matches(pes, today, current_pe):
+        one_year_ago = today - relativedelta(years=1)
+        past_pe = next((pe for d, pe in reversed(pe_series(pes, today, years=5)) if d <= one_year_ago), None)
+        if past_pe:
             trends["pe_1y_trend_pct"] = (current_pe / past_pe - 1) * 100
 
-        # PE vs 5Y Average. k <= today excludes Wisesheets forward year-end
-        # estimates — a historical average must not contain forecasts.
-        today = datetime.now().strftime("%Y-%m-%d")
-        pe_values_5y = [
-            v["pe_ratio"] for k, v in pes.items() if five_years_ago <= k <= today and v.get("pe_ratio", 0) > 0
-        ]
-        if pe_values_5y:
-            avg_pe_5y = sum(pe_values_5y) / len(pe_values_5y)
+        avg_pe_5y = avg_pe(pes, today)
+        if avg_pe_5y:
             trends["pe_5y_avg_vs_current_pct"] = (avg_pe_5y / current_pe - 1) * 100
 
     return trends

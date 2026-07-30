@@ -182,30 +182,25 @@ def calculate_bb_width(prices: list[float], period: int) -> Optional[float]:
 def calculate_bb_width_percentile(
     prices: list[float], period: int, lookback: int, percentile: float
 ) -> Optional[float]:
-    """Calculate BB width percentile over the last lookback days only."""
+    """The `percentile`-th BB width over the last `lookback` days.
+
+    Returned on the same scale as `calculate_bb_width`, so callers compare
+    today's width against it directly.
+    """
     if len(prices) < lookback + period:
         return None
 
-    # Calculate BB width for each day in the last lookback days
     bb_widths = []
     for i in range(len(prices) - lookback, len(prices)):
-        window = prices[i - period + 1 : i + 1]
-        bb_width = calculate_bb_width(window, period)
+        bb_width = calculate_bb_width(prices[i - period + 1 : i + 1], period)
         if bb_width is not None:
             bb_widths.append(bb_width)
 
     if not bb_widths:
         return None
 
-    current_bb_width = calculate_bb_width(prices[-period:], period)
-    if current_bb_width is None:
-        return None
-
-    # Find the rank of the current width among historical widths
-    rank = sum(1 for width in bb_widths if width < current_bb_width)
-    percentile_rank = rank / len(bb_widths)
-
-    return percentile_rank
+    bb_widths.sort()
+    return bb_widths[min(int(percentile * len(bb_widths)), len(bb_widths) - 1)]
 
 
 async def calculate_volume_ratio_from_db(symbol: str, session: AsyncSession) -> Optional[float]:

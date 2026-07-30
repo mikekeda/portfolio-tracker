@@ -19,6 +19,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.screener_config import SCORE_NORMALIZER
 from backend.utils.risk_math import ledoit_wolf_cov, hrp_weights, risk_contributions
 from backend.views._shared import PRICE_COLUMN
 from config import SPY
@@ -62,7 +63,12 @@ FUNDAMENTAL_COLUMNS = (
     "rule_of_40",
     "f_score",
     "screener_score",
+    "screener_score_max",
 )
+
+# The screener overhaul (currency-correct FCF, fixed BB-width percentile, margin
+# gates, reweighting) landed here; screener_score is not comparable across it.
+SCREENER_CUTOVER = date(2026, 7, 30)
 
 
 @dataclass
@@ -174,6 +180,10 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
         rec = {"date": f.date, "symbol": sym}
         for col in FUNDAMENTAL_COLUMNS:
             rec[col] = getattr(f, col)
+        # Sector exclusions cap what a stock can score, so rank on the ratio.
+        # Pre-cutover rows have no max and fall back to the flat normalizer.
+        if rec["screener_score"] is not None:
+            rec["screener_score"] = rec["screener_score"] / (rec["screener_score_max"] or SCORE_NORMALIZER)
         eval_ = f.thesis_rule_eval or {}
         # sell_signal conflates "a sell rule fired" with "above allocation band";
         # the strategy exits on the former but only trims to the band on the latter.

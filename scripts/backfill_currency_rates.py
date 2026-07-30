@@ -1,8 +1,9 @@
 """
 Backfill CurrencyRateDaily with historical currency rates.
 
-This script fetches historical exchange rates for USD, EUR, CAD, SEK and DKK
-into GBP using Yahoo Finance and stores them in the CurrencyRateDaily table.
+This script fetches historical exchange rates for every currency in
+config.CURRENCIES into GBP using Yahoo Finance and stores them in the
+CurrencyRateDaily table.
 Date range is configurable via --start/--end (defaults preserve the original
 2024-04-18 → 2025-08-29 behaviour); pass --start 2015-01-01 to unlock
 GBP-denominated backtests over the full prices_daily history.
@@ -15,6 +16,7 @@ import pandas as pd
 import yfinance as yf  # type: ignore[import-untyped]
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from config import CURRENCIES
 from models import CurrencyRateDaily
 from scripts.update_data import get_session
 
@@ -177,43 +179,17 @@ def main():
     print(f"📊 Total days: {(end_date - start_date).days + 1}")
     print()
 
-    # Currency pairs to backfill
+    # Derived from CURRENCIES so the two can't drift apart. Yahoo quotes every
+    # pair as GBP->X, so every rate needs inverting to reach X->GBP.
     currency_pairs: list[dict[str, str | bool]] = [
         {
-            "from_currency": "USD",
+            "from_currency": currency,
             "to_currency": "GBP",
-            "yahoo_symbol": "GBPUSD=X",
-            "invert": True,  # Convert GBP/USD to USD/GBP
-            "description": "US Dollar to British Pound",
-        },
-        {
-            "from_currency": "EUR",
-            "to_currency": "GBP",
-            "yahoo_symbol": "EURGBP=X",
-            "invert": False,  # Direct EUR/GBP
-            "description": "Euro to British Pound",
-        },
-        {
-            "from_currency": "CAD",
-            "to_currency": "GBP",
-            "yahoo_symbol": "GBPCAD=X",
-            "invert": True,  # Convert GBP/CAD to CAD/GBP
-            "description": "Canadian Dollar to British Pound",
-        },
-        {
-            "from_currency": "SEK",
-            "to_currency": "GBP",
-            "yahoo_symbol": "GBPSEK=X",
-            "invert": True,  # Convert GBP/SEK to SEK/GBP
-            "description": "Swedish Krona to British Pound",
-        },
-        {
-            "from_currency": "DKK",
-            "to_currency": "GBP",
-            "yahoo_symbol": "GBPDKK=X",
-            "invert": True,  # Convert GBP/DKK to DKK/GBP
-            "description": "Danish Krone to British Pound",
-        },
+            "yahoo_symbol": f"GBP{currency}=X",
+            "invert": True,
+            "description": f"{currency} to British Pound",
+        }
+        for currency in CURRENCIES
     ]
 
     with get_session() as session:

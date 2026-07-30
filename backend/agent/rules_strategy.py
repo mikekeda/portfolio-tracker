@@ -71,7 +71,9 @@ class RulesStrategy:
     DEPLOY_CASH_FRAC = 0.30
     DEPLOY_POSITIONS = 15
     MIN_QUALITY_ROIC = 15.0
-    MIN_QUALITY_SCREENER = 8.0
+    # screener_score arrives as a fraction of what its sector can reach, so this
+    # is "earned ~a third of the available quality evidence", not a raw point count.
+    MIN_QUALITY_SCREENER = 0.30
     # A thesis sell rule must fire this many consecutive daily snapshots before
     # it escalates to an EXIT — one noisy quarter print shouldn't dump a position.
     SELL_RULE_PERSISTENCE = 5

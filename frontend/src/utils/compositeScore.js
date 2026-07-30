@@ -1,9 +1,7 @@
 // Composite score helpers shared by Holdings (table column) and Stock (KPI tile).
 
-// Screener score normalisation baseline (see computeComposite).
-// 50 ≈ sum of the 5 highest screener weights (9+9+9+8+8 = 43) plus a typical
-// cross-category combination bonus (~6 pts).  A round number, easy to reason
-// about, and stable regardless of which stocks are loaded.
+// Fallback when the backend sends no screener_score_max (it normally does, scaled
+// down for sectors excluded from several screeners). Mirrors SCORE_NORMALIZER.
 export const SCREENER_NORMALIZER = 50;
 
 const MS_PER_AVG_MONTH = 1000 * 60 * 60 * 24 * 30.44;
@@ -43,8 +41,9 @@ export function earningsAgeDecay(monthsOld) {
 
 /**
  * Composite score (–10 … 10):
- *   Screener quality score    50%  — screener_score / SCREENER_NORMALIZER (50).
- *                                    Stable across all views; negative values
+ *   Screener quality score    50%  — screener_score / screener_score_max, which
+ *                                    the backend scales down for sectors excluded
+ *                                    from several screeners. Negative values are
  *                                    preserved so red-flag stocks stay negative.
  *   Earnings signal strength  25%  — conviction-adjusted
  *   Analyst recommendation    10%  — recommendation_mean (1=strong buy … 5=strong sell)
@@ -56,10 +55,11 @@ export function earningsAgeDecay(monthsOld) {
  * Output is capped at 10; there is no lower cap — losers can go negative.
  */
 export function computeComposite(h) {
-  // ETFs have no equity screener data or earnings signal — show blank
-  if (h.quote_type === 'ETF') return null;
+  // ETFs have no equity screener data or earnings signal — show blank. Some
+  // trackers (SGLN.L) are quoteType EQUITY, so a null sector disqualifies too.
+  if (h.quote_type === 'ETF' || h.sector == null) return null;
 
-  const max = SCREENER_NORMALIZER;
+  const max = h.screener_score_max ?? SCREENER_NORMALIZER;
   const screenerRaw = h.screener_score != null ? h.screener_score / max : null;
 
   const SIGNAL_VALUES = { buy: 1.0, consider: 0.75, hold: 0.5, avoid: 0.1 };
@@ -126,9 +126,8 @@ export function compositeTooltip(score, h) {
   const eff = (base) =>
     presentTotal > 0 ? Math.round(base / presentTotal * 100) : 0;
 
-  const screenerLine = hasScreener
-    ? `Screener: ${h.screener_score} pts  (eff. ${eff(50)}%)`
-    : 'Screener: no data';
+  const screenerMax = Math.round(h.screener_score_max ?? SCREENER_NORMALIZER);
+  const screenerLine = `Screener: ${h.screener_score} / ${screenerMax} pts  (eff. ${eff(50)}%)`;
   const signalLine = hasSignal
     ? `Signal: ${h.earnings_signal}${h.earnings_conviction ? ` (${h.earnings_conviction})` : ''}  (eff. ${eff(25)}%)`
     : h.earnings_signal

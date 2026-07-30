@@ -33,74 +33,57 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
         logger.warning("No portfolio data provided for screener calculation")
         return
 
-    try:
-        screener_config = get_screener_config()
-        available_screeners = screener_config.get_available_screeners()
+    screener_config = get_screener_config()
+    available_screeners = screener_config.get_available_screeners()
 
-        if not available_screeners:
-            logger.warning("No available screeners found")
-            for holding_data in portfolio_data:
-                holding_data["passedScreeners"] = []
-                holding_data["screener_score"] = 0
-            return
-
-        logger.debug(
-            "Evaluating %s screeners for %s holdings",
-            len(available_screeners),
-            len(portfolio_data),
-        )
-
-        # Local references shave attribute lookups in the hot loop (important when
-        # "Show all" mode feeds ~700 monitored stocks through here).
-        passes_screener = screener_config.passes_screener
-        screeners_map = screener_config.screeners
-
+    if not available_screeners:
+        logger.warning("No available screeners found")
         for holding_data in portfolio_data:
-            passed_screeners: list[str] = []
-            score = 0
+            _blank_result(holding_data)
+        return
 
-            for screener_def in available_screeners:
-                if passes_screener(holding_data, screener_def):
-                    passed_screeners.append(screener_def.id)
-                    score += screener_def.weight
+    logger.debug(
+        "Evaluating %s screeners for %s holdings",
+        len(available_screeners),
+        len(portfolio_data),
+    )
+
+    # Local references shave attribute lookups in the hot loop (important when
+    # "Show all" mode feeds ~700 monitored stocks through here).
+    passes_screener = screener_config.passes_screener
+    screeners_map = screener_config.screeners
+
+    failures = 0
+    for holding_data in portfolio_data:
+        # Per holding, not per batch: one malformed field must not zero the
+        # scores of every other stock and then get persisted by update_features.
+        try:
+            passed_screeners = [s.id for s in available_screeners if passes_screener(holding_data, s)]
+            score = sum(screeners_map[s].weight for s in passed_screeners)
+            score += screener_config.combination_bonus(passed_screeners)
 
             holding_data["passedScreeners"] = passed_screeners
-
-            # Combination bonus: reward stocks that pass mutually-endorsed screener pairs.
-            # Complementarity is fully delegated to `combine_with` (curated whitelist), so we
-            # no longer gate by category — two VALUE screeners endorsing each other are a
-            # legitimate double-confirmation. Diminishing returns (pairs ** 0.85) prevent a
-            # single stock with many passes from saturating the score while still giving
-            # exceptional stocks room to stand out.
-            if len(passed_screeners) >= 2:
-                pair_count = 0
-                for a, b in combinations(passed_screeners, 2):
-                    if b in screeners_map[a].combine_with_set or a in screeners_map[b].combine_with_set:
-                        pair_count += 1
-                if pair_count:
-                    score += round(2 * pair_count**0.85)
-
             holding_data["screener_score"] = score
+            holding_data["screener_score_max"] = screener_config.score_normalizer(holding_data.get("sector"))
+        except Exception as e:  # noqa: BLE001 — one bad instrument shouldn't stop the rest
+            failures += 1
+            logger.error("Screener evaluation failed for %s: %s", holding_data.get("yahoo_symbol"), e)
+            _blank_result(holding_data)
 
-        # Log summary for debugging
-        total_matches = sum(len(h.get("passedScreeners", [])) for h in portfolio_data)
-        logger.debug(
-            "Screener evaluation complete: %s total matches across %s holdings",
-            total_matches,
-            len(portfolio_data),
-        )
+    total_matches = sum(len(h.get("passedScreeners", [])) for h in portfolio_data)
+    logger.debug(
+        "Screener evaluation complete: %s total matches across %s holdings (%s failed)",
+        total_matches,
+        len(portfolio_data),
+        failures,
+    )
 
-    except ImportError as e:
-        logger.error("Failed to import screener configuration: %s", e)
-        for holding_data in portfolio_data:
-            holding_data["passedScreeners"] = []
-            holding_data["screener_score"] = 0
-    except Exception as e:
-        logger.error("Unexpected error in screener calculation: %s", e, exc_info=True)
-        # Continue without screener results if calculation fails
-        for holding_data in portfolio_data:
-            holding_data["passedScreeners"] = []
-            holding_data["screener_score"] = 0
+
+def _blank_result(holding_data: dict) -> None:
+    """Mark a holding as unscored."""
+    holding_data["passedScreeners"] = []
+    holding_data["screener_score"] = 0
+    holding_data["screener_score_max"] = None
 
 
 def validate_screener_fields(available_screeners: list, sample_holding: dict) -> None:

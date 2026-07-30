@@ -26,11 +26,16 @@ from utils.market_data import (
     get_yield_spread,
 )
 from backend.utils.piotroski import get_piotroski_f_score
-from backend.utils.roic import get_roic
+from backend.utils.roic import get_roic, get_roic_history
 from backend.utils.screener import calculate_screener_results
 from backend.utils.thesis_rules import attach_thesis_rule_eval
 from backend.utils.technical import calculate_technical_indicators_for_symbols
-from backend.views._shared import PRICE_COLUMN, calculate_historical_trends, get_rates
+from backend.views._shared import (
+    PRICE_COLUMN,
+    calculate_historical_trends,
+    get_rates,
+    statement_to_quote_factor,
+)
 from config import BENCHES, DAYS_PER_YEAR, TAG_CLUSTER_SOFT_CAPS, TIMEZONE, VIX
 from data import QUICK_RATIO_THRESHOLDS
 from models import (
@@ -409,6 +414,18 @@ async def get_current_portfolio(
         if holding.instrument.thesis:
             thesis_by_symbol[holding.instrument.yahoo_symbol] = holding.instrument.thesis
 
+        # marketCap is quoted in `currency` but the statements are in
+        # `financialCurrency`; mixing the two is wrong for ~22% of the universe.
+        fx = statement_to_quote_factor(info, currency_rates)
+        market_cap = info.get("marketCap")
+        free_cashflow = info.get("freeCashflow")
+        total_revenue = info.get("totalRevenue")
+        ebitda = info.get("ebitda")
+        total_debt = info.get("totalDebt")
+        total_cash = info.get("totalCash")
+        fcf_quote = free_cashflow * fx if (free_cashflow is not None and fx) else None
+        revenue_quote = total_revenue * fx if (total_revenue is not None and fx) else None
+
         portfolio_data.append(
             {
                 "t212_code": holding.instrument.t212_code,
@@ -435,7 +452,9 @@ async def get_current_portfolio(
                 "market_cap": info.get("marketCap"),
                 "pe_ratio": info.get("trailingPE"),
                 "forward_pe_ratio": info.get("forwardPE"),
-                "ps_ratio": info.get("priceToSalesTrailing12Months"),
+                # Yahoo's own priceToSalesTrailing12Months carries the currency
+                # mismatch, so recompute it rather than reading the field.
+                "ps_ratio": market_cap / revenue_quote if (market_cap and revenue_quote) else None,
                 "avg_pe": getattr(holding.instrument.yahoo, "avg_pe_5y", None) if holding.instrument.yahoo else None,
                 "beta": info.get("beta"),
                 "date": holding.date.isoformat() if hasattr(holding.date, "isoformat") else str(holding.date),
@@ -451,30 +470,34 @@ async def get_current_portfolio(
                 "institutional_ownership": round(info.get("heldPercentInstitutions") * 100.0)
                 if (info.get("heldPercentInstitutions") is not None)
                 else None,
-                "peg_ratio": info["trailingPegRatio"]
-                if info.get("trailingPegRatio")
-                else None,  # Keep full precision for screener evaluation
-                "profit_margins": info["profitMargins"] * 100.0
-                if info.get("profitMargins")
-                else None,  # Keep full precision for screener evaluation
-                "revenue_growth": info["revenueGrowth"] * 100.0
-                if info.get("revenueGrowth")
-                else None,  # Keep full precision for screener evaluation
-                "total_revenue": info.get("totalRevenue"),  # Yahoo TTM revenue (reporting ccy)
-                "return_on_assets": info["returnOnAssets"] * 100.0
-                if info.get("returnOnAssets")
-                else None,  # Keep full precision for screener evaluation
-                "return_on_equity": info["returnOnEquity"] * 100.0
-                if info.get("returnOnEquity")
-                else None,  # Keep full precision for screener evaluation
+                # Full precision throughout — these feed screener evaluation.
+                "peg_ratio": info["trailingPegRatio"] if info.get("trailingPegRatio") is not None else None,
+                "profit_margins": info["profitMargins"] * 100.0 if info.get("profitMargins") is not None else None,
+                "gross_margin": info["grossMargins"] * 100.0 if info.get("grossMargins") is not None else None,
+                "operating_margin": info["operatingMargins"] * 100.0
+                if info.get("operatingMargins") is not None
+                else None,
+                "revenue_growth": info["revenueGrowth"] * 100.0 if info.get("revenueGrowth") is not None else None,
+                "total_revenue": revenue_quote,
+                "return_on_assets": info["returnOnAssets"] * 100.0 if info.get("returnOnAssets") is not None else None,
+                "return_on_equity": info["returnOnEquity"] * 100.0 if info.get("returnOnEquity") is not None else None,
                 "roic": get_roic(info, yh.balance_sheet, yh.income_stmt) if yh else None,
+                "roic_3y_min": min(get_roic_history(yh.balance_sheet, yh.income_stmt, periods=3), default=None)
+                if yh
+                else None,
                 "f_score": f_score_result["score"] if f_score_result else None,
                 "f_score_details": f_score_result["details"] if f_score_result else None,
-                "free_cashflow_yield": info["freeCashflow"] / info["marketCap"] * 100
-                if (info.get("freeCashflow") and info.get("marketCap", 0) > 0)
+                "free_cashflow_yield": fcf_quote / market_cap * 100 if (fcf_quote is not None and market_cap) else None,
+                # Both terms are in the reporting currency, so this is FX-immune.
+                "fcf_margin": free_cashflow / total_revenue * 100
+                if (free_cashflow is not None and total_revenue)
                 else None,
                 "quickRatio": info.get("quickRatio") if info.get("sector") != "Financial Services" else None,
                 "debtToEquity": info.get("debtToEquity"),
+                "net_cash": total_cash > total_debt if (total_cash is not None and total_debt is not None) else None,
+                "net_debt_to_ebitda": (total_debt - total_cash) / ebitda
+                if (total_debt is not None and total_cash is not None and ebitda and ebitda > 0)
+                else None,
                 "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
                 "recommendation_key": info.get("recommendationKey"),
                 "recommendations": holding.instrument.yahoo.recommendations if holding.instrument.yahoo else None,
@@ -509,6 +532,7 @@ async def get_current_portfolio(
                 "quote_type": info.get("quoteType", "Unknown"),
                 "passedScreeners": [],  # will be populated below
                 "screener_score": 0,  # will be populated below
+                "screener_score_max": None,  # will be populated below
                 "form13f_score": form13f.get(holding.instrument.id, {}).get("score"),
                 "form13f_holders": form13f.get(holding.instrument.id, {}).get("holders", []),
                 **(
