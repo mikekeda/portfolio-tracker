@@ -37,7 +37,7 @@ class Form13FHolder(TypedDict):
 class Form13FInstrumentResult(TypedDict):
     """13F score and holders for one instrument."""
 
-    score: float
+    score: Optional[float]
     holders: list[Form13FHolder]
 
 
@@ -136,6 +136,28 @@ def _compute_form13f_signal_score(
     if pct < -30:
         return -1
     return 0
+
+
+def aggregate_signal_score(scoring_pairs: list[tuple[float, float]]) -> Optional[float]:
+    """Conviction-weighted mean of directional holder scores, clamped to [-2, 2].
+
+    `scoring_pairs` is (score, conviction) for holders with a non-zero score, where
+    conviction is pct of the manager's portfolio rather than absolute dollars — a
+    small fund at 10% weighs the same as a large one at 10%.
+
+    None when no holder cleared a directional threshold: that is the absence of a
+    signal, not a neutral one, so consumers reweight rather than scoring it 0.
+    """
+    if not scoring_pairs:
+        return None
+
+    total_conviction = sum(c for _, c in scoring_pairs)
+    if total_conviction > 0:
+        weighted = sum(s * c for s, c in scoring_pairs) / total_conviction
+    else:
+        weighted = sum(s for s, _ in scoring_pairs) / len(scoring_pairs)
+
+    return round(max(-2.0, min(2.0, weighted)), 1)
 
 
 def _score_reason(score: int, change: str, value: int, filing_total_value: int | None = None) -> str | None:
@@ -267,25 +289,12 @@ async def _get_form13f_for_instruments(
 
     result: dict[int, Form13FInstrumentResult] = {}
     for iid, holders in by_instrument.items():
-        # Only holders with a directional signal contribute to the score.
-        # score == 0 means "no prior data" or "stable" — no useful information.
+        # Only holders with a directional signal contribute. score == 0 is mostly
+        # a position below the AUM floors, sometimes stable or a first filing.
         scoring_holders = [h for h in holders if h["score"] != 0]
-
-        if scoring_holders:
-            # Weight by conviction (pct of manager's portfolio), not absolute dollars.
-            # This treats a small fund putting 10% into a stock equally to a large fund doing the same.
-            total_conviction = sum(h["conviction"] for h in scoring_holders)
-            if total_conviction > 0:
-                weighted_score = sum(h["score"] * h["conviction"] for h in scoring_holders) / total_conviction
-            else:
-                weighted_score = sum(h["score"] for h in scoring_holders) / len(scoring_holders)
-        else:
-            weighted_score = 0.0
-
-        # Round only here (backend). Frontend displays as received.
         scoring_set = set(id(h) for h in scoring_holders)
         result[iid] = {
-            "score": round(max(-2.0, min(2.0, weighted_score)), 1),
+            "score": aggregate_signal_score([(h["score"], h["conviction"]) for h in scoring_holders]),
             "holders": [
                 {
                     "manager_id": h.get("manager_id"),

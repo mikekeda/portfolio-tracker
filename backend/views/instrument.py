@@ -16,6 +16,7 @@ from backend.utils.form13f import (
     _compute_form13f_change,
     _compute_form13f_signal_score,
     _score_reason,
+    aggregate_signal_score,
 )
 from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.roic import get_roic
@@ -303,8 +304,8 @@ async def get_instrument(
     for (mid, fid), data in by_manager_filing.items():
         by_manager.setdefault(mid, []).append(data)
 
-    # (score, conviction) pairs for the aggregate 13F score — same formula as
-    # _get_form13f_for_instruments (conviction-weighted, zero scores excluded)
+    # (score, conviction) pairs fed to the shared aggregate_signal_score, so this
+    # view and the holdings list cannot drift apart again.
     scoring_pairs: list[tuple[float, float]] = []
 
     for mid, filings_list in by_manager.items():
@@ -371,14 +372,7 @@ async def get_instrument(
 
     form13f_as_of = max((h["report_date"] for h in form13f_holdings), default=None)
 
-    form13f_score: float | None = None
-    if scoring_pairs:
-        total_conviction = sum(c for _, c in scoring_pairs)
-        if total_conviction > 0:
-            weighted = sum(s * c for s, c in scoring_pairs) / total_conviction
-        else:
-            weighted = sum(s for s, _ in scoring_pairs) / len(scoring_pairs)
-        form13f_score = round(max(-2.0, min(2.0, weighted)), 1)
+    form13f_score = aggregate_signal_score(scoring_pairs)
 
     # User's position (if held): portfolio_pct, market_value, profit, return_pct
     my_position: dict[str, Any] | None = None
