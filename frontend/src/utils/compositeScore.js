@@ -2,9 +2,33 @@
 
 // Fallback when the backend sends no screener_score_max (it normally does, scaled
 // down for sectors excluded from several screeners). Mirrors SCORE_NORMALIZER.
-export const SCREENER_NORMALIZER = 50;
+export const SCREENER_NORMALIZER = 60;
+
+/**
+ * Screener score as a fraction of what its sector can reach.
+ *
+ * Colour thresholds must use this rather than the raw score: the sector-scaled
+ * max runs from 60 down to ~23, so a fixed cutoff is unreachable for financials.
+ *
+ * @returns {number|null} ratio, or null when there is no score
+ */
+export function screenerRatio(score, max) {
+  if (score == null) return null;
+  return score / (max ?? SCREENER_NORMALIZER);
+}
 
 const MS_PER_AVG_MONTH = 1000 * 60 * 60 * 24 * 30.44;
+
+/**
+ * Date the earnings signal should be aged from.
+ *
+ * Falls back to the report's own date when no announcement date could be matched.
+ * For SEC filings that date is period-end, up to ~90 days early, so decay fires
+ * slightly sooner than it should — conservative, and better than no decay at all.
+ */
+export function effectiveSignalDate(h) {
+  return h.earnings_announcement_date ?? h.earnings_report_date ?? null;
+}
 
 /** @returns {number|null} months since announcement, or null if missing/invalid */
 export function earningsReportAgeMonths(announcementDateStr) {
@@ -55,15 +79,25 @@ export function earningsAgeDecay(monthsOld) {
  * Output is capped at 10; there is no lower cap — losers can go negative.
  */
 export function computeComposite(h) {
+  // An absent key means the caller forgot a field; a null value means the
+  // instrument genuinely has no sector. Only the first is a bug, so say so.
+  if (h.sector === undefined) {
+    console.error('computeComposite: input is missing `sector` — score suppressed', h);
+    return null;
+  }
   // ETFs have no equity screener data or earnings signal — show blank. Some
   // trackers (SGLN.L) are quoteType EQUITY, so a null sector disqualifies too.
-  if (h.quote_type === 'ETF' || h.sector == null) return null;
+  if (h.quote_type === 'ETF' || h.sector === null) return null;
 
+  // Only the upper bound is clamped: scores above the sector max are possible but
+  // shouldn't outweigh their 50%, while red-flag stocks must stay negative.
   const max = h.screener_score_max ?? SCREENER_NORMALIZER;
-  const screenerRaw = h.screener_score != null ? h.screener_score / max : null;
+  const screenerRaw = h.screener_score != null ? Math.min(1, h.screener_score / max) : null;
 
-  const SIGNAL_VALUES = { buy: 1.0, consider: 0.75, hold: 0.5, avoid: 0.1 };
-  const CONV_MULT    = { high: 1.1, medium: 1.0, low: 0.9 };
+  // buy and consider sit close together because forward returns don't separate
+  // them; avoid is 0 because it does predict underperformance.
+  const SIGNAL_VALUES = { buy: 0.95, consider: 0.90, hold: 0.40, avoid: 0.0 };
+  const CONV_MULT    = { high: 1.05, medium: 1.0, low: 0.95 };
   let signalRaw = h.earnings_signal ? (SIGNAL_VALUES[h.earnings_signal] ?? null) : null;
   if (signalRaw != null && h.earnings_conviction) {
     signalRaw = Math.min(1, signalRaw * (CONV_MULT[h.earnings_conviction] ?? 1));
@@ -71,8 +105,9 @@ export function computeComposite(h) {
   // Decay signal by age: full weight < 12 months, 60% for 12–24 months, excluded after 24 months.
   // Excluded means null (remaining components reweight) — a zero-value signal
   // would score a stale report worse than a fresh "avoid".
-  if (signalRaw != null && h.earnings_announcement_date) {
-    const monthsOld = earningsReportAgeMonths(h.earnings_announcement_date);
+  const signalDate = effectiveSignalDate(h);
+  if (signalRaw != null && signalDate) {
+    const monthsOld = earningsReportAgeMonths(signalDate);
     const { freshness } = earningsAgeDecay(monthsOld);
     signalRaw = freshness === 0 ? null : signalRaw * freshness;
   }
@@ -112,7 +147,7 @@ export function computeComposite(h) {
  */
 export function compositeTooltip(score, h) {
   const hasScreener = h.screener_score != null;
-  const signalAge   = earningsAgeDecay(earningsReportAgeMonths(h.earnings_announcement_date));
+  const signalAge   = earningsAgeDecay(earningsReportAgeMonths(effectiveSignalDate(h)));
   const hasSignal   = !!h.earnings_signal && signalAge.freshness > 0;
   const hasRec      = h.recommendation_mean != null &&
                       h.recommendation_mean >= 1 &&
@@ -127,9 +162,14 @@ export function compositeTooltip(score, h) {
     presentTotal > 0 ? Math.round(base / presentTotal * 100) : 0;
 
   const screenerMax = Math.round(h.screener_score_max ?? SCREENER_NORMALIZER);
-  const screenerLine = `Screener: ${h.screener_score} / ${screenerMax} pts  (eff. ${eff(50)}%)`;
+  const screenerLine = hasScreener
+    ? `Screener: ${h.screener_score} / ${screenerMax} pts  (eff. ${eff(50)}%)`
+    : 'Screener: no data';
+  // Partially-decayed signals (12–24 months) still count, so they take the first
+  // branch — surface the age there or the tooltip implies undecayed full weight.
   const signalLine = hasSignal
-    ? `Signal: ${h.earnings_signal}${h.earnings_conviction ? ` (${h.earnings_conviction})` : ''}  (eff. ${eff(25)}%)`
+    ? `Signal: ${h.earnings_signal}${h.earnings_conviction ? ` (${h.earnings_conviction})` : ''}` +
+      `${signalAge.freshness < 1 ? ` — ${signalAge.ageLabel}` : ''}  (eff. ${eff(25)}%)`
     : h.earnings_signal
       ? `Signal: ${h.earnings_signal} — ${signalAge.ageLabel}`
       : 'Signal: no earnings report analysed yet';

@@ -12,6 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
+import { screenerRatio } from '../utils/compositeScore';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import './Risk.css';
 
@@ -40,9 +41,9 @@ const isRiskHeavy = (h) =>
 // The diverging chart shows the largest |risk - weight| gaps; the rest are noise.
 const CHART_TOP_N = 20;
 
-// Cell color thresholds. Screener scores run roughly -10..60 (normalizer 50 on
-// the Holdings page); +£1k impacts beyond ~15bp materially concentrate risk.
-const SCREENER_GOOD = 25;
+// Screener cells colour on score/max: a fixed cutoff would be unreachable for
+// financials. Same 0.6 "good" bar as Holdings and Stock.
+const SCREENER_GOOD_RATIO = 0.6;
 const VOL_DELTA_BAD_BP = 15;
 
 const rcDeltaClass = (v) => {
@@ -57,10 +58,11 @@ const volDeltaClass = (v) => {
   return '';
 };
 
-const screenerClass = (v) => {
-  if (v == null) return '';
-  if (v >= SCREENER_GOOD) return 'pos';
-  if (v < 0) return 'neg';
+const screenerClass = (v, max) => {
+  const ratio = screenerRatio(v, max);
+  if (ratio == null) return '';
+  if (ratio >= SCREENER_GOOD_RATIO) return 'pos';
+  if (ratio < 0) return 'neg';
   return '';
 };
 
@@ -144,8 +146,12 @@ const Risk = () => {
       .then((res) => {
         const map = {};
         (res.holdings || []).forEach((h) => {
-          // ETFs can't pass equity screeners — their 0 means "not applicable"
-          if (h.yahoo_symbol) map[h.yahoo_symbol] = h.quote_type === 'ETF' ? null : h.screener_score;
+          // ETFs can't pass equity screeners — their 0 means "not applicable".
+          // Carry the sector max too; colour thresholds need the ratio.
+          if (h.yahoo_symbol) {
+            map[h.yahoo_symbol] =
+              h.quote_type === 'ETF' ? null : { score: h.screener_score, max: h.screener_score_max };
+          }
         });
         setScores(map);
       })
@@ -177,7 +183,8 @@ const Risk = () => {
   // Enrich rows once so sorting can use screener_score like any other column.
   const rows = holdings.map((h) => ({
     ...h,
-    screener_score: scores?.[h.symbol] ?? null,
+    screener_score: scores?.[h.symbol]?.score ?? null,
+    screener_score_max: scores?.[h.symbol]?.max ?? null,
     rc_minus_weight: h.risk_contribution - h.weight,
   }));
 
@@ -431,7 +438,7 @@ const Risk = () => {
                   <td className={`num ${volDeltaClass(h.next_1k_vol_delta_bp)}`}>
                     {h.next_1k_vol_delta_bp.toFixed(2)}
                   </td>
-                  <td className={`num ${screenerClass(h.screener_score)}`}>
+                  <td className={`num ${screenerClass(h.screener_score, h.screener_score_max)}`}>
                     {scoreCell(h.screener_score)}
                   </td>
                   <td className="num">{formatPct(h.weight)}</td>
@@ -477,7 +484,7 @@ const Risk = () => {
                 <td className={`num ${volDeltaClass(h.next_1k_vol_delta_bp)}`}>
                   {h.next_1k_vol_delta_bp.toFixed(2)}
                 </td>
-                <td className={`num ${screenerClass(h.screener_score)}`}>
+                <td className={`num ${screenerClass(h.screener_score, h.screener_score_max)}`}>
                   {scoreCell(h.screener_score)}
                 </td>
               </tr>

@@ -19,7 +19,7 @@ import {
 import { renderCountryWithFlag } from '../utils/countryUtils';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import { getPbThresholds, getPsThresholds } from '../utils/valuationUtils';
-import { computeComposite, compositeTooltip } from '../utils/compositeScore';
+import { computeComposite, compositeTooltip, screenerRatio } from '../utils/compositeScore';
 import './Stock.css';
 
 // Constants
@@ -844,10 +844,14 @@ const Stock = () => {
   );
   const compositeInput = {
     quote_type: i.quote_type,
+    sector: i.sector,
     screener_score: data.screener_score,
+    // Paired with the score above — both come from the same nightly snapshot.
+    screener_score_max: data.screener_score_max,
     earnings_signal: assessmentReport?.metrics.investment_assessment.recommendation ?? null,
     earnings_conviction: assessmentReport?.metrics.investment_assessment.conviction ?? null,
     earnings_announcement_date: assessmentReport?.announcement_date ?? null,
+    earnings_report_date: assessmentReport?.date ?? null,
     recommendation_mean: f.recommendationMean,
     form13f_score: data.form13f_score,
   };
@@ -887,7 +891,8 @@ const Stock = () => {
     ...(data.screener_score != null ? [{
       label: 'Screener',
       value: Math.round(data.screener_score),
-      className: data.screener_score >= 6 ? 'positive' : data.screener_score < 2 ? 'negative' : '',
+      className: screenerRatio(data.screener_score, data.screener_score_max) >= 0.6 ? 'positive'
+        : screenerRatio(data.screener_score, data.screener_score_max) < 0.2 ? 'negative' : '',
       tooltip: screenerTooltip,
     }] : []),
     { label: 'Market Cap', value: formatShort(f.marketCap), tooltip: kpiTooltips['Market Cap'] },

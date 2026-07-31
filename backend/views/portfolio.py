@@ -223,7 +223,7 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
             price_map[(sym, pdate)] = close
 
     result: dict[int, dict] = {}
-    for inst_id, (_, metrics) in latest_reports.items():
+    for inst_id, (report_date, metrics) in latest_reports.items():
         ctx = inst_ctx.get(inst_id, {})
         sym, ann_date = announcement_map.get(inst_id, (None, None))
         current_price = ctx.get("current_price")
@@ -246,6 +246,8 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
             "earnings_conviction": assessment.get("conviction"),
             "since_earnings_pct": since_pct,
             "earnings_announcement_date": ann_date.isoformat() if ann_date else None,
+            # Fallback for age-decay when no announcement date could be matched.
+            "earnings_report_date": report_date.isoformat(),
         }
 
     return result
@@ -542,6 +544,7 @@ async def get_current_portfolio(
                         "earnings_conviction": None,
                         "since_earnings_pct": None,
                         "earnings_announcement_date": None,
+                        "earnings_report_date": None,
                     }
                 ),
                 **(

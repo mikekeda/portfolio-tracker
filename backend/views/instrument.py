@@ -491,6 +491,7 @@ async def get_instrument(
                 FeaturesDaily.screener_score,
                 FeaturesDaily.passed_screeners,
                 FeaturesDaily.thesis_rule_eval,
+                FeaturesDaily.screener_score_max,
             )
             .where(FeaturesDaily.instrument_id == instrument.id)
             .order_by(FeaturesDaily.date.desc())
@@ -601,6 +602,8 @@ async def get_instrument(
         "form13f_as_of": form13f_as_of,
         "form13f_score": form13f_score,
         "screener_score": features_row[1] if features_row else None,
+        # Paired with screener_score from the same snapshot row.
+        "screener_score_max": features_row[4] if features_row else None,
         "passed_screeners": (features_row[2] or []) if features_row else [],
         "screener_as_of": features_row[0].isoformat() if features_row else None,
         "thesis_rule_eval": features_row[3] if features_row else None,

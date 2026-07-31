@@ -18,6 +18,8 @@ import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import {
   computeComposite,
   compositeTooltip,
+  effectiveSignalDate,
+  screenerRatio,
   earningsAgeDecay,
   earningsReportAgeMonths,
 } from '../utils/compositeScore';
@@ -1175,12 +1177,14 @@ const Holdings = () => {
           const value = info.getValue();
           if (value === null || value === undefined) return <span className="screener-score"></span>;
 
-          // Color coding based on score ranges
+          // Banded on the ratio, not the raw score: the sector-scaled max runs
+          // from 60 down to ~23, so a fixed cutoff flatters or penalises by sector.
+          const ratio = screenerRatio(value, info.row.original.screener_score_max);
           let className = '';
-          if (value >= 8) className = 'excellent';
-          else if (value >= 6) className = 'good';
-          else if (value >= 4) className = 'average';
-          else if (value >= 2) className = 'poor';
+          if (ratio >= 0.6) className = 'excellent';
+          else if (ratio >= 0.45) className = 'good';
+          else if (ratio >= 0.3) className = 'average';
+          else if (ratio >= 0.15) className = 'poor';
           else className = 'very-poor';
 
           return (
@@ -1252,7 +1256,8 @@ const Holdings = () => {
         cell: (info) => {
           const signal = info.getValue();
           const conviction = info.row.original.earnings_conviction;
-          const annDate = info.row.original.earnings_announcement_date;
+          // Same date the Score column decays from, so badge and score agree.
+          const annDate = effectiveSignalDate(info.row.original);
           if (!signal) return <span className="earnings-signal-cell" />;
           const label = signal.charAt(0).toUpperCase() + signal.slice(1);
 

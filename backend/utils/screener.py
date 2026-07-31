@@ -80,9 +80,12 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
 
 
 def _blank_result(holding_data: dict) -> None:
-    """Mark a holding as unscored."""
+    """
+    Mark a holding as unscored — None, not 0, so consumers reweight instead of
+    treating an evaluation failure as the worst possible score.
+    """
     holding_data["passedScreeners"] = []
-    holding_data["screener_score"] = 0
+    holding_data["screener_score"] = None
     holding_data["screener_score_max"] = None
 
 
