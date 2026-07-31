@@ -130,7 +130,7 @@ _DEBT_EXCLUDED: frozenset[Sector] = frozenset({Sector.FINANCIAL_SERVICES, Sector
 
 # Denominator for turning a raw score into a 0..1 ratio. Empirical, not the sum of
 # all weights: technical screeners are mutually exclusive, so that sum is unreachable.
-SCORE_NORMALIZER = 50
+SCORE_NORMALIZER = 60
 # Above this share of shared inputs, two screeners are one signal counted twice
 # rather than independent confirmation, so the pair earns no combination bonus.
 MAX_FIELD_OVERLAP = 0.5
@@ -304,9 +304,10 @@ class ScreenerConfig:
             ),
             # High Short Interest
             "high_short_interest": ScreenerDefinition(
+                # id is stable — renaming it would orphan historical passed_screeners.
                 id="high_short_interest",
-                name="High Short Interest",
-                description="Short Float >= 10% & Price reclaiming key moving averages on high volume.",
+                name="Short Squeeze Setup",
+                description="Short Float >= 10% AND the price is reclaiming both moving averages on accumulation volume. High short interest alone does not qualify — in a downtrend it means the shorts are right.",
                 category=ScreenerCategory.MOMENTUM,
                 criteria=[
                     ScreenerCriteria("short_percent_of_float", ">=", 10, "High short interest"),
