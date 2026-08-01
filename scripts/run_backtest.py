@@ -181,12 +181,28 @@ def verify_invariance(strategy_spec: str, md: MarketData, args, limits: AgentLim
 def check_known_answer(
     result: BacktestResult, md: MarketData, symbol: str, initial_cash: float, limits: AgentLimits
 ) -> None:
-    analytic = buy_and_hold_curve(md, symbol, result.equity.index, initial_cash, limits)
-    # Engine holds ~1% cash (target weight 0.99) and fills one day after the
-    # first rebalance, so allow a small tolerance on the final value.
-    ratio = float(result.equity.iloc[-1] / analytic.iloc[-1])
+    """Engine must track the symbol's own return from the moment it actually buys.
+
+    Anchored at the fill date, not the window start: the engine buys at the first
+    rebalance and fills a day later, so comparing against a day-one purchase
+    measures how far the symbol moved in that gap rather than the engine's
+    accounting. Residual gap is the ~1% cash the 0.99 target weight leaves idle.
+    """
+    if result.trades.empty:
+        print(f"known-answer FAILED: {symbol} was never bought")
+        raise SystemExit(1)
+
+    entry = result.trades["fill_date"].iloc[0]
+    prices = md.gbp_prices[symbol].reindex(result.equity.index).ffill()
+    engine_growth = float(result.equity.iloc[-1] / result.equity.loc[entry])
+    price_growth = float(prices.iloc[-1] / prices.loc[entry])
+
+    ratio = engine_growth / price_growth
     status = "OK" if 0.97 <= ratio <= 1.03 else "FAILED"
-    print(f"known-answer {status}: engine={result.equity.iloc[-1]:.0f} analytic={analytic.iloc[-1]:.0f} ratio={ratio:.4f}")
+    print(
+        f"known-answer {status}: from {entry} engine grew {engine_growth:.4f}x "
+        f"vs {symbol} {price_growth:.4f}x, ratio={ratio:.4f}"
+    )
     if status == "FAILED":
         raise SystemExit(1)
 
