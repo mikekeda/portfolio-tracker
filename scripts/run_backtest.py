@@ -5,7 +5,7 @@ Backtest a trade-agent strategy on point-in-time data. Run from project root:
 
     python scripts/run_backtest.py --strategy rules --start 2018-01-01
     python scripts/run_backtest.py --strategy rules --start 2018-01-01 --verify-invariance
-    python scripts/run_backtest.py --strategy buyhold:VUAG.L --start 2018-01-01   # known-answer check
+    python scripts/run_backtest.py --strategy buyhold:VUAG.L --start 2021-01-01   # known-answer check
     python scripts/run_backtest.py --strategy oracle --start 2022-01-01           # leakage canary
 
 Prints a metrics table vs the BENCHES benchmarks and writes equity/trade CSVs
@@ -50,7 +50,9 @@ class BuyAndHoldStrategy:
         self.name = f"buyhold:{symbol}"
 
     def propose(self, d, features, state: PortfolioState) -> list[TradeIntent]:
-        if state.quantities.get(self.symbol, 0) > 0:
+        # Wait for the symbol to become tradable: an ETF listed mid-window has no
+        # price earlier, and buying it then fails the constraint layer.
+        if state.quantities.get(self.symbol, 0) > 0 or self.symbol not in features.index:
             return []
         return [TradeIntent(self.symbol, "buy", 0.99, score=1.0, rationale={"trigger": "buy and hold"})]
 
