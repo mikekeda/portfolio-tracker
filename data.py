@@ -63,6 +63,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "GWAC": "CIFR",
     "HCN": "WELL",
     "HCP": "DOC",
+    "HEICO": "HEI",   # T212 spells out the name; Yahoo quotes the NYSE ticker
     "HUTMF": "HUT",   # Hut 8 OTC line → Nasdaq HUT after US Bitcoin Corp merger
     "ICP": "ICG",
     "IIVI": "COHR",
