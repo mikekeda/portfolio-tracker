@@ -26,7 +26,15 @@ from utils.market_data import (
     get_yield_spread,
 )
 from backend.utils.piotroski import get_piotroski_f_score
-from backend.utils.roic import get_roic, get_roic_history
+from backend.utils.roic import get_roic, get_roic_history, get_roic_ttm_series
+from backend.utils.statement_trends import (
+    eps_next_quarter_growth,
+    eps_revision_ratio,
+    gross_margin_trend,
+    operating_margin_trend,
+    revenue_growth_yoy_avg,
+    trend,
+)
 from backend.utils.screener import calculate_screener_results
 from backend.utils.thesis_rules import attach_thesis_rule_eval
 from backend.utils.technical import calculate_technical_indicators_for_symbols
@@ -428,6 +436,13 @@ async def get_current_portfolio(
         fcf_quote = free_cashflow * fx if (free_cashflow is not None and fx) else None
         revenue_quote = total_revenue * fx if (total_revenue is not None and fx) else None
 
+        # Quarterly statements are the only multi-period fundamentals available.
+        # roic_ttm sums four quarters, so it is comparable with `roic` above.
+        quarterly_income_stmt = yh.quarterly_income_stmt if yh else None
+        roic_ttm_series = (
+            get_roic_ttm_series(yh.quarterly_balance_sheet, quarterly_income_stmt) if yh else []
+        )
+
         portfolio_data.append(
             {
                 "t212_code": holding.instrument.t212_code,
@@ -487,6 +502,13 @@ async def get_current_portfolio(
                 "roic_3y_min": min(get_roic_history(yh.balance_sheet, yh.income_stmt, periods=3), default=None)
                 if yh
                 else None,
+                "roic_ttm": roic_ttm_series[0] if roic_ttm_series else None,
+                "roic_ttm_trend": trend(roic_ttm_series),
+                "gross_margin_trend_4q": gross_margin_trend(quarterly_income_stmt),
+                "operating_margin_trend_4q": operating_margin_trend(quarterly_income_stmt),
+                "revenue_growth_4q_avg": revenue_growth_yoy_avg(quarterly_income_stmt),
+                "eps_revision_ratio_30d": eps_revision_ratio(yh.estimates) if yh else None,
+                "eps_next_q_growth": eps_next_quarter_growth(yh.estimates) if yh else None,
                 "f_score": f_score_result["score"] if f_score_result else None,
                 "f_score_details": f_score_result["details"] if f_score_result else None,
                 "free_cashflow_yield": fcf_quote / market_cap * 100 if (fcf_quote is not None and market_cap) else None,

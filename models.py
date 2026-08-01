@@ -22,6 +22,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -255,6 +256,14 @@ class InstrumentYahoo(Base):
     balance_sheet: Mapped[dict[str, Any]] = mapped_column(JSONB)
     income_stmt: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
+    # Quarterly statements, fetched once per quarter (see the mostRecentQuarter
+    # gate in update_data). Annual payloads above stay — Piotroski needs them.
+    quarterly_cashflow: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    quarterly_balance_sheet: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    quarterly_income_stmt: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    # Analyst estimate revisions and forward estimates.
+    estimates: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     # Bumped by ANY writer (onupdate) — including the nightly PE scrapers that
@@ -263,6 +272,8 @@ class InstrumentYahoo(Base):
     # When update_data last fetched the Yahoo profile (info & friends).
     # Drives the staleness queue; only the fetch path may set it.
     profile_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Estimates move weekly at most, so they have their own slower gate.
+    estimates_fetched_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Relationship back to instrument
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="yahoo")
@@ -355,6 +366,17 @@ class FeaturesDaily(Base):
     # Score reachable in this instrument's sector — the denominator that makes
     # screener_score comparable across sectors with different exclusions.
     screener_score_max: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Trends from quarterly statements — the only multi-period fundamentals here.
+    # roic_ttm is trailing-twelve-month, directly comparable with `roic` above.
+    roic_ttm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Change in TTM ROIC across however many rolling windows Yahoo's quarterly
+    # statements support — usually 1-2, so not a fixed 4-quarter span.
+    roic_ttm_trend: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    gross_margin_trend_4q: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    operating_margin_trend_4q: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    revenue_growth_4q_avg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    eps_revision_ratio_30d: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    eps_next_q_growth: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     passed_screeners: Mapped[Optional[list[str]]] = mapped_column(JSONB, nullable=True)
     thesis_rule_eval: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 

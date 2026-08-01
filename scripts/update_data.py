@@ -10,8 +10,8 @@ import math
 import time
 from collections import defaultdict
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
-from functools import lru_cache
+from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache, partial
 from typing import Any, Generator, Literal, Optional, TypeAlias, TypedDict, Union, cast
 
 import numpy as np
@@ -119,6 +119,11 @@ class YahooData(TypedDict):
     balance_sheet: dict[str, dict[str, Optional[int]]]
     income_stmt: dict[str, dict[str, Optional[int]]]
     insider_transactions: list[dict[str, Any]]
+    quarterly_cashflow: dict[str, dict[str, Optional[int]]]
+    quarterly_balance_sheet: dict[str, dict[str, Optional[int]]]
+    quarterly_income_stmt: dict[str, dict[str, Optional[int]]]
+    # None = the gate skipped the fetch; {} = fetched and Yahoo had nothing.
+    estimates: Optional[dict[str, Any]]
 
 
 TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
@@ -129,6 +134,12 @@ TRADING212_API_RESPONSE: TypeAlias = list[Union[T212Instrument, T212Position]]
 # watch for "Empty Yahoo info" warnings before raising further.
 YAHOO_UPDATE_LIMIT = 150
 YAHOO_UPDATE_INTERVAL_DAYS = 1
+# Estimates move weekly at most — fetching them on the daily profile track would
+# add ~450 calls per run for no new information.
+ESTIMATES_INTERVAL_DAYS = 7
+# Fallback for the instruments Yahoo gives no mostRecentQuarter: statements this
+# old mean a new quarter is almost certainly out.
+QUARTER_STALE_DAYS = 100
 
 _BAD_NUMERIC_STRINGS = frozenset({"infinity", "-infinity", "inf", "-inf", "nan"})
 
@@ -348,7 +359,27 @@ def update_holdings() -> list[HoldingDaily]:
                 "Backfilling InstrumentYahoo for %d instruments missing Yahoo data",
                 len(instruments_without_yahoo_ids),
             )
-        yahoo_datas = get_yahoo_ticker_data(symbols_to_fetch)
+        # Newest stored quarterly period per symbol, and who is due an estimates
+        # refresh — both gate extra yfinance calls inside the fetch workers.
+        stored_quarters: dict[str, Optional[date]] = {}
+        estimates_due: set[str] = set()
+        estimates_cutoff = datetime.now(TIMEZONE) - timedelta(days=ESTIMATES_INTERVAL_DAYS)
+        fetch_ids = [iid for iid, sym in id_to_yahoo_symbol.items() if sym in symbols_seen]
+        for inst_id, quarterly_keys, est_fetched_at in session.execute(
+            select(
+                InstrumentYahoo.instrument_id,
+                InstrumentYahoo.quarterly_income_stmt,
+                InstrumentYahoo.estimates_fetched_at,
+            ).where(InstrumentYahoo.instrument_id.in_(fetch_ids))
+        ).all():
+            sym = id_to_yahoo_symbol.get(inst_id)
+            if not sym:
+                continue
+            stored_quarters[sym] = _newest_period(quarterly_keys)
+            if est_fetched_at is None or est_fetched_at < estimates_cutoff:
+                estimates_due.add(sym)
+
+        yahoo_datas = get_yahoo_ticker_data(symbols_to_fetch, stored_quarters, estimates_due)
 
         # Delete sold holdings
         deleted = (
@@ -407,6 +438,19 @@ def update_holdings() -> list[HoldingDaily]:
                     yahoo_row.balance_sheet = payload["balance_sheet"]
                 if payload["income_stmt"]:
                     yahoo_row.income_stmt = payload["income_stmt"]
+                # Empty means the quarter gate skipped the fetch — keep the cache.
+                if payload["quarterly_cashflow"]:
+                    yahoo_row.quarterly_cashflow = payload["quarterly_cashflow"]
+                if payload["quarterly_balance_sheet"]:
+                    yahoo_row.quarterly_balance_sheet = payload["quarterly_balance_sheet"]
+                if payload["quarterly_income_stmt"]:
+                    yahoo_row.quarterly_income_stmt = payload["quarterly_income_stmt"]
+                if payload["estimates"] is not None:
+                    if payload["estimates"]:
+                        yahoo_row.estimates = payload["estimates"]
+                    # Bump on attempt, not success — names with no analyst
+                    # coverage would otherwise re-request on every refresh.
+                    yahoo_row.estimates_fetched_at = datetime.now(TIMEZONE)
                 yahoo_row.profile_fetched_at = datetime.now(TIMEZONE)
             else:
                 session.add(
@@ -422,7 +466,14 @@ def update_holdings() -> list[HoldingDaily]:
                         pes={},  # Populated by scrape_wisesheets_pe / scrape_macrotrends_pe
                         balance_sheet=payload["balance_sheet"],
                         income_stmt=payload["income_stmt"],
+                        quarterly_cashflow=payload["quarterly_cashflow"],
+                        quarterly_balance_sheet=payload["quarterly_balance_sheet"],
+                        quarterly_income_stmt=payload["quarterly_income_stmt"],
+                        estimates=payload["estimates"] or {},
                         profile_fetched_at=datetime.now(TIMEZONE),
+                        estimates_fetched_at=(
+                            datetime.now(TIMEZONE) if payload["estimates"] is not None else None
+                        ),
                     )
                 )
 
@@ -684,7 +735,67 @@ def scrub_for_json(obj):
     return obj
 
 
-def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
+def _fetch_estimates(ticker: yf.Ticker) -> dict[str, Any]:
+    """Analyst estimate revisions and forward estimates, or {} if unavailable.
+
+    These share yfinance's flaky-module behaviour with the holders endpoints, so
+    a failure here must not cost the rest of the profile.
+    """
+    estimates: dict[str, Any] = {}
+    for key, attr in (
+        ("eps_revisions", "eps_revisions"),
+        ("earnings_estimate", "earnings_estimate"),
+        ("growth_estimates", "growth_estimates"),
+    ):
+        try:
+            frame = getattr(ticker, attr)
+            if frame is not None and not frame.empty:
+                estimates[key] = scrub_for_json(frame.to_dict(orient="index"))
+        except Exception as e:  # noqa: BLE001 — yfinance raises a wide variety here
+            logger.debug("No %s for %s: %s", attr, ticker.ticker, e)
+    return estimates
+
+
+def _newest_period(statement: Optional[dict[str, Any]]) -> Optional[date]:
+    """Newest period date in a statement payload, whose keys are ISO date strings."""
+    if not statement:
+        return None
+    try:
+        return max(date.fromisoformat(k[:10]) for k in statement)
+    except ValueError:
+        return None
+
+
+def _quarterly_due(stored_quarter: Optional[date], latest_quarter: Optional[date]) -> bool:
+    """Whether quarterly statements need refetching.
+
+    Yahoo omits mostRecentQuarter for ~44 instruments; for those fall back to the
+    age of what we hold, so they still refresh instead of either freezing forever
+    or refetching on every run.
+    """
+    if stored_quarter is None:
+        return True
+    if latest_quarter is not None:
+        return latest_quarter > stored_quarter
+    return (datetime.now(TIMEZONE).date() - stored_quarter).days > QUARTER_STALE_DAYS
+
+
+def most_recent_quarter(info: dict[str, Any]) -> Optional[date]:
+    """Yahoo's mostRecentQuarter as a date. It is a Unix timestamp, not an ISO string."""
+    raw = info.get("mostRecentQuarter")
+    if raw is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(raw), tz=timezone.utc).date()
+    except (TypeError, ValueError, OSError):
+        return None
+
+
+def fetch_profile_for_ticker(
+    ticker: yf.Ticker,
+    stored_quarters: Optional[dict[str, Optional[date]]] = None,
+    estimates_due: Optional[set[str]] = None,
+) -> tuple[str, YahooData]:
     yahoo_data: YahooData = {
         "info": {},
         "cashflow": {},
@@ -696,6 +807,10 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
         "balance_sheet": {},
         "income_stmt": {},
         "insider_transactions": [],
+        "quarterly_cashflow": {},
+        "quarterly_balance_sheet": {},
+        "quarterly_income_stmt": {},
+        "estimates": None,
     }
 
     try:
@@ -711,6 +826,19 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
         # Annual balance sheet + income statement power the Piotroski F-Score (needs YoY deltas).
         yahoo_data["balance_sheet"] = scrub_for_json(ticker.balance_sheet.to_dict())
         yahoo_data["income_stmt"] = scrub_for_json(ticker.income_stmt.to_dict())
+
+        # Quarterly statements only when the reported quarter has moved past what
+        # we already store — they change 4x a year, the profile refreshes daily.
+        stored_quarter = (stored_quarters or {}).get(ticker.ticker)
+        latest_quarter = most_recent_quarter(yahoo_data["info"])
+        if _quarterly_due(stored_quarter, latest_quarter):
+            yahoo_data["quarterly_cashflow"] = scrub_for_json(ticker.quarterly_cashflow.to_dict())
+            yahoo_data["quarterly_balance_sheet"] = scrub_for_json(ticker.quarterly_balance_sheet.to_dict())
+            yahoo_data["quarterly_income_stmt"] = scrub_for_json(ticker.quarterly_income_stmt.to_dict())
+
+        # Estimates move weekly at most; same reasoning, separate gate.
+        if estimates_due is None or ticker.ticker in estimates_due:
+            yahoo_data["estimates"] = _fetch_estimates(ticker)
 
         # Yahoo's holders modules are by far the flakiest part of yfinance
         # (404s, KeyErrors, empty frames — see ranaroussi/yfinance#1904). Wrap
@@ -764,10 +892,19 @@ def fetch_profile_for_ticker(ticker: yf.Ticker) -> tuple[str, YahooData]:
     return ticker.ticker, yahoo_data
 
 
-def get_yahoo_ticker_data(symbols: list[str]) -> dict[str, YahooData]:
-    """Update Yahoo Finance data for all holdings."""
+def get_yahoo_ticker_data(
+    symbols: list[str],
+    stored_quarters: Optional[dict[str, Optional[date]]] = None,
+    estimates_due: Optional[set[str]] = None,
+) -> dict[str, YahooData]:
+    """Update Yahoo Finance data for all holdings.
+
+    ``stored_quarters`` and ``estimates_due`` gate the quarterly-statement and
+    estimate fetches; omitting them fetches everything for every symbol.
+    """
     logger.info("Fetching %s Yahoo Finance profiles (first 10: %s)", len(symbols), symbols[:10])
     yahoo_data: dict[str, YahooData] = {}
+    fetch = partial(fetch_profile_for_ticker, stored_quarters=stored_quarters, estimates_due=estimates_due)
 
     # Fetch in batches
     for i in range(0, len(symbols), BATCH_SIZE_YF):
@@ -777,11 +914,19 @@ def get_yahoo_ticker_data(symbols: list[str]) -> dict[str, YahooData]:
         tickers = yf.Tickers(" ".join(batch))
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-            results = executor.map(fetch_profile_for_ticker, tickers.tickers.values())
+            results = executor.map(fetch, tickers.tickers.values())
 
             for ticker, data in results:
                 yahoo_data[ticker] = data
 
+    quarterly_fetched = sum(1 for d in yahoo_data.values() if d["quarterly_income_stmt"])
+    estimates_fetched = sum(1 for d in yahoo_data.values() if d["estimates"])
+    logger.info(
+        "Yahoo profiles: %d fetched, quarterly_fetched=%d, estimates_fetched=%d",
+        len(yahoo_data),
+        quarterly_fetched,
+        estimates_fetched,
+    )
     return yahoo_data
 
 

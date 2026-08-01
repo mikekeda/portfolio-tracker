@@ -64,6 +64,13 @@ FUNDAMENTAL_COLUMNS = (
     "f_score",
     "screener_score",
     "screener_score_max",
+    "roic_ttm",
+    "roic_ttm_trend",
+    "gross_margin_trend_4q",
+    "operating_margin_trend_4q",
+    "revenue_growth_4q_avg",
+    "eps_revision_ratio_30d",
+    "eps_next_q_growth",
 )
 
 # The screener overhaul (currency-correct FCF, fixed BB-width percentile, margin

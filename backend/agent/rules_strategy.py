@@ -38,6 +38,11 @@ TIER_B_WEIGHTS = {
     "rule_of_40": 1.0,
     "fcf_yield": 0.5,
     "dcf_implied_growth": -0.5,
+    # Multi-period fundamentals. Weights are deliberately small until the
+    # distributions and forward-return spreads have been measured.
+    "roic_ttm_trend": 0.5,
+    "operating_margin_trend_4q": 0.5,
+    "eps_revision_ratio_30d": 0.5,
 }
 Z_CLIP = 3.0
 
