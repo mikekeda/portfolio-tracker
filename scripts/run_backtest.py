@@ -94,6 +94,38 @@ def print_report(result: BacktestResult, md: MarketData, initial_cash: float, li
     print("\n" + pd.DataFrame(rows).to_string())
 
 
+def _describe_trade_divergence(t_full: pd.DataFrame, t_part: pd.DataFrame) -> str:
+    """Locate the first divergence so a failure names a column, not just a date.
+
+    A difference confined to `score` means the ranking held but the composite
+    z-score moved — a universe-composition change, not a look-ahead leak.
+    """
+    lines = [f"  rows: full={len(t_full)} truncated={len(t_part)}"]
+    if len(t_full) != len(t_part):
+        n = min(len(t_full), len(t_part))
+        lines.append(f"  row counts differ; comparing the first {n}")
+        t_full, t_part = t_full.head(n), t_part.head(n)
+
+    differing = [
+        col
+        for col in t_full.columns
+        if not t_full[col].equals(t_part[col])
+    ]
+    lines.append(f"  differing columns: {differing or 'none (dtype-only difference)'}")
+
+    for col in differing:
+        mismatch = t_full.index[t_full[col] != t_part[col]]
+        if not len(mismatch):
+            continue
+        i = mismatch[0]
+        lines.append(
+            f"  first mismatch in '{col}' at row {i} "
+            f"({t_full.at[i, 'fill_date']} {t_full.at[i, 'symbol']}): "
+            f"full={t_full.at[i, col]!r} truncated={t_part.at[i, col]!r}"
+        )
+    return "\n".join(lines)
+
+
 def verify_invariance(strategy_spec: str, md: MarketData, args, limits: AgentLimits) -> None:
     """Rerun with data truncated at the window midpoint; history up to the
     cutoff must be identical, otherwise future data leaked into past decisions."""
@@ -111,7 +143,10 @@ def verify_invariance(strategy_spec: str, md: MarketData, args, limits: AgentLim
     t_full = full.trades[full.trades["fill_date"] <= cutoff].reset_index(drop=True) if not full.trades.empty else full.trades
     t_part = part.trades[part.trades["fill_date"] <= cutoff].reset_index(drop=True) if not part.trades.empty else part.trades
     if not t_full.equals(t_part):
-        raise SystemExit(f"INVARIANCE FAILED: trade logs diverge before {cutoff} — future data is leaking")
+        raise SystemExit(
+            f"INVARIANCE FAILED: trade logs diverge before {cutoff} — future data is leaking\n"
+            + _describe_trade_divergence(t_full, t_part)
+        )
     print(f"invariance OK: {len(t_full)} trades and {len(eq_full)} equity points identical up to {cutoff}")
 
 
