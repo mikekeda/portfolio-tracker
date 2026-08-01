@@ -23,6 +23,10 @@ from config import TIMEZONE, logger
 from models import FeaturesDaily, Instrument
 
 
+# PostgreSQL's wire protocol caps a statement at 32767 bind parameters.
+MAX_BIND_PARAMS = 32767
+
+
 def _num(value) -> float | None:
     """Float or None; NaN/inf become None so they store as NULL, not 'NaN'::float8."""
     if isinstance(value, (int, float)) and math.isfinite(value):
@@ -95,14 +99,18 @@ async def update_features() -> None:
             logger.warning("Features: nothing to write (0 holdings resolved)")
             return
 
-        stmt = pg_insert(FeaturesDaily).values(rows)
-        update_cols = {
-            c.name: getattr(stmt.excluded, c.name)
-            for c in FeaturesDaily.__table__.columns
-            if c.name not in ("id", "instrument_id", "date")
-        }
-        stmt = stmt.on_conflict_do_update(constraint="uq_features_instrument_date", set_=update_cols)
-        await session.execute(stmt)
+        # Chunk size is derived, not fixed: one bind parameter per column per row,
+        # so adding a column silently shrinks how many rows fit in a statement.
+        chunk_size = max(1, MAX_BIND_PARAMS // len(rows[0]))
+        for start in range(0, len(rows), chunk_size):
+            stmt = pg_insert(FeaturesDaily).values(rows[start : start + chunk_size])
+            update_cols = {
+                c.name: getattr(stmt.excluded, c.name)
+                for c in FeaturesDaily.__table__.columns
+                if c.name not in ("id", "instrument_id", "date")
+            }
+            stmt = stmt.on_conflict_do_update(constraint="uq_features_instrument_date", set_=update_cols)
+            await session.execute(stmt)
         await session.commit()
 
         with_score = sum(1 for r in rows if r["screener_score"] is not None)
