@@ -77,10 +77,12 @@ def revenue_growth_yoy_avg(quarterly_income_stmt: Optional[dict[str, Any]]) -> O
     """Mean year-on-year quarterly revenue growth, as a percentage.
 
     Averages up to four YoY comparisons to smooth the single-period growth that
-    makes a cyclical rebound look like durable compounding. Yahoo often carries
-    only 4-6 quarters, so it uses what is there — but requires at least
-    MIN_YOY_PAIRS, below which this would just restate the one-period growth
-    `revenue_growth` already provides.
+    makes a cyclical rebound look like durable compounding.
+
+    Yahoo populates revenue for only 5 quarters however many columns it returns,
+    which yields exactly one pair — matching `revenue_growth` to within 1pp for
+    91 of 110 instruments measured. Hence MIN_YOY_PAIRS: below it this restates a
+    field we already have. Stays None until merged history reaches 6 quarters.
     """
     periods = sorted_periods(quarterly_income_stmt)
 

@@ -438,13 +438,23 @@ def update_holdings() -> list[HoldingDaily]:
                     yahoo_row.balance_sheet = payload["balance_sheet"]
                 if payload["income_stmt"]:
                     yahoo_row.income_stmt = payload["income_stmt"]
-                # Empty means the quarter gate skipped the fetch — keep the cache.
+                # Empty means the quarter gate skipped the fetch. Merge, don't
+                # replace: Yahoo exposes ~5 quarters, so history must accumulate.
                 if payload["quarterly_cashflow"]:
-                    yahoo_row.quarterly_cashflow = payload["quarterly_cashflow"]
+                    yahoo_row.quarterly_cashflow = {
+                        **yahoo_row.quarterly_cashflow,
+                        **payload["quarterly_cashflow"],
+                    }
                 if payload["quarterly_balance_sheet"]:
-                    yahoo_row.quarterly_balance_sheet = payload["quarterly_balance_sheet"]
+                    yahoo_row.quarterly_balance_sheet = {
+                        **yahoo_row.quarterly_balance_sheet,
+                        **payload["quarterly_balance_sheet"],
+                    }
                 if payload["quarterly_income_stmt"]:
-                    yahoo_row.quarterly_income_stmt = payload["quarterly_income_stmt"]
+                    yahoo_row.quarterly_income_stmt = {
+                        **yahoo_row.quarterly_income_stmt,
+                        **payload["quarterly_income_stmt"],
+                    }
                 if payload["estimates"] is not None:
                     if payload["estimates"]:
                         yahoo_row.estimates = payload["estimates"]

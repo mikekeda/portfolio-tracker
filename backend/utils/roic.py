@@ -18,7 +18,9 @@ def _invested_capital(bs: dict[str, Any]) -> Optional[float]:
     if total_assets is not None and current_liabilities is not None:
         return total_assets - current_liabilities - cash_and_equiv
 
-    total_debt = bs.get("Total Debt") or (bs.get("Long Term Debt", 0.0) + bs.get("Current Debt", 0.0))
+    # `or 0.0`, not a .get default: Yahoo stores absent quarterly lines as null,
+    # and a default only applies when the key is missing entirely.
+    total_debt = bs.get("Total Debt") or ((bs.get("Long Term Debt") or 0.0) + (bs.get("Current Debt") or 0.0))
     total_equity = bs.get("Stockholders Equity") or bs.get("Total Stockholders Equity")
     if total_debt is not None and total_equity is not None:
         return total_debt + total_equity - cash_and_equiv
@@ -90,22 +92,22 @@ def get_roic_ttm_series(
     if not quarterly_balance_sheet or not quarterly_income_stmt:
         return []
 
+    series: list[float] = []
     try:
         pairs = list(_paired_periods(quarterly_balance_sheet, quarterly_income_stmt))
-    except (TypeError, ValueError, KeyError):
-        return []
-
-    series: list[float] = []
-    for start in range(max_windows):
-        window = pairs[start : start + QUARTERS_PER_YEAR]
-        if len(window) < QUARTERS_PER_YEAR:
-            break
-        nopats = [_nopat(is_stmt) for _, is_stmt in window]
-        capitals = [_invested_capital(bs) for bs, _ in window]
-        if any(n is None for n in nopats) or any(c is None or c <= 0 for c in capitals):
-            break
-        avg_capital = sum(capitals) / len(capitals)  # type: ignore[arg-type]
-        series.append(float(sum(nopats) / avg_capital * 100.0))  # type: ignore[arg-type]
+        for start in range(max_windows):
+            window = pairs[start : start + QUARTERS_PER_YEAR]
+            if len(window) < QUARTERS_PER_YEAR:
+                break
+            nopats = [_nopat(is_stmt) for _, is_stmt in window]
+            capitals = [_invested_capital(bs) for bs, _ in window]
+            if any(n is None for n in nopats) or any(c is None or c <= 0 for c in capitals):
+                break
+            avg_capital = sum(capitals) / len(capitals)  # type: ignore[arg-type]
+            series.append(float(sum(nopats) / avg_capital * 100.0))  # type: ignore[arg-type]
+    except (TypeError, ValueError, KeyError, ZeroDivisionError):
+        # Malformed statements must not take down the whole holdings response.
+        return series
 
     return series
 
