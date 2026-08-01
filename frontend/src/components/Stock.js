@@ -886,7 +886,10 @@ const Stock = () => {
       label: 'Score',
       value: compositeScore.toFixed(1),
       className: compositeScore >= 7 ? 'positive' : compositeScore < 3 ? 'negative' : '',
-      tooltip: `${compositeTooltip(compositeScore, compositeInput)}\nSame formula as the Holdings Score column`,
+      // Same formula, but the screener input here is the nightly snapshot while
+      // Holdings recomputes live — say so, or a day's lag reads as a bug.
+      tooltip: `${compositeTooltip(compositeScore, compositeInput)}\nSame formula as the Holdings Score column`
+        + `\nScreener from the ${data.screener_as_of || 'nightly'} snapshot, so this can lag Holdings by a day`,
     }] : []),
     ...(data.screener_score != null ? [{
       label: 'Screener',
