@@ -583,8 +583,12 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
     with get_session() as session:
         created = 0
         updated = 0
+        matched_isins: set[tuple[str, str]] = set()
         for instrument in instruments_from_api:
-            if instrument["ticker"] in tickers or (instrument["isin"], instrument["currencyCode"]) in isins:
+            requested = (instrument["isin"], instrument["currencyCode"])
+            if requested in isins:
+                matched_isins.add(requested)
+            if instrument["ticker"] in tickers or requested in isins:
                 existing = session.query(Instrument).filter(Instrument.t212_code == instrument["ticker"]).first()
 
                 try:
@@ -617,6 +621,12 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
                     raise
 
     logger.info("Created %s instruments, updated %s instruments", created, updated)
+
+    # A wrong ISIN or a currency the pair isn't listed in matches nothing, and the
+    # instrument would otherwise go missing without a trace.
+    unmatched = isins - matched_isins
+    if unmatched:
+        logger.warning("No Trading212 instrument for requested pairs: %s", sorted(unmatched))
 
     return instruments
 
