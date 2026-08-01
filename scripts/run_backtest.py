@@ -21,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
 
 from backend.agent.backtest.data import MarketData, load_market_data
 from backend.agent.backtest.engine import BacktestResult, buy_and_hold_curve, run_backtest
@@ -29,6 +30,10 @@ from backend.agent.rules_strategy import RulesStrategy
 from backend.agent.types import AgentLimits, PortfolioState, TradeIntent
 from backend.app import get_session
 from config import BENCHES, logger
+
+# Float noise from truncation is ~1e-16 relative; a real leak changes decisions,
+# not last bits, so this is loose enough to ignore one and catch the other.
+TRADE_RTOL = 1e-9
 
 OUT_DIR = Path("backtests")
 
@@ -94,6 +99,27 @@ def print_report(result: BacktestResult, md: MarketData, initial_cash: float, li
     print("\n" + pd.DataFrame(rows).to_string())
 
 
+def _trades_match(t_full: pd.DataFrame, t_part: pd.DataFrame) -> bool:
+    """Whether two trade logs represent the same decisions.
+
+    Float columns compare with a tolerance, as the equity curve already does:
+    rolling windows over a shorter array accumulate in a different order, so
+    truncation moves a score by ~1e-16. Leakage changes which symbol is bought,
+    not its last bit, and any real divergence clears this by many orders.
+    """
+    if list(t_full.columns) != list(t_part.columns) or len(t_full) != len(t_part):
+        return False
+
+    for col in t_full.columns:
+        left, right = t_full[col], t_part[col]
+        if is_numeric_dtype(left) and is_numeric_dtype(right):
+            if not np.allclose(left.values, right.values, rtol=TRADE_RTOL, atol=0, equal_nan=True):
+                return False
+        elif not left.equals(right):
+            return False
+    return True
+
+
 def _describe_trade_divergence(t_full: pd.DataFrame, t_part: pd.DataFrame) -> str:
     """Locate the first divergence so a failure names a column, not just a date.
 
@@ -142,7 +168,7 @@ def verify_invariance(strategy_spec: str, md: MarketData, args, limits: AgentLim
         raise SystemExit(f"INVARIANCE FAILED: equity curves diverge before {cutoff} — future data is leaking")
     t_full = full.trades[full.trades["fill_date"] <= cutoff].reset_index(drop=True) if not full.trades.empty else full.trades
     t_part = part.trades[part.trades["fill_date"] <= cutoff].reset_index(drop=True) if not part.trades.empty else part.trades
-    if not t_full.equals(t_part):
+    if not _trades_match(t_full, t_part):
         raise SystemExit(
             f"INVARIANCE FAILED: trade logs diverge before {cutoff} — future data is leaking\n"
             + _describe_trade_divergence(t_full, t_part)
