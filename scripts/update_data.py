@@ -140,6 +140,9 @@ ESTIMATES_INTERVAL_DAYS = 7
 # Fallback for the instruments Yahoo gives no mostRecentQuarter: statements this
 # old mean a new quarter is almost certainly out.
 QUARTER_STALE_DAYS = 100
+# mostRecentQuarter is the fiscal period end while statement keys are normalised
+# to calendar quarter-ends, so non-calendar filers sit a few days apart forever.
+QUARTER_MATCH_TOLERANCE_DAYS = 15
 
 _BAD_NUMERIC_STRINGS = frozenset({"infinity", "-infinity", "inf", "-inf", "nan"})
 
@@ -786,7 +789,7 @@ def _quarterly_due(stored_quarter: Optional[date], latest_quarter: Optional[date
     if stored_quarter is None:
         return True
     if latest_quarter is not None:
-        return latest_quarter > stored_quarter
+        return (latest_quarter - stored_quarter).days > QUARTER_MATCH_TOLERANCE_DAYS
     return (datetime.now(TIMEZONE).date() - stored_quarter).days > QUARTER_STALE_DAYS
 
 
