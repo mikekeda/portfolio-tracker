@@ -4,9 +4,10 @@ Backfill CurrencyRateDaily with historical currency rates.
 This script fetches historical exchange rates for every currency in
 config.CURRENCIES into GBP using Yahoo Finance and stores them in the
 CurrencyRateDaily table.
-Date range is configurable via --start/--end (defaults preserve the original
-2024-04-18 → 2025-08-29 behaviour); pass --start 2015-01-01 to unlock
-GBP-denominated backtests over the full prices_daily history.
+Date range is configurable via --start/--end; --end defaults to today because a
+frozen default silently truncates every later run (a stale 2025-08-29 left the
+nine currencies added in 2026-07 missing 336 days). Pass --start 2015-01-01 to
+unlock GBP-denominated backtests over the full prices_daily history.
 """
 
 import argparse
@@ -16,7 +17,7 @@ import pandas as pd
 import yfinance as yf  # type: ignore[import-untyped]
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from config import CURRENCIES
+from config import CURRENCIES, TIMEZONE
 from models import CurrencyRateDaily
 from scripts.update_data import get_session
 
@@ -161,8 +162,12 @@ def backfill_currency_pair(
 def main():
     """Main function to backfill currency rates."""
     parser = argparse.ArgumentParser(description="Backfill CurrencyRateDaily from Yahoo Finance")
-    parser.add_argument("--start", default="2024-04-18", help="Start date YYYY-MM-DD")
-    parser.add_argument("--end", default="2025-08-29", help="End date YYYY-MM-DD")
+    parser.add_argument("--start", default="2024-04-18", help="Start date YYYY-MM-DD (inclusive)")
+    parser.add_argument(
+        "--end",
+        default=datetime.now(TIMEZONE).date().isoformat(),
+        help="End date YYYY-MM-DD (exclusive, as yfinance treats it); defaults to today",
+    )
     args = parser.parse_args()
 
     print("=" * 80)
