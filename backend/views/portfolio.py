@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 import aiohttp
 from fastapi import APIRouter, Depends
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
@@ -65,6 +65,10 @@ router = APIRouter()
 # Deposits below this amount are treated as admin/residual entries (e.g.
 # "interest on cash" miscategorised upstream) and hidden from chart overlays.
 _MIN_DEPOSIT_AMOUNT_GBP = 50.0
+
+# An announcement can land on a non-trading day, so the close is looked for on
+# the announcement date and the following days. Fetch and probe must agree.
+_PRICE_LOOKAHEAD_DAYS = 5
 
 # A third of the Yahoo JSONB payload that nothing on this path reads. Deferred
 # rather than dropped: still lazy-loadable if a caller ever needs one.
@@ -226,15 +230,17 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
     price_map: dict[tuple, float] = {}
     needed_pairs = {(sym, ann) for _, (sym, ann) in announcement_map.items() if sym and ann}
     if needed_pairs:
-        syms = {sym for sym, _ in needed_pairs}
-        all_dates = {d for _, d in needed_pairs}
-        min_date = min(all_dates) - timedelta(days=4)
-        max_date = max(all_dates) + timedelta(days=4)
+        # Exactly the pairs probed below. A min..max date range instead stretches
+        # to the oldest report on file — one 2015 filing costs 2.2M scanned rows.
+        candidates = {
+            (sym, ann + timedelta(days=offset))
+            for sym, ann in needed_pairs
+            for offset in range(_PRICE_LOOKAHEAD_DAYS)
+        }
         rows = await session.execute(
-            select(PricesDaily.symbol, PricesDaily.date, PricesDaily.close_price)
-            .where(PricesDaily.symbol.in_(syms))
-            .where(PricesDaily.date >= min_date)
-            .where(PricesDaily.date <= max_date)
+            select(PricesDaily.symbol, PricesDaily.date, PricesDaily.close_price).where(
+                tuple_(PricesDaily.symbol, PricesDaily.date).in_(candidates)
+            )
         )
         for sym, pdate, close in rows.all():
             price_map[(sym, pdate)] = close
@@ -248,7 +254,7 @@ async def _get_earnings_signals(session: AsyncSession, items: list) -> dict[int,
 
         price_at_ann = None
         if ann_date and sym:
-            for offset in range(5):
+            for offset in range(_PRICE_LOOKAHEAD_DAYS):
                 p = price_map.get((sym, ann_date + timedelta(days=offset)))
                 if p is not None:
                     price_at_ann = round(p, 2)
