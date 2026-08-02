@@ -1028,7 +1028,7 @@ def get_portfolio_allocation(
 
 def update_portfolio():
     """Update portfolio."""
-    logger.info("Fetching portfolio from Trading212 API")
+    logger.info("Fetching account cash from Trading212 API")
     snapshot_date = datetime.now(TIMEZONE).date()
     url = "https://live.trading212.com/api/v0/equity/account/cash"
     portfolio_from_api = cast(
