@@ -25,6 +25,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert  # Added for bulk
 from sqlalchemy.orm import Session, selectinload, sessionmaker
 from sqlalchemy.sql import func
 
+from backend.utils.fx import FX_SCAN_WINDOW_DAYS
+
 from config import (
     BATCH_SIZE_YF,
     CURRENCIES,
@@ -384,6 +386,19 @@ def update_holdings() -> list[HoldingDaily]:
 
         yahoo_datas = get_yahoo_ticker_data(symbols_to_fetch, stored_quarters, estimates_due)
 
+        # One query each instead of one per instrument. .all() is load-bearing: an
+        # unconsumed result never populates the identity map session.get() reads.
+        session.scalars(select(InstrumentYahoo).where(InstrumentYahoo.instrument_id.in_(fetch_ids))).all()
+        metrics_by_instrument = {
+            row.instrument_id: row
+            for row in session.scalars(
+                select(InstrumentMetricsDaily).where(
+                    InstrumentMetricsDaily.instrument_id.in_(fetch_ids),
+                    InstrumentMetricsDaily.date == current_date,
+                )
+            ).all()
+        }
+
         # Delete sold holdings
         deleted = (
             session.query(HoldingDaily)
@@ -495,14 +510,7 @@ def update_holdings() -> list[HoldingDaily]:
                 payload.get("insider_transactions"),
                 current_date,
             )
-            metrics_row = (
-                session.query(InstrumentMetricsDaily)
-                .filter(
-                    InstrumentMetricsDaily.instrument_id == instrument.id,
-                    InstrumentMetricsDaily.date == current_date,
-                )
-                .first()
-            )
+            metrics_row = metrics_by_instrument.get(instrument.id)
             if metrics_row:
                 metrics_row.market_cap = yahoo_data.get("marketCap")
                 metrics_row.pe_ratio = yahoo_data.get("trailingPE")
@@ -527,16 +535,19 @@ def update_holdings() -> list[HoldingDaily]:
                     )
                 )
 
+        # Loaded after the delete above, which runs with synchronize_session=False
+        # and would otherwise leave sold rows sitting stale in this map.
+        holdings_by_instrument = {
+            row.instrument_id: row
+            for row in session.scalars(select(HoldingDaily).where(HoldingDaily.date == current_date)).all()
+        }
+
         # Update holdings
         for t212_code, holding in holdings.items():
             instrument = instruments_dict[t212_code]
 
             if holding:
-                existing_holding = (
-                    session.query(HoldingDaily)
-                    .filter(HoldingDaily.instrument_id == instrument.id, HoldingDaily.date == current_date)
-                    .first()
-                )
+                existing_holding = holdings_by_instrument.get(instrument.id)
 
                 if existing_holding:
                     # Update existing holding
@@ -954,21 +965,25 @@ def get_yahoo_ticker_data(
 
 
 def get_rates(session: Session) -> dict[str, float]:
-    """Get current currency exchange rates to GBP."""
-    table = {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01}
+    """Latest available exchange rate into GBP per currency, including pence units.
 
-    result = session.execute(
-        select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate).filter(
+    Sync mirror of ``backend.utils.fx.latest_rates_to_gbp``: keyed on the newest
+    stored row rather than today's, so a skipped currency degrades to a slightly
+    stale rate instead of a KeyError in get_portfolio_allocation.
+    """
+    newest = select(func.max(CurrencyRateDaily.date)).where(CurrencyRateDaily.to_currency == "GBP").scalar_subquery()
+    rows = session.execute(
+        select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate)
+        .where(
             CurrencyRateDaily.from_currency.in_(CURRENCIES),
             CurrencyRateDaily.to_currency == "GBP",
-            CurrencyRateDaily.date == datetime.now(TIMEZONE).date(),
+            CurrencyRateDaily.date >= newest - FX_SCAN_WINDOW_DAYS,
         )
-    )
-    rates = result.all()
-    for currency, rate in rates:
-        table[currency] = rate
+        .distinct(CurrencyRateDaily.from_currency)
+        .order_by(CurrencyRateDaily.from_currency, CurrencyRateDaily.date.desc())
+    ).all()
 
-    return table
+    return {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01, **{currency: rate for currency, rate in rows}}
 
 
 def get_portfolio_allocation(
@@ -1159,9 +1174,9 @@ def calculate_portfolio_risk_metrics(session: Session, snapshot_date: date) -> d
 
     returns_s = pd.Series(portfolio_returns, index=pd.Index(portfolio_dates))
 
-    # 4. Sharpe / Sortino. Annualise over calendar days (matches TWRR's DAYS_PER_YEAR
-    #    convention) since the series covers every day, not just trading days.
-    annualization_factor = np.sqrt(DAYS_PER_YEAR) if len(returns_s) > 60 else 1.0
+    # Annualise over calendar days (TWRR's DAYS_PER_YEAR convention), and always:
+    # gating on sample size put a daily ratio and an annualised one in one column.
+    annualization_factor = np.sqrt(DAYS_PER_YEAR)
 
     risk_free_rate_daily = (1 + RISK_FREE_RATE) ** (1 / DAYS_PER_YEAR) - 1
     excess_returns = returns_s - risk_free_rate_daily
