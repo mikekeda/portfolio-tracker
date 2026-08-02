@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import EQUITY_RISK_PREMIUM, RISK_FREE_RATE, SPY, TERMINAL_GROWTH_RATE, TIMEZONE
 from models import CurrencyRateDaily, Instrument, PricesDaily
 from utils.market_data import get_risk_free_rates
+from backend.utils.fx import latest_rates_to_gbp
 from backend.utils.technical import PRICE_COLUMN
 
 # --- Constants ---
@@ -638,15 +639,7 @@ def _compute_dcf_full(
 
 async def _get_fx_to_gbp(session: AsyncSession) -> dict[str, float]:
     """Latest available rate into GBP per source currency (GBP itself = 1.0)."""
-    rows = (
-        await session.execute(
-            select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate)
-            .where(CurrencyRateDaily.to_currency == "GBP")
-            .distinct(CurrencyRateDaily.from_currency)
-            .order_by(CurrencyRateDaily.from_currency, CurrencyRateDaily.date.desc())
-        )
-    ).all()
-    return {"GBP": 1.0, **{r.from_currency: r.rate for r in rows}}
+    return {"GBP": 1.0, **await latest_rates_to_gbp(session)}
 
 
 async def get_dcf_analyses(

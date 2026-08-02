@@ -65,15 +65,16 @@ def avg_pe(pes: dict[str, Any], today: date, years: int = 5) -> Optional[float]:
     return harmonic_mean_pe([pe for _, pe in pe_series(pes, today, years)])
 
 
-def basis_matches(pes: dict[str, Any], today: date, current_pe: float) -> bool:
+def basis_matches(series: list[tuple[date, float]], today: date, current_pe: float) -> bool:
     """Whether `current_pe` (Yahoo) is on a comparable basis to the scraped series.
 
     False when the most recent scraped point is missing or disagrees beyond
     MAX_BASIS_DIVERGENCE, in which case any current-vs-history comparison is noise.
+    Takes a parsed series so callers spanning several statistics parse `pes` once;
+    any window reaching back at least BASIS_LOOKBACK_MONTHS gives the same answer.
     """
-    recent = pe_series(pes, today, years=1)
     cutoff = _shift_months(today, BASIS_LOOKBACK_MONTHS)
-    latest = next((pe for period_end, pe in reversed(recent) if period_end >= cutoff), None)
+    latest = next((pe for period_end, pe in reversed(series) if period_end >= cutoff), None)
     if latest is None:
         return False
     return abs(current_pe / latest - 1.0) <= MAX_BASIS_DIVERGENCE

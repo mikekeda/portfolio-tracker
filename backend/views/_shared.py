@@ -8,12 +8,12 @@ from typing import Optional
 
 import numpy as np
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.utils.pe_history import avg_pe, basis_matches, pe_series
+from backend.utils.fx import latest_rates_to_gbp
+from backend.utils.pe_history import basis_matches, harmonic_mean_pe, pe_series
 from config import CURRENCIES, PRICE_FIELD, TIMEZONE
-from models import CurrencyRateDaily, HoldingDaily, PricesDaily
+from models import HoldingDaily, PricesDaily
 
 # SQLAlchemy column expression for the configured price field (used in chart and portfolio queries)
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
@@ -47,30 +47,27 @@ def statement_to_quote_factor(info: dict, rates: dict[str, float]) -> Optional[f
 
 
 async def get_rates(session: AsyncSession) -> dict[str, float]:
-    """Get current currency exchange rates to GBP."""
-    table = {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01}
+    """Latest available exchange rate into GBP per currency, including pence units.
 
-    result = await session.execute(
-        select(CurrencyRateDaily.from_currency, CurrencyRateDaily.rate).filter(
-            CurrencyRateDaily.from_currency.in_(CURRENCIES),
-            CurrencyRateDaily.to_currency == "GBP",
-            CurrencyRateDaily.date == datetime.now(TIMEZONE).date(),
-        )
-    )
-    rates = result.all()
-    for currency, rate in rates:
-        table[currency] = rate
-
-    return table
+    Callers must subscript the result rather than defaulting a miss to 1.0 —
+    valuing a foreign holding at parity silently inflates the whole portfolio.
+    """
+    return {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01, **await latest_rates_to_gbp(session, CURRENCIES)}
 
 
 def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[float]]:
-    """Calculates trend metrics from historical data stored in the yahoo object"""
+    """Recommendation and P/E trend metrics from the yahoo object's history.
+
+    Also returns `avg_pe`, the 5-year representative multiple: it falls out of
+    the same parse as the trends, and every key here is spliced into the
+    holdings response, so callers need not compute it separately.
+    """
     trends: dict[str, Optional[float]] = {
         "recommendation_trend": None,
         "recommendation_delta_12m": None,
         "pe_1y_trend_pct": None,
         "pe_5y_avg_vs_current_pct": None,
+        "avg_pe": None,
     }
 
     if holding.instrument.yahoo is None:
@@ -102,16 +99,24 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
     pes = holding.instrument.yahoo.pes
     current_pe = holding.instrument.yahoo.info.get("trailingPE")
 
+    if not pes:
+        return trends
+
+    # Parsing `pes` dominated this function, so the basis check, the 1y trend and
+    # the 5y average all read one series rather than reparsing per statistic.
+    today = datetime.now(TIMEZONE).date()
+    series = pe_series(pes, today, years=5)
+    avg_pe_5y = harmonic_mean_pe([pe for _, pe in series])
+    trends["avg_pe"] = avg_pe_5y
+
     # Yahoo's trailingPE and the scraped series must be on a comparable EPS basis
     # before either can be read as a re-rating.
-    today = datetime.now(TIMEZONE).date()
-    if pes and current_pe and current_pe > 0 and basis_matches(pes, today, current_pe):
+    if current_pe and current_pe > 0 and basis_matches(series, today, current_pe):
         one_year_ago = today - relativedelta(years=1)
-        past_pe = next((pe for d, pe in reversed(pe_series(pes, today, years=5)) if d <= one_year_ago), None)
+        past_pe = next((pe for d, pe in reversed(series) if d <= one_year_ago), None)
         if past_pe:
             trends["pe_1y_trend_pct"] = (current_pe / past_pe - 1) * 100
 
-        avg_pe_5y = avg_pe(pes, today)
         if avg_pe_5y:
             trends["pe_5y_avg_vs_current_pct"] = (avg_pe_5y / current_pe - 1) * 100
 

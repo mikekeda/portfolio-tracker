@@ -390,17 +390,23 @@ async def get_instrument(
             currency_rates = await get_rates(session)
             # Same holdings-sum denominator as the Holdings page, aggregated in
             # SQL instead of loading every holding row + instrument into the ORM
-            rate_expr = case(currency_rates, value=Instrument.currency, else_=1.0)
-            total_portfolio_value = (
+            rate_expr = case(currency_rates, value=Instrument.currency, else_=None)
+            # A SQL CASE cannot raise, and an unmatched currency would silently
+            # drop out of SUM, so count the misses and fail on them instead.
+            total_value, unrated = (
                 await session.execute(
-                    select(func.sum(HoldingDaily.quantity * HoldingDaily.current_price * rate_expr))
+                    select(
+                        func.sum(HoldingDaily.quantity * HoldingDaily.current_price * rate_expr),
+                        func.count().filter(Instrument.currency.notin_(list(currency_rates))),
+                    )
                     .join(Instrument, Instrument.id == HoldingDaily.instrument_id)
                     .where(HoldingDaily.date == latest_date)
                 )
-            ).scalar() or 0.0
-            market_value_gbp = (
-                user_holding.quantity * user_holding.current_price * currency_rates.get(instrument.currency, 1.0)
-            )
+            ).one()
+            if unrated:
+                raise KeyError(f"{unrated} holding(s) have no GBP exchange rate")
+            total_portfolio_value = total_value or 0.0
+            market_value_gbp = user_holding.quantity * user_holding.current_price * currency_rates[instrument.currency]
             portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
             profit = user_holding.ppl if user_holding.ppl is not None else 0
             cost_basis = (market_value_gbp - user_holding.ppl) if user_holding.ppl is not None else 0

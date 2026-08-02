@@ -190,11 +190,26 @@ def calculate_bb_width_percentile(
     if len(prices) < lookback + period:
         return None
 
+    # Rolling sums rather than re-summing each of the `lookback` overlapping
+    # windows — this was the hottest loop on the holdings path.
+    start = len(prices) - lookback
+    window = prices[start - period + 1 : start + 1]
+    total = sum(window)
+    total_sq = sum(price * price for price in window)
+
     bb_widths = []
-    for i in range(len(prices) - lookback, len(prices)):
-        bb_width = calculate_bb_width(prices[i - period + 1 : i + 1], period)
-        if bb_width is not None:
-            bb_widths.append(bb_width)
+    for i in range(start, len(prices)):
+        if i > start:
+            outgoing, incoming = prices[i - period], prices[i]
+            total += incoming - outgoing
+            total_sq += incoming * incoming - outgoing * outgoing
+
+        mean = total / period
+        if mean == 0:
+            continue
+        # Cancellation in E[x²]-E[x]² can push a flat window fractionally below zero
+        variance = max(total_sq / period - mean * mean, 0.0)
+        bb_widths.append((4 * variance**0.5) / mean)
 
     if not bb_widths:
         return None
@@ -203,65 +218,24 @@ def calculate_bb_width_percentile(
     return bb_widths[min(int(percentile * len(bb_widths)), len(bb_widths) - 1)]
 
 
-async def calculate_volume_ratio_from_db(symbol: str, session: AsyncSession) -> Optional[float]:
-    """Calculate volume ratio (today / 20-day average) from database."""
-    try:
-        # Get recent volume data
-        end_date = datetime.now(TIMEZONE).date()
-
-        # Query volume data directly from database
-        result = await session.execute(
-            select(PricesDaily.volume)
-            .filter(
-                PricesDaily.symbol == symbol,
-                PricesDaily.date <= end_date,
-            )
-            .order_by(PricesDaily.date.desc())
-            .limit(21)
-        )
-        volumes = result.scalars().all()
-
-        if len(volumes) < 21:  # Need at least 21 days (today + 20 days)
-            return None
-
-        today_volume = volumes[0]
-        avg_20_volume = sum(volumes[1:21]) / 20
-
-        if avg_20_volume == 0:
-            return None
-
-        return today_volume / avg_20_volume
-
-    except Exception as e:
-        logger.warning("Failed to calculate volume ratio for %s: %s", symbol, e)
+def calculate_volume_ratio(volumes: list[int]) -> Optional[float]:
+    """Latest volume over the 20-day average preceding it, oldest first."""
+    if len(volumes) < 21:  # Need at least 21 days (today + 20 days)
         return None
 
-
-async def calculate_volume_contraction_from_db(symbol: str, session: AsyncSession) -> Optional[bool]:
-    """Calculate if 20-day volume is less than 60-day volume from database."""
-    try:
-        # Query volume data directly from database
-        rows = await session.execute(
-            select(PricesDaily.volume)
-            .filter(
-                PricesDaily.symbol == symbol,
-            )
-            .order_by(PricesDaily.date.desc())
-            .limit(60)
-        )
-        volumes = rows.scalars().all()
-
-        if len(volumes) < 60:
-            return None
-
-        vol_20 = sum(volumes[:20]) / 20  # Most recent 20 days
-        vol_60 = sum(volumes) / 60  # All 60 days
-
-        return vol_20 < vol_60
-
-    except Exception as e:
-        logger.warning("Failed to calculate volume contraction for %s: %s", symbol, e)
+    avg_20_volume = sum(volumes[-21:-1]) / 20
+    if avg_20_volume == 0:
         return None
+
+    return volumes[-1] / avg_20_volume
+
+
+def calculate_volume_contraction(volumes: list[int]) -> Optional[bool]:
+    """Whether 20-day average volume is below the 60-day average, oldest first."""
+    if len(volumes) < 60:
+        return None
+
+    return sum(volumes[-20:]) / 20 < sum(volumes[-60:]) / 60
 
 
 def calculate_relative_strength_vs_spy(
@@ -360,44 +334,49 @@ async def calculate_technical_indicators_for_symbols(
     if not symbols:
         return rsi_data, technical_data
 
-    try:
-        # Get price history for all symbols
-        price_result = await session.execute(
-            select(
-                PricesDaily.symbol,
-                PricesDaily.date,
-                PRICE_COLUMN,
-            )
-            .filter(
-                PricesDaily.symbol.in_(symbols), PricesDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420)
-            )
-            .order_by(PricesDaily.date)
+    today = datetime.now(TIMEZONE).date()
+
+    # Volume rides along with the price window rather than being queried per
+    # symbol: two extra round trips each dominated everything else on this path.
+    price_result = await session.execute(
+        select(
+            PricesDaily.symbol,
+            PricesDaily.date,
+            PricesDaily.volume,
+            PRICE_COLUMN,
         )
-        price_data = price_result.all()
-
-        price_history: dict[str, list[float]] = {}
-        price_dates: dict[str, list[date]] = {}
-        for row in price_data:
-            price_history.setdefault(row.symbol, []).append(row.price)
-            price_dates.setdefault(row.symbol, []).append(row.date)
-
-        # Get SPY data
-        spy_result = await session.execute(
-            select(PRICE_COLUMN)
-            .filter(PricesDaily.symbol == SPY, PricesDaily.date >= datetime.now(TIMEZONE).date() - timedelta(days=420))
-            .order_by(PricesDaily.date)
+        .filter(
+            PricesDaily.symbol.in_(symbols),
+            PricesDaily.date <= today,
+            PricesDaily.date >= today - timedelta(days=420),
         )
-        spy_prices = [row.price for row in spy_result.all()]
+        .order_by(PricesDaily.date)
+    )
 
-        fx_series = await _load_fx_series(session, currencies)
+    price_history: dict[str, list[float]] = {}
+    price_dates: dict[str, list[date]] = {}
+    volume_history: dict[str, list[int]] = {}
+    for row in price_result.all():
+        price_history.setdefault(row.symbol, []).append(row.price)
+        price_dates.setdefault(row.symbol, []).append(row.date)
+        volume_history.setdefault(row.symbol, []).append(row.volume)
 
-        # Calculate technical indicators
-        for symbol, symbol_prices in price_history.items():
+    spy_result = await session.execute(
+        select(PRICE_COLUMN)
+        .filter(PricesDaily.symbol == SPY, PricesDaily.date >= today - timedelta(days=420))
+        .order_by(PricesDaily.date)
+    )
+    spy_prices = [row.price for row in spy_result.all()]
+
+    fx_series = await _load_fx_series(session, currencies)
+
+    for symbol, symbol_prices in price_history.items():
+        # Per symbol, not per batch: one bad series must not blank the indicators
+        # of every stock after it and then get persisted by update_features.
+        try:
             rsi_data[symbol] = calculate_rsi(symbol_prices)
 
-            # Calculate other indicators
-            volume_ratio = await calculate_volume_ratio_from_db(symbol, session)
-            vol20_lt_vol60 = await calculate_volume_contraction_from_db(symbol, session)
+            symbol_volumes = volume_history[symbol]
             fx_factor = _fx_growth_factor(
                 fx_series.get((currencies or {}).get(symbol, "")), price_dates[symbol]
             )
@@ -415,10 +394,10 @@ async def calculate_technical_indicators_for_symbols(
                 "gc_within_sma50_frac": calculate_gc_within_sma50(symbol_prices),
                 "bb_width_20": calculate_bb_width(symbol_prices, 20),
                 "bb_width_20_p30_6m": calculate_bb_width_percentile(symbol_prices, 20, 126, 0.30),
-                "vol20_lt_vol60": vol20_lt_vol60,
-                "volume_ratio": volume_ratio,
+                "vol20_lt_vol60": calculate_volume_contraction(symbol_volumes),
+                "volume_ratio": calculate_volume_ratio(symbol_volumes),
             }
-    except Exception as e:
-        logger.error("Failed to calculate technical indicators: %s", e, exc_info=True)
+        except Exception as e:  # noqa: BLE001 — one bad symbol shouldn't stop the rest
+            logger.error("Technical indicators failed for %s: %s", symbol, e, exc_info=True)
 
     return rsi_data, technical_data

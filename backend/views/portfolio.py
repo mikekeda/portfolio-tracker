@@ -8,7 +8,7 @@ import aiohttp
 from fastapi import APIRouter, Depends
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
@@ -52,6 +52,7 @@ from models import (
     Instrument,
     InstrumentMetricsDaily,
     InstrumentThesisTypedDict,
+    InstrumentYahoo,
     PortfolioDaily,
     PositionReview,
     PricesDaily,
@@ -64,6 +65,14 @@ router = APIRouter()
 # Deposits below this amount are treated as admin/residual entries (e.g.
 # "interest on cash" miscategorised upstream) and hidden from chart overlays.
 _MIN_DEPOSIT_AMOUNT_GBP = 50.0
+
+# A third of the Yahoo JSONB payload that nothing on this path reads. Deferred
+# rather than dropped: still lazy-loadable if a caller ever needs one.
+_UNUSED_YAHOO_BLOBS = (
+    defer(InstrumentYahoo.news),
+    defer(InstrumentYahoo.splits),
+    defer(InstrumentYahoo.quarterly_cashflow),
+)
 
 
 def _twrr_wealth_index(
@@ -317,7 +326,7 @@ async def get_current_portfolio(
             select(Instrument)
             .where(Instrument.yahoo_symbol.isnot(None))
             .order_by(Instrument.name)
-            .options(selectinload(Instrument.yahoo))
+            .options(selectinload(Instrument.yahoo).options(*_UNUSED_YAHOO_BLOBS))
         )
         instruments = list(instruments_result.scalars().all())
 
@@ -325,14 +334,18 @@ async def get_current_portfolio(
             select(HoldingDaily)
             .join(Instrument)
             .filter(HoldingDaily.date == latest_date)
-            .options(selectinload(HoldingDaily.instrument).selectinload(Instrument.yahoo))
+            .options(
+                selectinload(HoldingDaily.instrument)
+                .selectinload(Instrument.yahoo)
+                .options(*_UNUSED_YAHOO_BLOBS)
+            )
         )
         holdings_list = holdings_result.scalars().all()
         holding_by_symbol = {h.instrument.yahoo_symbol: h for h in holdings_list}
         symbols_held = set(holding_by_symbol.keys())
         currency_rates = await get_rates(session)
         total_portfolio_value = sum(
-            h.quantity * h.current_price * currency_rates.get(h.instrument.currency, 1.0) for h in holdings_list
+            h.quantity * h.current_price * currency_rates[h.instrument.currency] for h in holdings_list
         )
         items = []
         for inst in instruments:
@@ -366,7 +379,11 @@ async def get_current_portfolio(
             .join(Instrument)
             .filter(HoldingDaily.date == latest_date)
             .order_by(Instrument.name)
-            .options(selectinload(HoldingDaily.instrument).selectinload(Instrument.yahoo))
+            .options(
+                selectinload(HoldingDaily.instrument)
+                .selectinload(Instrument.yahoo)
+                .options(*_UNUSED_YAHOO_BLOBS)
+            )
         )
         holdings = holdings_result.scalars().all()
         # Get currency rates
@@ -387,7 +404,13 @@ async def get_current_portfolio(
     )
     effective_betas = await get_effective_betas(instruments_for_dcf, session)
     dcf_analyses = await get_dcf_analyses(instruments_for_dcf, session, effective_betas=effective_betas)
-    dcf_analyses_dict = dict(zip(symbols_for_technical, dcf_analyses))
+    # Key off the instruments the analyses were computed from: symbols_for_technical
+    # is filtered, so zipping against it would shift every result onto the next stock.
+    dcf_analyses_dict = {
+        inst.yahoo_symbol: analysis
+        for inst, analysis in zip(instruments_for_dcf, dcf_analyses)
+        if inst.yahoo_symbol
+    }
 
     instrument_ids = [h.instrument.id for h in items]
     form13f = await _get_form13f_for_instruments(session, instrument_ids)
@@ -399,7 +422,7 @@ async def get_current_portfolio(
     thesis_by_symbol: dict[str, InstrumentThesisTypedDict] = {}
     for holding in items:
         market_value_native = holding.quantity * holding.current_price
-        market_value_gbp = market_value_native * currency_rates.get(holding.instrument.currency, 1.0)
+        market_value_gbp = market_value_native * currency_rates[holding.instrument.currency]
         portfolio_pct = (market_value_gbp / total_portfolio_value * 100) if total_portfolio_value > 0 else 0
         dcf_analysis = dcf_analyses_dict.get(holding.instrument.yahoo_symbol) or {
             "price": None,
@@ -472,7 +495,6 @@ async def get_current_portfolio(
                 # Yahoo's own priceToSalesTrailing12Months carries the currency
                 # mismatch, so recompute it rather than reading the field.
                 "ps_ratio": market_cap / revenue_quote if (market_cap and revenue_quote) else None,
-                "avg_pe": getattr(holding.instrument.yahoo, "avg_pe_5y", None) if holding.instrument.yahoo else None,
                 "beta": info.get("beta"),
                 "date": holding.date.isoformat() if hasattr(holding.date, "isoformat") else str(holding.date),
                 "market_value": market_value_gbp,  # Now in GBP
@@ -524,7 +546,6 @@ async def get_current_portfolio(
                 else None,
                 "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
                 "recommendation_key": info.get("recommendationKey"),
-                "recommendations": holding.instrument.yahoo.recommendations if holding.instrument.yahoo else None,
                 "number_of_analyst_opinions": info.get("numberOfAnalystOpinions"),
                 "fifty_two_week_high_distance": round(info["fiftyTwoWeekHighChangePercent"] * 100, 2)
                 if info.get("fiftyTwoWeekHighChangePercent") is not None
@@ -552,6 +573,7 @@ async def get_current_portfolio(
                 "bb_width_20_p30_6m": technical_data.get(holding.instrument.yahoo_symbol, {}).get("bb_width_20_p30_6m"),
                 "vol20_lt_vol60": technical_data.get(holding.instrument.yahoo_symbol, {}).get("vol20_lt_vol60"),
                 "volume_ratio": technical_data.get(holding.instrument.yahoo_symbol, {}).get("volume_ratio"),
+                # Supplies avg_pe alongside the PE/recommendation trends
                 **trends,
                 "quote_type": info.get("quoteType", "Unknown"),
                 "passedScreeners": [],  # will be populated below
