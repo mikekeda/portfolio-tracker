@@ -140,11 +140,9 @@ class PricesDaily(Base):
         DateTime, default=lambda: datetime.now(TIMEZONE), onupdate=lambda: datetime.now(TIMEZONE)
     )
 
-    # Constraints
-    __table_args__ = (
-        UniqueConstraint("symbol", "date", name="uq_symbol_date"),
-        Index("idx_symbol_date", "symbol", "date"),
-    )
+    # The unique constraint's index already serves every (symbol, date) lookup;
+    # a second one on the same columns only doubles write cost on the hot path.
+    __table_args__ = (UniqueConstraint("symbol", "date", name="uq_symbol_date"),)
 
     def __repr__(self) -> str:
         return f"<DailyPrice(symbol='{self.symbol}', date='{self.date}', close={self.close_price})>"
@@ -226,11 +224,7 @@ class HoldingDaily(Base):
     # Relationships
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="holdings")
 
-    # Constraints
-    __table_args__ = (
-        UniqueConstraint("instrument_id", "date", name="uq_holding_instrument_date"),
-        Index("idx_holding_instrument_date", "instrument_id", "date"),
-    )
+    __table_args__ = (UniqueConstraint("instrument_id", "date", name="uq_holding_instrument_date"),)
 
     def __repr__(self) -> str:
         return f"<Holding(instrument='{self.instrument.t212_code}', quantity={self.quantity})>"
@@ -310,10 +304,7 @@ class InstrumentMetricsDaily(Base):
     # Metadata
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
 
-    __table_args__ = (
-        UniqueConstraint("instrument_id", "date", name="uq_metrics_instrument_date"),
-        Index("idx_metrics_instrument_date", "instrument_id", "date"),
-    )
+    __table_args__ = (UniqueConstraint("instrument_id", "date", name="uq_metrics_instrument_date"),)
 
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="metrics")
 
@@ -385,10 +376,7 @@ class FeaturesDaily(Base):
 
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
 
-    __table_args__ = (
-        UniqueConstraint("instrument_id", "date", name="uq_features_instrument_date"),
-        Index("idx_features_instrument_date", "instrument_id", "date"),
-    )
+    __table_args__ = (UniqueConstraint("instrument_id", "date", name="uq_features_instrument_date"),)
 
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="features")
 
@@ -564,7 +552,8 @@ class TransactionHistory(Base):
     action: Mapped[TransactionAction] = mapped_column(Enum(TransactionAction), nullable=False, index=True)
 
     # Original CSV ID (for reference, nullable since some transactions don't have IDs)
-    csv_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    # No index=True: uq_transaction_csv_id below already indexes this column.
+    csv_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     isin: Mapped[Optional[str]] = mapped_column(String(12), nullable=True, index=True)
 
     # Quantity (CSV "No. of shares")
@@ -673,7 +662,8 @@ class EarningsReport(Base):
     __tablename__ = "earnings_reports"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False, index=True)
+    # No index=True: uq_earnings_reports_instrument_date leads with this column.
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=True)
     metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)
@@ -685,10 +675,7 @@ class EarningsReport(Base):
     # Relationships
     instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="earnings_reports")
 
-    __table_args__ = (
-        UniqueConstraint("instrument_id", "date", name="uq_earnings_reports_instrument_date"),
-        Index("idx_earnings_reports_instrument_date", "instrument_id", "date"),
-    )
+    __table_args__ = (UniqueConstraint("instrument_id", "date", name="uq_earnings_reports_instrument_date"),)
 
     def __repr__(self) -> str:
         return f"<EarningsReport(instrument_id={self.instrument_id}, date='{self.date}')>"
@@ -700,7 +687,8 @@ class PositionReview(Base):
     __tablename__ = "position_reviews"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False, index=True)
+    # No index=True: idx_position_reviews_instrument_created leads with this column.
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False)
     model: Mapped[str] = mapped_column(String(50), nullable=False)
     # sha256 of the rounded context JSON — identical inputs skip regeneration
     inputs_hash: Mapped[str] = mapped_column(String(64), nullable=False)
