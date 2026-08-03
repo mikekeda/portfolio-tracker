@@ -370,18 +370,23 @@ def update_holdings() -> list[HoldingDaily]:
         estimates_due: set[str] = set()
         estimates_cutoff = datetime.now(TIMEZONE) - timedelta(days=ESTIMATES_INTERVAL_DAYS)
         fetch_ids = [iid for iid, sym in id_to_yahoo_symbol.items() if sym in symbols_seen]
-        for inst_id, quarterly_keys, est_fetched_at in session.execute(
+        # The cutoff comparison stays in SQL: the column is a naive `timestamp`,
+        # so an aware cutoff can only be compared server-side.
+        for inst_id, quarterly_keys, est_due in session.execute(
             select(
                 InstrumentYahoo.instrument_id,
                 InstrumentYahoo.quarterly_income_stmt,
-                InstrumentYahoo.estimates_fetched_at,
+                or_(
+                    InstrumentYahoo.estimates_fetched_at.is_(None),
+                    InstrumentYahoo.estimates_fetched_at < estimates_cutoff,
+                ),
             ).where(InstrumentYahoo.instrument_id.in_(fetch_ids))
         ).all():
             sym = id_to_yahoo_symbol.get(inst_id)
             if not sym:
                 continue
             stored_quarters[sym] = _newest_period(quarterly_keys)
-            if est_fetched_at is None or est_fetched_at < estimates_cutoff:
+            if est_due:
                 estimates_due.add(sym)
 
         yahoo_datas = get_yahoo_ticker_data(symbols_to_fetch, stored_quarters, estimates_due)
