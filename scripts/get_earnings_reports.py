@@ -59,6 +59,7 @@ HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate", "Ho
 
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{primary_document}"
+SEC_INDEX_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/index.json"
 
 # PR placeholders are keyed on the press release's stated period end, which can
 # sit a few days off the SEC reportDate (AAPL fiscal Q2 2026: 03-28 vs 03-31).
@@ -123,6 +124,30 @@ def _has_content(value) -> bool:
     return value is not None
 
 
+def _accession_documents(cik: str, accession: str, primary_doc: str) -> list[str]:
+    """Every HTML document in a filing, largest first.
+
+    A 6-K's ``primaryDocument`` is often a one-page cover sheet furnishing the
+    results as an EX-99 exhibit (SNY 2026-06-30: 8 KB cover, 20 KB exhibit), so
+    the substance is missed by fetching it alone. Falls back to the primary
+    document when the index is unreadable.
+    """
+    try:
+        response = requests.get(SEC_INDEX_URL.format(cik=cik, accession=accession), headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        items = response.json()["directory"]["item"]
+    except (requests.RequestException, KeyError, ValueError) as e:
+        logger.warning("Filing index unreadable for %s/%s (%s) — using the primary document", cik, accession, e)
+        return [primary_doc]
+
+    documents = [
+        (item["name"], int(item["size"] or 0))
+        for item in items
+        if item["name"].endswith((".htm", ".html")) and "-index" not in item["name"]
+    ]
+    return [name for name, _ in sorted(documents, key=lambda d: -d[1])] or [primary_doc]
+
+
 def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
     """
     Retrieves the filing HTML content.
@@ -147,12 +172,17 @@ def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
         logger.debug("Loading cached filing from %s", file_path)
         return file_path.read_text(encoding="utf-8")
 
-    # 3. Download if missing
-    url = SEC_ARCHIVES_URL.format(cik=cik, accession=accession, primary_document=primary_doc)
+    # Only 6-K splits its content across exhibits; the other forms are the
+    # results document itself.
+    documents = _accession_documents(cik, accession, primary_doc) if form == "6-K" else [primary_doc]
 
-    response = requests.get(url, headers=HEADERS, timeout=30)
-    response.raise_for_status()
-    html_content = response.content.decode("utf-8", errors="replace")
+    parts = []
+    for document in documents:
+        url = SEC_ARCHIVES_URL.format(cik=cik, accession=accession, primary_document=document)
+        response = requests.get(url, headers=HEADERS, timeout=30)
+        response.raise_for_status()
+        parts.append(response.content.decode("utf-8", errors="replace"))
+    html_content = "\n".join(parts)
 
     # 4. Save to Disk
     file_path.write_text(html_content, encoding="utf-8")
