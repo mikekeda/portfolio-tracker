@@ -81,6 +81,7 @@ def backfill_currency_pair(
     start_date: str,
     end_date: str,
     invert: bool = False,
+    overwrite: bool = False,
 ) -> dict[str, int]:
     """
     Backfill currency rates for a specific pair.
@@ -93,6 +94,7 @@ def backfill_currency_pair(
         start_date: Start date string
         end_date: End date string
         invert: Whether to invert the rates
+        overwrite: Replace the rate on existing rows instead of leaving them alone
 
     Returns:
         Dictionary with statistics
@@ -118,6 +120,10 @@ def backfill_currency_pair(
             return {"fetched": 0, "stored": 0, "skipped": 0}
     else:
         rates_series = rates
+
+    # Yahoo has no weekend/holiday bars while the live writer stores a row every
+    # calendar day; carry the last close forward so both produce the same shape.
+    rates_series = rates_series.resample("D").ffill()
 
     rows = []
     for rate_date, rate_value in rates_series.items():
@@ -146,15 +152,24 @@ def backfill_currency_pair(
     if not rows:
         return {"fetched": len(rates), "stored": 0, "skipped": 0}
 
-    # Idempotent batch insert: existing (from, to, date) rows are left untouched,
-    # so overlapping reruns are safe. session.add + try/except cannot do this —
-    # the UniqueViolation only fires at commit, killing the whole batch.
-    stmt = pg_insert(CurrencyRateDaily).values(rows).on_conflict_do_nothing(constraint="uq_currency_rate_date")
+    # Batch upsert, so overlapping reruns are safe either way. session.add +
+    # try/except cannot: the UniqueViolation only fires at commit, killing the batch.
+    stmt = pg_insert(CurrencyRateDaily).values(rows)
+    if overwrite:
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_currency_rate_date",
+            set_={"rate": stmt.excluded.rate, "updated_at": datetime.now(TIMEZONE)},
+        )
+    else:
+        stmt = stmt.on_conflict_do_nothing(constraint="uq_currency_rate_date")
     result = session.execute(stmt)
     stored_count = result.rowcount
     skipped_count = len(rows) - stored_count
 
-    print(f"  📊 Results: {len(rates)} fetched, {stored_count} stored, {skipped_count} skipped (already exist)")
+    if overwrite:
+        print(f"  📊 Results: {len(rates)} fetched, {stored_count} inserted or overwritten")
+    else:
+        print(f"  📊 Results: {len(rates)} fetched, {stored_count} stored, {skipped_count} skipped (already exist)")
 
     return {"fetched": len(rates), "stored": stored_count, "skipped": skipped_count}
 
@@ -167,6 +182,11 @@ def main():
         "--end",
         default=datetime.now(TIMEZONE).date().isoformat(),
         help="End date YYYY-MM-DD (exclusive, as yfinance treats it); defaults to today",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace the rate on existing rows (repairs a range written from a lower-precision source)",
     )
     args = parser.parse_args()
 
@@ -217,6 +237,7 @@ def main():
                 start_date=start_date_str,
                 end_date=end_date_str,
                 invert=pair_config["invert"],
+                overwrite=args.overwrite,
             )
 
             # Add to totals

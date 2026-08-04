@@ -145,6 +145,9 @@ QUARTER_STALE_DAYS = 100
 # mostRecentQuarter is the fiscal period end while statement keys are normalised
 # to calendar quarter-ends, so non-calendar filers sit a few days apart forever.
 QUARTER_MATCH_TOLERANCE_DAYS = 15
+# Yahoo has no weekend/holiday FX bars; a week spans any long weekend, so the
+# batch always carries a usable close forward into the non-trading days.
+FX_LOOKBACK_DAYS = 7
 
 _BAD_NUMERIC_STRINGS = frozenset({"infinity", "-infinity", "inf", "-inf", "nan"})
 
@@ -206,24 +209,35 @@ def convert_ticker(t212: str) -> str:
 
 
 def _fetch_rates_batch(currencies: tuple[str, ...]) -> dict[str, float]:
-    """Fetch currency rates from a reliable API in batch."""
+    """Latest available X->GBP rate per currency, from Yahoo's GBP pairs in one batch.
+
+    Same source as scripts/backfill_currency_rates.py, so live rows and
+    backfilled history are drawn on the same scale.
+    """
+    symbols = {f"GBP{currency}=X": currency for currency in currencies}
+    frame = yf.download(
+        list(symbols), period=f"{FX_LOOKBACK_DAYS}d", progress=False, auto_adjust=True, group_by="column"
+    )
+    if frame.empty:
+        # latest_rates_to_gbp() reads the most recent row per currency, so a
+        # skipped day degrades to a slightly stale rate rather than a failure.
+        logger.warning("Yahoo returned no FX data — leaving today's rates unwritten")
+        return {}
+
+    closes = frame["Close"]
+    if isinstance(closes, pd.Series):  # a single-symbol download comes back flat
+        closes = closes.to_frame(next(iter(symbols)))
+
     rates = {}
-
-    # Use exchangerate-api.com (free tier available)
-    url = "https://api.exchangerate-api.com/v4/latest/GBP"
-    response = requests.get(url, timeout=10)
-    response.raise_for_status()
-    data = response.json()
-
-    # Convert from GBP to other currencies (invert the rates)
-    for currency in currencies:
-        if currency in data["rates"]:
-            # Invert the rate since we want TO GBP, not FROM GBP
-            rates[currency] = 1.0 / data["rates"][currency]
-        else:
+    for symbol, currency in symbols.items():
+        series = closes[symbol].dropna() if symbol in closes else pd.Series(dtype=float)
+        if series.empty:
             # Downstream code treats a missing rate as "unconvertible" and emits
             # None; one exotic currency must not fail the whole nightly update.
-            logger.warning("Currency %s not offered by the rates API — skipping", currency)
+            logger.warning("No Yahoo FX bar for %s in %dd — skipping", symbol, FX_LOOKBACK_DAYS)
+            continue
+        # Yahoo quotes GBP->X; invert since we want X->GBP.
+        rates[currency] = 1.0 / float(series.iloc[-1])
 
     return rates
 
