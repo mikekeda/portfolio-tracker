@@ -55,19 +55,20 @@ async def get_rates(session: AsyncSession) -> dict[str, float]:
     return {"GBX": 0.01, "GBP": 1.0, "GBp": 0.01, **await latest_rates_to_gbp(session, CURRENCIES)}
 
 
-def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[float]]:
+def calculate_historical_trends(holding: HoldingDaily) -> dict[str, float | bool | None]:
     """Recommendation and P/E trend metrics from the yahoo object's history.
 
     Also returns `avg_pe`, the 5-year representative multiple: it falls out of
     the same parse as the trends, and every key here is spliced into the
     holdings response, so callers need not compute it separately.
     """
-    trends: dict[str, Optional[float]] = {
+    trends: dict[str, float | bool | None] = {
         "recommendation_trend": None,
         "recommendation_delta_12m": None,
         "pe_1y_trend_pct": None,
         "pe_5y_avg_vs_current_pct": None,
         "avg_pe": None,
+        "pe_basis_matches": None,
     }
 
     if holding.instrument.yahoo is None:
@@ -111,7 +112,9 @@ def calculate_historical_trends(holding: HoldingDaily) -> dict[str, Optional[flo
 
     # Yahoo's trailingPE and the scraped series must be on a comparable EPS basis
     # before either can be read as a re-rating.
-    if current_pe and current_pe > 0 and basis_matches(series, today, current_pe):
+    if current_pe and current_pe > 0:
+        trends["pe_basis_matches"] = basis_matches(series, today, current_pe)
+    if trends["pe_basis_matches"]:
         one_year_ago = today - relativedelta(years=1)
         past_pe = next((pe for d, pe in reversed(series) if d <= one_year_ago), None)
         if past_pe:

@@ -18,6 +18,7 @@ from backend.utils.form13f import (
     _score_reason,
     aggregate_signal_score,
 )
+from backend.utils.pe_history import basis_matches, harmonic_mean_pe, pe_series
 from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.roic import get_roic
 from backend.views._shared import get_rates
@@ -481,6 +482,16 @@ async def get_instrument(
     yh = instrument.yahoo
     f_score_result = get_piotroski_f_score(yh.cashflow, yh.balance_sheet, yh.income_stmt) if yh else None
 
+    # 5y representative multiple + basis gate for the fair-value band. Same
+    # helpers and gating as calculate_historical_trends in the Holdings view.
+    today = datetime.now(TIMEZONE).date()
+    pe_hist_series = pe_series(yh.pes or {}, today, years=5) if yh else []
+    avg_pe_5y = harmonic_mean_pe([pe for _, pe in pe_hist_series])
+    current_pe = fundamentals.get("peRatio")
+    pe_basis_ok = (
+        basis_matches(pe_hist_series, today, current_pe) if current_pe and current_pe > 0 else None
+    )
+
     # Nightly snapshots (update_features.py) — the live screener needs
     # RSI/technicals for the whole portfolio, too heavy to recompute per stock.
     # A few extra rows beyond the newest feed the thesis sell-streak count.
@@ -613,6 +624,8 @@ async def get_instrument(
         "agent_suggestion": agent_suggestion,
         "my_position": my_position,
         "analyst_price_targets": (yh.analyst_price_targets or {}) if yh else {},
+        "avg_pe_5y": avg_pe_5y,
+        "pe_basis_matches": pe_basis_ok,
         "dcf_price": dcf_price,
         "dcf_diff": dcf_diff,
         "dcf_low": dcf_low,

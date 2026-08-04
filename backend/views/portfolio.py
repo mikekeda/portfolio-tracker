@@ -498,6 +498,8 @@ async def get_current_portfolio(
                 "market_cap": info.get("marketCap"),
                 "pe_ratio": info.get("trailingPE"),
                 "forward_pe_ratio": info.get("forwardPE"),
+                "trailing_eps": info.get("trailingEps"),
+                "forward_eps": info.get("forwardEps"),
                 # Yahoo's own priceToSalesTrailing12Months carries the currency
                 # mismatch, so recompute it rather than reading the field.
                 "ps_ratio": market_cap / revenue_quote if (market_cap and revenue_quote) else None,

@@ -82,6 +82,73 @@ FiftyTwoWeekBar.propTypes = {
   current: PropTypes.number,
 };
 
+// Independent fair-value estimates drawn on one price axis, with the current
+// price as a tick in every row — overlap means consensus, spread means the
+// fair value is contested.
+const FairValueBand = ({ rows, current }) => {
+  const values = rows
+    .flatMap(r => [r.low, r.mid, r.high])
+    .concat([current])
+    .filter(v => v != null && Number.isFinite(v));
+  if (rows.length === 0 || current == null || values.length < 2) return null;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  if (max <= min) return null;
+  const pad = (max - min) * 0.06;
+  const lo = Math.max(0, min - pad);
+  const hi = max + pad;
+  const x = (v) => ((v - lo) / (hi - lo)) * 100;
+  const fmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+  return (
+    <div className="fv-band">
+      {rows.map(r => {
+        const mid = r.mid ?? ((r.low != null && r.high != null) ? (r.low + r.high) / 2 : null);
+        const diff = mid != null ? (mid / current - 1) * 100 : null;
+        return (
+          <div key={r.label} className={`fv-row${r.muted ? ' fv-row-muted' : ''}`} title={r.tooltip}>
+            <span className="fv-row-label">{r.label}</span>
+            <div className="fv-row-track">
+              {r.low != null && r.high != null && (
+                <div
+                  className="fv-row-range"
+                  style={{ left: `${x(r.low)}%`, width: `${Math.max(0.5, x(r.high) - x(r.low))}%` }}
+                />
+              )}
+              {mid != null && <div className="fv-row-mid" style={{ left: `${x(mid)}%` }} />}
+              <div className="fv-row-price" style={{ left: `${x(current)}%` }} />
+            </div>
+            <span className={`fv-row-diff ${diff > 0 ? 'positive' : diff < 0 ? 'negative' : ''}`}>
+              {diff != null ? `${diff >= 0 ? '+' : ''}${Math.round(diff)}%` : ''}
+            </span>
+          </div>
+        );
+      })}
+      <div className="fv-row fv-scale-row">
+        <span className="fv-row-label" />
+        <div className="fv-scale-track">
+          <span>{fmt(lo)}</span>
+          <span className="fv-scale-price" style={{ left: `${x(current)}%` }}>{fmt(current)}</span>
+          <span>{fmt(hi)}</span>
+        </div>
+        <span className="fv-row-diff" />
+      </div>
+    </div>
+  );
+};
+
+FairValueBand.propTypes = {
+  rows: PropTypes.arrayOf(PropTypes.shape({
+    label: PropTypes.string.isRequired,
+    low: PropTypes.number,
+    mid: PropTypes.number,
+    high: PropTypes.number,
+    tooltip: PropTypes.string,
+    muted: PropTypes.bool,
+  })).isRequired,
+  current: PropTypes.number,
+};
+
 const PriceTooltip = ({ active, payload, label, priceMetric, benchSymbols }) => {
   if (active && payload && payload.length) {
     const data = payload[0]?.payload || {};
@@ -837,6 +904,71 @@ const Stock = () => {
     dcfImplied == null || (dcfLow && dcfHigh && dcfLow > 0 && dcfHigh / dcfLow > 4)
   );
 
+  // --- Fair value vs price (Valuation panel) ---
+  const fvCurrent = f.currentPrice ?? (priceData.length > 0 ? priceData[priceData.length - 1].value : null);
+  const fvFmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const apt = data.analyst_price_targets || {};
+  // Price at its 5y representative multiple; only when Yahoo's trailingPE is on
+  // a comparable EPS basis to the scraped history (else the ratio is noise).
+  const peFairPrice = (data.avg_pe_5y != null && data.pe_basis_matches && f.peRatio > 0 && fvCurrent != null)
+    ? fvCurrent * data.avg_pe_5y / f.peRatio
+    : null;
+  const fairValueRows = [];
+  if (apt.median != null || (apt.low != null && apt.high != null)) {
+    fairValueRows.push({
+      label: f.numberOfAnalystOpinions ? `Analysts (${f.numberOfAnalystOpinions})` : 'Analysts',
+      low: apt.low ?? null,
+      mid: apt.median ?? null,
+      high: apt.high ?? null,
+      tooltip: [
+        '1-year analyst price targets',
+        apt.low != null ? `Low: ${fvFmt(apt.low)}` : null,
+        apt.median != null ? `Median: ${fvFmt(apt.median)}` : null,
+        apt.high != null ? `High: ${fvFmt(apt.high)}` : null,
+        'Targets average ~28% optimistic historically — read the band, not the level',
+      ].filter(Boolean).join('\n'),
+    });
+  }
+  if (dcfPrice != null) {
+    fairValueRows.push({
+      label: 'DCF model',
+      low: dcfLow ?? null,
+      mid: dcfPrice,
+      high: dcfHigh ?? null,
+      muted: dcfLowConfidence,
+      tooltip: [
+        `DCF fair value: ${fvFmt(dcfPrice)}`,
+        dcfLow != null && dcfHigh != null ? `Sensitivity: ${fvFmt(dcfLow)} – ${fvFmt(dcfHigh)}` : null,
+        'Growth capped at +30%, so high-growth names read as structurally overvalued',
+        dcfLowConfidence ? 'Low confidence — model over-sensitive or disagrees with market' : null,
+      ].filter(Boolean).join('\n'),
+    });
+  }
+  if (peFairPrice != null) {
+    fairValueRows.push({
+      label: '5y avg multiple',
+      mid: peFairPrice,
+      tooltip: `Price at its 5-year harmonic average P/E (${Math.round(data.avg_pe_5y)} vs current ${Math.round(f.peRatio)})`,
+    });
+  }
+
+  // Expectations check: growth the market pays for vs growth the company delivers.
+  const impliedGrowthPct = dcfImplied != null ? dcfImplied * 100 : null;
+  const deliveredGrowthPct = f.revenueGrowth != null ? f.revenueGrowth * 100 : null;
+  let expectations = null;
+  if (impliedGrowthPct != null) {
+    const stretched = deliveredGrowthPct != null && impliedGrowthPct > deliveredGrowthPct + 10;
+    const modest = deliveredGrowthPct != null && impliedGrowthPct <= deliveredGrowthPct;
+    expectations = {
+      implied: `${impliedGrowthPct.toFixed(1)}%`,
+      className: stretched ? 'negative' : modest ? 'positive' : '',
+    };
+  } else if (data.dcf_implied_growth_status === 'above_band') {
+    expectations = { implied: '>50%', className: 'negative' };
+  } else if (data.dcf_implied_growth_status === 'below_band') {
+    expectations = { implied: '< -10%', className: 'positive' };
+  }
+
   // Composite score — same formula and inputs as the Holdings Score column.
   // Earnings signal comes from the newest report that has an LLM assessment.
   const assessmentReport = (data.earnings_reports || []).find(
@@ -1328,6 +1460,29 @@ const Stock = () => {
               </div>
             ))}
           </div>
+          {(fairValueRows.length > 0 || expectations) && (
+            <div className="fv-block">
+              <h4>Fair Value vs Price</h4>
+              {fairValueRows.length > 0 && <FairValueBand rows={fairValueRows} current={fvCurrent} />}
+              {expectations && (
+                <div
+                  className="fv-expectations"
+                  title={'Reverse DCF: the initial FCF growth rate that makes the model price equal the market price. Compare with what the business actually delivers.'}
+                >
+                  <span className="fv-expectations-label">Expectations</span>
+                  <span>
+                    market prices in <strong className={expectations.className}>{expectations.implied}</strong> initial growth
+                    {deliveredGrowthPct != null && (
+                      <> · delivered revenue growth <strong>{deliveredGrowthPct.toFixed(1)}%</strong> (last quarter, YoY)</>
+                    )}
+                  </span>
+                </div>
+              )}
+              <p className="fv-caption">
+                Independent estimates on one price axis — wide disagreement means fair value is contested. Context, not a signal.
+              </p>
+            </div>
+          )}
         </div>
         <div className="panel" id="sec-quality">
           <h3>Quality</h3>

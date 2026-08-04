@@ -11,6 +11,7 @@ from typing import Any, Literal, Optional, TypedDict
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     Enum,
@@ -340,6 +341,11 @@ class FeaturesDaily(Base):
     analyst_rec_mean: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     analyst_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     analyst_target_upside: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # % to median target
+    # Absolute target levels in the quote currency (pence for GBp listings) —
+    # the upside % above cannot reconstruct the band once the price moves.
+    target_low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    target_median: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    target_high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Valuation
     forward_pe: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -349,6 +355,14 @@ class FeaturesDaily(Base):
     dcf_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     dcf_diff: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     dcf_implied_growth: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    dcf_low: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    dcf_high: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Fair-value-from-multiples inputs, stored raw so the formula can change
+    # later and history still rebuilds: fair ≈ avg_pe_5y × EPS.
+    avg_pe_5y: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    pe_basis_matches: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    trailing_eps: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    forward_eps: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Composites
     rule_of_40: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

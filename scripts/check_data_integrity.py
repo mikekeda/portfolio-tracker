@@ -38,6 +38,13 @@ STALE_PE_DAYS = 120
 PORTFOLIO_DIFF_PCT = 1.0  # T212 total vs holdings sum; small FX drift is normal
 # Same bounds as the split detector: an unadjusted 2:1 split shows as ~0.5x.
 MOVE_UPPER, MOVE_LOWER = 1.8, 0.55
+# Wrong-currency rows on LSE lines: Yahoo intermittently serves the USD line's
+# quote on a GBP/GBX series, so the day-over-day ratio lands on the USD->GBP
+# rate (or its inverse / x100 GBX variants) instead of a market move.
+FX_MIN_MOVE = 0.15       # smaller implied moves are indistinguishable from market noise
+FX_RATE_TOL = 0.02       # ratio must match the day's rate within 2%
+FX_REVERT_TOL = 0.05     # next close back within 5% of prev = transient junk row
+FX_INCEPTION_ROWS = 20   # series-start window where USD junk rows cluster
 
 # (name, description, fix hint, SQL) — every check is a plain read-only query
 # so it can be pasted into psql/pgAdmin unchanged when digging into a finding.
@@ -135,6 +142,51 @@ CHECKS: list[tuple[str, str, str, str]] = [
           AND (adj_close_price / prev_close > {MOVE_UPPER}
                OR adj_close_price / prev_close < {MOVE_LOWER})
         ORDER BY date DESC
+        """,
+    ),
+    (
+        "fx_mixed_rows",
+        "LSE rows whose 1-day move matches the USD/GBP rate (wrong-currency data)",
+        "A hit usually marks a wrong-currency row or the edge of a longer wrong-currency "
+        "stretch, not a market move (real whipsaws land here occasionally — check the news "
+        "first, e.g. bid rumours). Probe Yahoo's current data for the window: if it now "
+        "disagrees with the stored rows (SGLN.L case) re-download in place with "
+        "_update_prices(session, [sym], stretch_start). If Yahoo still serves the junk "
+        "(VUAG.L/XNAS.L case) repair locally — delete junk inception rows or FX-convert "
+        "the stretch, see scripts/fix_fx_mixed_prices.sql. Scan level continuity around a "
+        "flagged edge before fixing: only stretch edges match the rate, not their interior.",
+        f"""
+        WITH moves AS (
+            SELECT symbol, date, adj_close_price AS close,
+                   lag(adj_close_price) OVER (PARTITION BY symbol ORDER BY date) AS prev,
+                   lead(adj_close_price) OVER (PARTITION BY symbol ORDER BY date) AS next,
+                   row_number() OVER (PARTITION BY symbol ORDER BY date) AS rn
+            FROM prices_daily
+            WHERE symbol LIKE '%.L'
+              AND adj_close_price != 'NaN'::float8 AND adj_close_price > 0
+        )
+        SELECT m.symbol, m.date, round(m.prev::numeric, 2) AS prev,
+               round(m.close::numeric, 2) AS close,
+               round((100 * (m.close / m.prev - 1))::numeric) AS pct_move,
+               m.rn <= {FX_INCEPTION_ROWS} AS near_inception,
+               abs(m.next / m.prev - 1) < {FX_REVERT_TOL} AS reverts_next_day,
+               m.date > CURRENT_DATE - 30 AS recent
+        FROM moves m
+        JOIN LATERAL (
+            SELECT rate FROM currency_rates_daily r
+            WHERE r.from_currency = 'USD' AND r.to_currency = 'GBP' AND r.date <= m.date
+            ORDER BY r.date DESC LIMIT 1
+        ) r ON true
+        WHERE m.prev > 0
+          AND abs(m.close / m.prev - 1) >= {FX_MIN_MOVE}
+          AND (m.close / m.prev BETWEEN r.rate * {1 - FX_RATE_TOL} AND r.rate * {1 + FX_RATE_TOL}
+               OR m.close / m.prev BETWEEN 1 / r.rate * {1 - FX_RATE_TOL} AND 1 / r.rate * {1 + FX_RATE_TOL}
+               OR m.close / m.prev BETWEEN 100 * r.rate * {1 - FX_RATE_TOL} AND 100 * r.rate * {1 + FX_RATE_TOL}
+               OR m.close / m.prev BETWEEN 1 / (100 * r.rate) * {1 - FX_RATE_TOL} AND 1 / (100 * r.rate) * {1 + FX_RATE_TOL})
+          AND (m.rn <= {FX_INCEPTION_ROWS}
+               OR abs(m.next / m.prev - 1) < {FX_REVERT_TOL}
+               OR m.date > CURRENT_DATE - 30)
+        ORDER BY m.symbol, m.date
         """,
     ),
     (

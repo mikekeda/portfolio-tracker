@@ -322,6 +322,139 @@
   box-sizing: border-box;
 }
 
+/* Fair value vs price (Valuation panel) */
+.fv-block {
+  margin-top: 14px;
+  border-top: 1px solid #e9ecef;
+  padding-top: 10px;
+}
+
+.fv-block h4 {
+  margin: 0 0 10px;
+  font-size: 0.9rem;
+}
+
+.fv-band {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fv-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: help;
+}
+
+.fv-row-muted {
+  opacity: 0.45;
+}
+
+.fv-row-label {
+  font-size: 0.8rem;
+  color: #6c757d;
+  min-width: 110px;
+  white-space: nowrap;
+}
+
+.fv-row-track {
+  flex: 1;
+  height: 14px;
+  position: relative;
+  background: #f1f3f5;
+  border-radius: 4px;
+}
+
+.fv-row-range {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  background: rgba(59, 130, 246, 0.25);
+  border-radius: 4px;
+}
+
+.fv-row-mid {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 3px;
+  background: #3b82f6;
+  border-radius: 1px;
+  transform: translateX(-50%);
+}
+
+.fv-row-price {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: #1e293b;
+  transform: translateX(-50%);
+}
+
+.fv-row-diff {
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-width: 44px;
+  text-align: right;
+}
+
+.fv-row-diff.positive {
+  color: #28a745;
+}
+
+.fv-row-diff.negative {
+  color: #dc3545;
+}
+
+.fv-scale-row {
+  cursor: default;
+}
+
+.fv-scale-track {
+  flex: 1;
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #6c757d;
+}
+
+.fv-scale-price {
+  position: absolute;
+  transform: translateX(-50%);
+  font-weight: 600;
+  color: #1e293b;
+  white-space: nowrap;
+}
+
+.fv-expectations {
+  margin-top: 12px;
+  font-size: 0.85rem;
+  cursor: help;
+}
+
+.fv-expectations-label {
+  color: #6c757d;
+  font-size: 0.8rem;
+  margin-right: 8px;
+}
+
+.fv-expectations strong.negative {
+  color: #dc3545;
+}
+
+.fv-expectations strong.positive {
+  color: #28a745;
+}
+
+.fv-caption {
+  margin: 8px 0 0;
+  font-size: 0.75rem;
+  color: #6c757d;
+}
+
 /* Institutional Holders (13F) */
 .form13f-as-of {
   font-weight: 400;

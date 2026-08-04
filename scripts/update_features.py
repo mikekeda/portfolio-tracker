@@ -35,6 +35,7 @@ def _num(value) -> float | None:
 
 
 def _row_from_holding(h: dict, instrument_id: int) -> dict:
+    targets = h.get("analyst_price_targets") or {}
     return {
         "instrument_id": instrument_id,
         "date": datetime.now(TIMEZONE).date(),
@@ -56,6 +57,9 @@ def _row_from_holding(h: dict, instrument_id: int) -> dict:
         "analyst_rec_mean": _num(h.get("recommendation_mean")),
         "analyst_count": h.get("number_of_analyst_opinions"),
         "analyst_target_upside": _num(h.get("prediction")),
+        "target_low": _num(targets.get("low")),
+        "target_median": _num(targets.get("median")),
+        "target_high": _num(targets.get("high")),
         "forward_pe": _num(h.get("forward_pe_ratio")),
         "peg": _num(h.get("peg_ratio")),
         "ps_ratio": _num(h.get("ps_ratio")),
@@ -63,6 +67,12 @@ def _row_from_holding(h: dict, instrument_id: int) -> dict:
         "dcf_price": _num(h.get("dcf_price")),
         "dcf_diff": _num(h.get("dcf_diff")),
         "dcf_implied_growth": _num(h.get("dcf_implied_growth")),
+        "dcf_low": _num(h.get("dcf_low")),
+        "dcf_high": _num(h.get("dcf_high")),
+        "avg_pe_5y": _num(h.get("avg_pe")),
+        "pe_basis_matches": h.get("pe_basis_matches"),
+        "trailing_eps": _num(h.get("trailing_eps")),
+        "forward_eps": _num(h.get("forward_eps")),
         "rule_of_40": _num(h.get("rule_of_40_score")),
         "f_score": h.get("f_score"),
         "screener_score": _num(h.get("screener_score")),
