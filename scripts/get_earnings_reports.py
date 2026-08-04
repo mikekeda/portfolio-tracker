@@ -133,13 +133,13 @@ def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
     report_date = metadata["reportDate"]
     form = metadata["form"]
 
-    # 1. Construct Local Path: data/filings/{TICKER}/{YYYY-MM-DD}_{FORM}.html
     ticker_dir = DATA_DIR / ticker
     ticker_dir.mkdir(parents=True, exist_ok=True)
 
-    # Sanitize form name just in case (e.g. "10-Q/A" -> "10-Q_A")
+    # Accession disambiguates the siblings an FPI files under one reportDate
+    # (VALE, 2026-07-31: ten 6-Ks across two reportDates). "10-Q/A" -> "10-Q_A".
     safe_form = form.replace("/", "_")
-    filename = f"{report_date}_{safe_form}.html"
+    filename = f"{report_date}_{safe_form}_{accession}.html"
     file_path = ticker_dir / filename
 
     # 2. Check Cache
@@ -231,8 +231,9 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
 
         safe_form = form.replace("/", "_")
         # Sentinel persisting an LLM verdict that this filing is not a results
-        # document, so nightly re-runs don't re-analyse the same governance 6-K.
-        nonearnings_marker = DATA_DIR / ticker / f"{report_date}_{safe_form}.nonearnings"
+        # document. Keyed by accession so it can't mask a same-reportDate sibling.
+        accession = metadata["accessionNumber"].replace("-", "")
+        nonearnings_marker = DATA_DIR / ticker / f"{report_date}_{safe_form}_{accession}.nonearnings"
         if nonearnings_marker.exists():
             logger.debug("[skip] %s %s period %s — marked non-earnings on a previous run", ticker, form, report_date)
             continue
