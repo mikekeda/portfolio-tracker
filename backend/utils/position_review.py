@@ -18,6 +18,7 @@ from google import genai
 from pydantic import BaseModel, Field
 
 from backend.schemas.instrument_thesis import InstrumentThesisSchema
+from backend.utils.llm_json import undo_double_escapes
 from config import GEMINI_API_KEY, TIMEZONE, logger
 from models import EarningsReport, Instrument, MarketMetricsDaily
 
@@ -29,6 +30,9 @@ logging.getLogger("google_genai").setLevel(logging.WARNING)
 MODEL = "gemini-3.5-flash"
 # Near-deterministic output: assessments should not vary run-to-run.
 TEMPERATURE = 0.1
+# A malformed response is a degenerate sample; retrying at the same temperature
+# tends to replay it, so the second attempt deliberately samples wider.
+RETRY_TEMPERATURE = 0.4
 # A valid payload is ~1-2k tokens; the cap kills runaway generations (observed:
 # a 64KB response with an invalid \uXXXX escape on PARRO.PA, 2026-07-06) while
 # leaving headroom for the model's internal thinking tokens.
@@ -507,37 +511,28 @@ def generate_assessment(ctx: dict, *, ticker: str) -> dict[str, Any] | None:
         client = _get_genai_client()
         prompt = _PROMPT_HEADER.format(ticker=ticker) + "\n" + json.dumps(ctx, indent=2, default=str)
 
-        response = client.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config={
-                "temperature": TEMPERATURE,
-                "max_output_tokens": MAX_OUTPUT_TOKENS,
-                "response_mime_type": "application/json",
-                "response_json_schema": PositionAssessmentSchema.model_json_schema(),
-            },
-        )
+        def _generate(temperature: float) -> str:
+            return client.models.generate_content(
+                model=MODEL,
+                contents=prompt,
+                config={
+                    "temperature": temperature,
+                    "max_output_tokens": MAX_OUTPUT_TOKENS,
+                    "response_mime_type": "application/json",
+                    "response_json_schema": PositionAssessmentSchema.model_json_schema(),
+                },
+            ).text
 
         try:
-            result_dict = json.loads(response.text)
+            result_dict = json.loads(_generate(TEMPERATURE))
         except json.JSONDecodeError as e:
             # Structured output occasionally comes back malformed; one regeneration
             # usually fixes it. A second failure falls to the outer handler and the
             # nightly hash gate retries the instrument tomorrow.
             logger.warning("%s: invalid JSON from Gemini (%s) — retrying once", ticker, e)
-            response = client.models.generate_content(
-                model=MODEL,
-                contents=prompt,
-                config={
-                    "temperature": TEMPERATURE,
-                    "max_output_tokens": MAX_OUTPUT_TOKENS,
-                    "response_mime_type": "application/json",
-                    "response_json_schema": PositionAssessmentSchema.model_json_schema(),
-                },
-            )
-            result_dict = json.loads(response.text)
+            result_dict = json.loads(_generate(RETRY_TEMPERATURE))
 
-        validated = PositionAssessmentSchema.model_validate(result_dict)
+        validated = PositionAssessmentSchema.model_validate(undo_double_escapes(result_dict))
         return validated.model_dump()
 
     except Exception as e:

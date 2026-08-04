@@ -36,6 +36,10 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
+# driver.get() blocks forever by default; one wedged page would strand the whole
+# nightly chain behind this task.
+PAGE_LOAD_TIMEOUT = 30
+
 
 @contextmanager
 def init_webdriver():
@@ -53,6 +57,7 @@ def init_webdriver():
         else None
     )
     driver = webdriver.Firefox(service=service, options=browser_options)
+    driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
     try:
         yield driver
     finally:

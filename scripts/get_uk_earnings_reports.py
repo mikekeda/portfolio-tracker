@@ -312,7 +312,10 @@ def get_announcement_html(ticker: str, announcement_date: date, report_type: str
         return None
 
     html = response.text
-    file_path.write_text(html, encoding="utf-8")
+    # Publication notices are stubs that Investegate may later back with the real
+    # body; caching one would pin the stub verdict for good.
+    if len(extract_text_from_html(html)) >= MIN_BODY_CHARS:
+        file_path.write_text(html, encoding="utf-8")
     return html
 
 
@@ -377,6 +380,18 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> str:
                     )
                 return OUTCOME_UPDATE_NOOP
 
+            # Sentinel persisting an LLM verdict that this announcement is not a
+            # results document, so nightly re-runs don't re-analyse the same RNS.
+            nonearnings_marker = DATA_DIR / ticker / f"{announcement_date.isoformat()}_{report_type}.nonearnings"
+            if nonearnings_marker.exists():
+                logger.debug(
+                    "[skip] %s %s period %s — marked non-earnings on a previous run",
+                    ticker,
+                    report_type,
+                    announcement_date.isoformat(),
+                )
+                continue
+
             html = get_announcement_html(ticker, announcement_date, report_type, announcement["url"])
             if html is None:
                 continue
@@ -401,6 +416,7 @@ def get_uk_earnings_report(ticker: str, session, instrument_id: int) -> str:
                 continue
 
             if result.get("is_earnings_report") is False:
+                nonearnings_marker.touch()
                 logger.info(
                     "[skip] %s %s period %s — LLM flagged as non-earnings; trying earlier candidate",
                     ticker,

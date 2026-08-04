@@ -24,6 +24,10 @@ from config import DAYS_PER_YEAR, RISK_FREE_RATE, SPY, logger
 from models import PortfolioDaily, TransactionAction, TransactionHistory, PricesDaily
 from scripts.update_data import get_session
 
+# The newest rows are created at 00:00 off the previous close and keep moving as
+# the day's prices land, so they are recomputed on every run rather than once.
+RECOMPUTE_TRAILING_DAYS = 3
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Data loading (2 queries total, no per-holding price lookups)
@@ -217,17 +221,14 @@ def update_returns(rebuild: bool = False) -> None:
 
         logger.info("Loaded %d portfolio snapshots, %d cash-flow dates", len(snapshots), len(cash_flows))
 
-        # 2. Determine which dates need updating
         if not rebuild:
-            needs_update: set[date] = set()
+            recompute_from = snapshots[-1][0] - timedelta(days=RECOMPUTE_TRAILING_DAYS - 1)
+            needs_update: set[date] = {d for d, _ in snapshots if d >= recompute_from}
             for row in session.execute(
                 select(PortfolioDaily.date).where((PortfolioDaily.mwrr.is_(None)) | (PortfolioDaily.twrr.is_(None)))
             ).all():
                 needs_update.add(row.date)
 
-            if not needs_update:
-                logger.info("All rows up to date — nothing to do.")
-                return
             logger.info("%d rows need updating", len(needs_update))
 
         # 3. Compute returns — only run irr() for dates that actually need updating

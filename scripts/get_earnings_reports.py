@@ -63,9 +63,9 @@ SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{p
 # PR placeholders are keyed on the press release's stated period end, which can
 # sit a few days off the SEC reportDate (AAPL fiscal Q2 2026: 03-28 vs 03-31).
 PR_SUPERSEDE_WINDOW = timedelta(days=7)
-# FPIs mix results and governance filings under 6-K (ASML's newest 6-K is an AGM
-# notice; its Q1 results 6-K is second). Scan this many newest candidates.
-FPI_SCAN_LIMIT = 5
+# FPIs mix results and governance filings under 6-K, and heavy filers bury the
+# results one well past the 5th slot. .nonearnings markers keep the depth cheap.
+FPI_SCAN_LIMIT = 20
 
 
 def get_filing_metadata_candidates(cik: str, form_types: tuple[str, ...], limit: int = 1) -> list[dict]:

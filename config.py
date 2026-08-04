@@ -183,3 +183,7 @@ CELERY_accept_content = ["application/json"]
 CELERY_task_serializer = "json"
 CELERY_result_serializer = "json"
 CELERY_timezone = "UTC"
+# One worker process runs the whole nightly chain, so an unbounded task eats every
+# job behind it. update_pe_data legitimately exceeds this and overrides it.
+CELERY_task_soft_time_limit = 3600
+CELERY_task_time_limit = 3900

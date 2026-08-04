@@ -26,6 +26,7 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 
+from backend.utils.llm_json import undo_double_escapes
 from config import GEMINI_API_KEY, logger
 
 # Silence verbose third-party SDK loggers (AFC status, HTTP request lines).
@@ -419,23 +420,6 @@ def _regional_notes_for(report_type: str) -> str:
     return _REGIONAL_NOTES_US
 
 
-def _undo_double_escapes(obj: Any) -> Any:
-    r"""Recursively undo double-escaped JSON string values from the LLM.
-
-    Gemini structured output sporadically double-escapes newlines and quotes
-    inside string values, which ``json.loads`` leaves as literal ``\n`` / ``\"``
-    two-character sequences (13/1608 earnings_reports rows as of Jul 2026).
-    A string containing literal ``\n`` but no real newline is the fingerprint.
-    """
-    if isinstance(obj, str) and "\\n" in obj and "\n" not in obj:
-        return obj.replace("\\n", "\n").replace('\\"', '"')
-    if isinstance(obj, dict):
-        return {k: _undo_double_escapes(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_undo_double_escapes(v) for v in obj]
-    return obj
-
-
 def summarize_with_llm(
     text: str,
     ticker: str,
@@ -494,7 +478,7 @@ def summarize_with_llm(
             },
         )
 
-        result_dict = _undo_double_escapes(json.loads(response.text))
+        result_dict = undo_double_escapes(json.loads(response.text))
         validated_result = EarningsReportMetrics.model_validate(result_dict)
         return validated_result.model_dump()
 
@@ -561,7 +545,7 @@ def summarize_pdf_with_llm(
             },
         )
 
-        result_dict = _undo_double_escapes(json.loads(response.text))
+        result_dict = undo_double_escapes(json.loads(response.text))
         validated_result = EarningsReportMetrics.model_validate(result_dict)
         return validated_result.model_dump()
 
