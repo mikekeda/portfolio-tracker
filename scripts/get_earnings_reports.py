@@ -37,6 +37,7 @@ updates split and the global never-seen backlog.
 """
 
 import argparse
+import re
 from datetime import date, timedelta
 from time import perf_counter, sleep
 
@@ -67,6 +68,12 @@ PR_SUPERSEDE_WINDOW = timedelta(days=7)
 # FPIs mix results and governance filings under 6-K, and heavy filers bury the
 # results one well past the 5th slot. .nonearnings markers keep the depth cheap.
 FPI_SCAN_LIMIT = 20
+# SEC generates one R{n}.htm per statement for its XBRL viewer — TD's Q2 6-K has
+# 96 of them beside 7 real documents, and fetching all 103 draws a 503.
+_XBRL_VIEWER_FRAGMENT = re.compile(r"R\d+\.html?", re.IGNORECASE)
+# Bounds the requests per filing. Ordering is by HTML size, which only loosely
+# tracks extractable text, so a 5th document is a deliberate accepted loss.
+MAX_FILING_DOCUMENTS = 4
 
 
 def get_filing_metadata_candidates(cik: str, form_types: tuple[str, ...], limit: int = 1) -> list[dict]:
@@ -125,12 +132,12 @@ def _has_content(value) -> bool:
 
 
 def _accession_documents(cik: str, accession: str, primary_doc: str) -> list[str]:
-    """Every HTML document in a filing, largest first.
+    """A filing's substantive HTML documents, largest first, at most ``MAX_FILING_DOCUMENTS``.
 
     A 6-K's ``primaryDocument`` is often a one-page cover sheet furnishing the
     results as an EX-99 exhibit (SNY 2026-06-30: 8 KB cover, 20 KB exhibit), so
-    the substance is missed by fetching it alone. Falls back to the primary
-    document when the index is unreadable.
+    the substance is missed by fetching it alone. SEC's XBRL viewer fragments are
+    excluded. Falls back to the primary document when the index is unreadable.
     """
     try:
         response = requests.get(SEC_INDEX_URL.format(cik=cik, accession=accession), headers=HEADERS, timeout=30)
@@ -143,9 +150,12 @@ def _accession_documents(cik: str, accession: str, primary_doc: str) -> list[str
     documents = [
         (item["name"], int(item["size"] or 0))
         for item in items
-        if item["name"].endswith((".htm", ".html")) and "-index" not in item["name"]
+        if item["name"].endswith((".htm", ".html"))
+        and "-index" not in item["name"]
+        and not _XBRL_VIEWER_FRAGMENT.fullmatch(item["name"])
     ]
-    return [name for name, _ in sorted(documents, key=lambda d: -d[1])] or [primary_doc]
+    ranked = [name for name, _ in sorted(documents, key=lambda d: -d[1])]
+    return ranked[:MAX_FILING_DOCUMENTS] or [primary_doc]
 
 
 def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
@@ -176,6 +186,8 @@ def get_filing_html(cik: str, ticker: str, metadata: dict) -> str:
     # results document itself.
     documents = _accession_documents(cik, accession, primary_doc) if form == "6-K" else [primary_doc]
 
+    # Any shortfall aborts: a partial body would be cached and reused forever,
+    # and a 503 is transient where a poisoned cache is not.
     parts = []
     for document in documents:
         url = SEC_ARCHIVES_URL.format(cik=cik, accession=accession, primary_document=document)
