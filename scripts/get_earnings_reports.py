@@ -74,6 +74,9 @@ _XBRL_VIEWER_FRAGMENT = re.compile(r"R\d+\.html?", re.IGNORECASE)
 # Bounds the requests per filing. Ordering is by HTML size, which only loosely
 # tracks extractable text, so a 5th document is a deliberate accepted loss.
 MAX_FILING_DOCUMENTS = 4
+# A cover page extracts to ~1 KB with no results in it, and saving one retires the
+# instrument for a quarter. Smallest genuine filing seen: TSM at 5.7 KB.
+MIN_FILING_CHARS = 3000
 
 
 def get_filing_metadata_candidates(cik: str, form_types: tuple[str, ...], limit: int = 1) -> list[dict]:
@@ -297,6 +300,17 @@ def get_earnings_report(ticker: str, cik: str, session, instrument_id: int):
 
         # 5. Extract text + LLM analysis
         text = extract_text_from_html(html_content)
+        if len(text) < MIN_FILING_CHARS:
+            logger.info(
+                "[skip] %s %s period %s — body %d chars < %d (cover page); trying earlier candidate",
+                ticker,
+                form,
+                report_date,
+                len(text),
+                MIN_FILING_CHARS,
+            )
+            continue
+
         result = summarize_with_llm(text, ticker, report_type=form, period=report_date)
 
         if result is None:
