@@ -123,10 +123,19 @@ async def gen_fear_greed_history(
     ]
 
 
-async def gen_fred_latest(
-    session: aiohttp.ClientSession, series_id: str, limit: int = 1
-) -> Optional[list[dict[str, float]]]:
-    """Fetch latest N observations for a FRED series (async). Returns list of dicts [{date, value}], newest first."""
+async def _fred_observations(
+    session: aiohttp.ClientSession,
+    series_id: str,
+    *,
+    limit: int | None = None,
+    observation_start: date | None = None,
+    sort_order: str = "desc",
+) -> Optional[list[dict[str, str | float]]]:
+    """Shared FRED observations fetch. Returns [{date, value}, ...] or None.
+
+    ``date`` is an ISO string; ``value`` is float. Callers that need ``date``
+    objects should use ``gen_fred_history``.
+    """
     if not FRED_API_KEY:
         logger.warning("FRED_API_KEY is not set")
         return None
@@ -135,9 +144,12 @@ async def gen_fred_latest(
         "series_id": series_id,
         "api_key": FRED_API_KEY,
         "file_type": "json",
-        "limit": limit,
-        "sort_order": "desc",
+        "sort_order": sort_order,
     }
+    if limit is not None:
+        params["limit"] = limit
+    if observation_start is not None:
+        params["observation_start"] = observation_start.isoformat()
     headers = {"User-Agent": UA}
 
     try:
@@ -166,6 +178,31 @@ async def gen_fred_latest(
     except Exception as e:
         logger.warning("FRED fetch error for %s: %s", series_id, e.__class__.__name__)
         return None
+
+
+async def gen_fred_latest(
+    session: aiohttp.ClientSession, series_id: str, limit: int = 1
+) -> Optional[list[dict[str, str | float]]]:
+    """Fetch latest N observations for a FRED series (async).
+
+    Returns [{date, value}, ...] newest first — ``date`` is an ISO string.
+    """
+    return await _fred_observations(session, series_id, limit=limit, sort_order="desc")
+
+
+async def gen_fred_history(
+    session: aiohttp.ClientSession, series_id: str, start: date
+) -> Optional[list[dict[str, Union[date, float]]]]:
+    """Fetch FRED observations from `start` onward, oldest first.
+
+    Dates are parsed to ``date`` so callers can join series without re-parsing.
+    """
+    raw = await _fred_observations(
+        session, series_id, observation_start=start, sort_order="asc"
+    )
+    if not raw:
+        return None
+    return [{"date": date.fromisoformat(o["date"]), "value": o["value"]} for o in raw]
 
 
 async def get_yield_spread(session: aiohttp.ClientSession) -> Optional[float]:
