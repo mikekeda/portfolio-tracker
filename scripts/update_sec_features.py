@@ -133,7 +133,15 @@ def _should_fetch(session: Session, instrument_id: int, cik: str, force: bool) -
     # Filing-driven: refresh if submissions show a newer 10-K/10-Q/20-F filed after fetched_at.
     url = SUBMISSIONS_URL.format(cik=pad_cik(cik))
     try:
-        resp = requests.get(url, headers={"User-Agent": SEC_USER_AGENT}, timeout=30)
+        resp = requests.get(
+            url,
+            headers={
+                "User-Agent": SEC_USER_AGENT,
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip, deflate",
+            },
+            timeout=30,
+        )
         resp.raise_for_status()
         payload = resp.json()
     except Exception as exc:  # noqa: BLE001
@@ -270,6 +278,7 @@ def update_sec_features(
 
         total_rows = 0
         fetched = 0
+        logger.info("SEC companyfacts User-Agent=%r", SEC_USER_AGENT)
         for instrument_id, symbol, cik in instruments:
             if not symbol or not cik:
                 continue
@@ -293,6 +302,20 @@ def update_sec_features(
                 total_rows += n
                 session.commit()
                 logger.info("%s: %d sec_features rows", symbol, n)
+            except requests.HTTPError as exc:
+                session.rollback()
+                # Keep hammering a banned IP extends the ban — stop the run.
+                if exc.response is not None and exc.response.status_code in (403, 429):
+                    logger.error(
+                        "Aborting SEC update after %s for %s (CIK %s): %s",
+                        exc.response.status_code,
+                        symbol,
+                        cik,
+                        exc,
+                    )
+                    break
+                logger.exception("SEC update failed for %s (CIK %s)", symbol, cik)
+                continue
             except Exception:
                 logger.exception("SEC update failed for %s (CIK %s)", symbol, cik)
                 session.rollback()

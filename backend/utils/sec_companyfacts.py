@@ -20,6 +20,12 @@ from backend.utils.splits import adjust_share_count
 from config import SEC_USER_AGENT
 
 COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
+# Match scrape_13f / SEC fair-access sample (User-Agent + Accept-Encoding; no Host override).
+_SEC_HEADERS = {
+    "User-Agent": SEC_USER_AGENT,
+    "Accept": "application/json",
+    "Accept-Encoding": "gzip, deflate",
+}
 
 # Prefer USD/EUR/… currency units over shares.
 _CURRENCY_PREF = ("USD", "EUR", "GBP", "CAD", "DKK", "BRL", "JPY", "CHF", "CNY")
@@ -144,11 +150,17 @@ def pad_cik(cik: str) -> str:
 
 
 def fetch_companyfacts(cik: str, *, session: requests.Session | None = None) -> dict[str, Any]:
-    """GET companyfacts JSON for a CIK (User-Agent only — never Host: www.sec.gov)."""
+    """GET companyfacts JSON for a CIK (never set Host: www.sec.gov on data.sec.gov)."""
     url = COMPANYFACTS_URL.format(cik=pad_cik(cik))
-    headers = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
     http = session or requests
-    response = http.get(url, headers=headers, timeout=60)
+    response = http.get(url, headers=_SEC_HEADERS, timeout=60)
+    if response.status_code == 403:
+        raise requests.HTTPError(
+            f"403 from data.sec.gov for CIK{pad_cik(cik)} — SEC blocked this client "
+            f"(User-Agent={SEC_USER_AGENT!r}). Use a reachable contact email in "
+            f"T212_SEC_USER_AGENT, or wait ~10m if the IP was rate-banned.",
+            response=response,
+        )
     response.raise_for_status()
     return response.json()
 
@@ -711,8 +723,12 @@ def compute_sec_feature_snapshot(
     }
 
 
-def rate_limited_get(cik: str, *, sleep_s: float = 0.12) -> dict[str, Any]:
-    """Fetch companyfacts then sleep to stay under SEC's 10 req/s guidance."""
-    data = fetch_companyfacts(cik)
-    time.sleep(sleep_s)
-    return data
+def rate_limited_get(cik: str, *, sleep_s: float = 0.15) -> dict[str, Any]:
+    """Fetch companyfacts then sleep to stay under SEC's 10 req/s guidance.
+
+    Sleeps even on failure so a 403/429 does not immediately re-hit a banned IP.
+    """
+    try:
+        return fetch_companyfacts(cik)
+    finally:
+        time.sleep(sleep_s)
