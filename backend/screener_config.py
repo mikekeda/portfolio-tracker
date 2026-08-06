@@ -676,6 +676,8 @@ Check those criteria:
                 # Combines well with entry points and other quality/growth validators
             ),
             # Durable compounding — the only screener that looks past a single TTM snapshot.
+            # Uses Yahoo get_roic_history only. Do not feed SEC decade depth here without a
+            # full FeaturesDaily score rebuild cutover (cross-section + second discontinuity).
             "roic_consistency": ScreenerDefinition(
                 id="roic_consistency",
                 name="Consistent High ROIC",

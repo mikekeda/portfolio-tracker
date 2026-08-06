@@ -28,6 +28,7 @@ from models import (
     Form13FFiling,
     Form13FHolding,
     Form13FManager,
+    SecCompanyFacts,
     HoldingDaily,
     Instrument,
     InstrumentMetricsDaily,
@@ -548,6 +549,24 @@ async def get_instrument(
         for r in reversed(quality_rows)
     ]
 
+    # As-restated SEC FY ROIC (labelled series) — column only; never detoast facts.
+    roic_sec_history: list[dict[str, Any]] = []
+    roic_yahoo_marker: dict[str, Any] | None = None
+    sec_roic_payload = (
+        await session.execute(
+            select(SecCompanyFacts.roic_as_restated).where(SecCompanyFacts.instrument_id == instrument.id)
+        )
+    ).scalar_one_or_none()
+    if sec_roic_payload:
+        roic_sec_history = list(sec_roic_payload)
+        yahoo_roic = fundamentals.get("roic")
+        if yahoo_roic is not None:
+            roic_yahoo_marker = {
+                "period_end": roic_sec_history[-1]["period_end"],
+                "roic": round(float(yahoo_roic), 2),
+                "source": "yahoo",
+            }
+
     suggestion_row = (
         await session.execute(
             select(TradeSuggestion)
@@ -621,6 +640,8 @@ async def get_instrument(
         "thesis_sell_streak": thesis_sell_streak,
         "sell_rule_persistence": RulesStrategy.SELL_RULE_PERSISTENCE,
         "quality_history": quality_history,
+        "roic_sec_history": roic_sec_history,
+        "roic_yahoo_marker": roic_yahoo_marker,
         "agent_suggestion": agent_suggestion,
         "my_position": my_position,
         "analyst_price_targets": (yh.analyst_price_targets or {}) if yh else {},

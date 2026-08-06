@@ -139,6 +139,14 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=30, hour=22),
         "args": (),
     },
+    # SEC companyfacts → sec_features_daily: Daily at 5:30 AM UTC after earnings
+    # HTML fetch (4:00). Filing-driven; quiet when no new 10-K/10-Q. Statement
+    # Tier B only — never writes screener_score (hold SEC out of scored gates).
+    "update_sec_features_nightly": {
+        "task": "celery_tasks.tasks.update_sec_features_task",
+        "schedule": crontab(minute=30, hour=5),
+        "args": (),
+    },
     # LLM position reviews: Daily at 6 AM UTC, after every nightly data job
     # (PE 2:00, pies 3:00, earnings 4:00/4:30, transactions 5:00) so reviews see
     # the freshest inputs. Hash-gated — quiet days cost zero LLM calls; a review

@@ -23,16 +23,43 @@ from backend.screener_config import SCORE_NORMALIZER
 from backend.utils.risk_math import ledoit_wolf_cov, hrp_weights, risk_contributions
 from backend.views._shared import PRICE_COLUMN
 from config import SPY
-from models import CurrencyRateDaily, FeaturesDaily, Instrument, InstrumentYahoo, PricesDaily
+from models import (
+    CurrencyRateDaily,
+    FeaturesDaily,
+    Instrument,
+    InstrumentYahoo,
+    PricesDaily,
+    SecFeaturesDaily,
+)
 
 _GBP_FACTORS = {"GBP": 1.0, "GBX": 0.01, "GBp": 0.01}
 
 # Fundamental snapshot older than this at decision time is treated as missing —
 # a stale row from a stopped writer must not silently steer trades for weeks.
 FUNDAMENTAL_STALENESS_DAYS = 7
+# sec_features_daily is month-end grain; allow a full month of slack for SEC rows only.
+SEC_FUNDAMENTAL_STALENESS_DAYS = 45
 MIN_HISTORY_DAYS = 252  # a symbol enters the tradable universe after a year of prices
 RISK_WINDOW_DAYS = 504  # trailing window for HRP / risk contributions
 MIN_RISK_OBS = 300
+
+# Statement Tier B columns present on sec_features_daily (no screener / analyst / DCF).
+SEC_FUNDAMENTAL_COLUMNS = (
+    "roic",
+    "gross_margin",
+    "operating_margin",
+    "profit_margin",
+    "revenue_growth",
+    "fcf_yield",
+    "debt_to_equity",
+    "rule_of_40",
+    "f_score",
+    "roic_ttm",
+    "roic_ttm_trend",
+    "gross_margin_trend_4q",
+    "operating_margin_trend_4q",
+    "revenue_growth_4q_avg",
+)
 
 TECHNICAL_NAMES = (
     "mom_12_1",
@@ -180,11 +207,13 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
         )
     ).scalars()
     records = []
+    yahoo_keys: set[tuple[date, str]] = set()
     for f in feat_rows:
         sym = symbol_by_id.get(f.instrument_id)
         if sym is None:
             continue
-        rec = {"date": f.date, "symbol": sym}
+        yahoo_keys.add((f.date, sym))
+        rec = {"date": f.date, "symbol": sym, "fundamentals_source": "yahoo"}
         for col in FUNDAMENTAL_COLUMNS:
             rec[col] = getattr(f, col)
         # Sector exclusions cap what a stock can score, so rank on the ratio.
@@ -202,6 +231,30 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
             r.get("description") or r.get("reason", "") for r in (eval_.get("sell_rules_met") or [])
         )
         records.append(rec)
+
+    # SEC PIT panel fills dates/symbols Yahoo FeaturesDaily does not cover.
+    # Statement Tier B only — screener_score stays NaN (never mix SEC into scored
+    # screeners without an explicit cutover rebuild). Backfilled-era composite is
+    # ~68% Tier A; quality gate collapses to ROIC >= 15; prefer CIK-only universe.
+    sec_rows = (
+        await session.execute(
+            select(SecFeaturesDaily).where(*( [SecFeaturesDaily.date <= end] if end else [] ))
+        )
+    ).scalars()
+    for f in sec_rows:
+        sym = symbol_by_id.get(f.instrument_id)
+        if sym is None or (f.date, sym) in yahoo_keys:
+            continue
+        rec = {"date": f.date, "symbol": sym, "fundamentals_source": "sec"}
+        for col in FUNDAMENTAL_COLUMNS:
+            rec[col] = getattr(f, col, None) if col in SEC_FUNDAMENTAL_COLUMNS else None
+        rec["thesis_sell_fired"] = False
+        rec["thesis_buy_fired"] = False
+        rec["thesis_above_max"] = False
+        rec["thesis_target_max"] = None
+        rec["thesis_sell_reasons"] = ""
+        records.append(rec)
+
     fundamentals = pd.DataFrame(records)
     if not fundamentals.empty:
         fundamentals = fundamentals.sort_values(["symbol", "date"]).reset_index(drop=True)
@@ -256,13 +309,37 @@ def _wilder_rsi(prices: pd.DataFrame, period: int) -> pd.DataFrame:
     return 100 - 100 / (1 + rs)
 
 
-def tradable_universe(md: MarketData, d: date) -> list[str]:
-    """Symbols priced on d with at least a year of prior history."""
+def use_sec_universe(md: MarketData, d: date) -> bool:
+    """True when fundamentals on/before d are SEC-only (no Yahoo FeaturesDaily yet).
+
+    Activates the CIK-only tradable filter so non-CIK names cannot free-pass
+    `_quality_ok` or warp z-scores in the backfilled era.
+    """
+    if md.fundamentals.empty or "fundamentals_source" not in md.fundamentals.columns:
+        return False
+    prior = md.fundamentals[md.fundamentals["date"] <= d]
+    if prior.empty:
+        return False
+    return not (prior["fundamentals_source"] == "yahoo").any() and (prior["fundamentals_source"] == "sec").any()
+
+
+def tradable_universe(md: MarketData, d: date, *, sec_only: bool = False) -> list[str]:
+    """Symbols priced on d with at least a year of prior history.
+
+    When `sec_only` is True (backfilled-era SEC panel), keep symbols that have a
+    sec fundamentals row on or before d — CIK coverage only. Mixing non-CIK names
+    free-passes `_quality_ok` and warps z-scores.
+    """
     if d not in md.gbp_prices.index:
         return []
     priced = md.gbp_prices.loc[d].notna()
     enough_history = md.gbp_prices.loc[:d].notna().sum() >= MIN_HISTORY_DAYS
-    return sorted(md.gbp_prices.columns[priced & enough_history])
+    symbols = sorted(md.gbp_prices.columns[priced & enough_history])
+    if not sec_only or md.fundamentals.empty or "fundamentals_source" not in md.fundamentals.columns:
+        return symbols
+    prior = md.fundamentals[md.fundamentals["date"] <= d]
+    sec_syms = set(prior.loc[prior["fundamentals_source"] == "sec", "symbol"])
+    return [s for s in symbols if s in sec_syms]
 
 
 def features_for_date(
@@ -274,6 +351,10 @@ def features_for_date(
     The live runner passes `fundamentals_as_of=today`: its decision date is the
     last *trading* day, but a suggestion executed tomorrow may legitimately use
     a feature snapshot taken over the weekend.
+
+    Yahoo rows use FUNDAMENTAL_STALENESS_DAYS (7); SEC month-end rows use
+    SEC_FUNDAMENTAL_STALENESS_DAYS (45). Thesis flags on SEC rows are forced
+    False (unknown → no EXIT escalation), not NaN.
     """
     cross = pd.DataFrame({name: matrix.loc[d].reindex(universe) for name, matrix in md.technicals.items()})
 
@@ -281,10 +362,20 @@ def features_for_date(
         return cross
 
     as_of = fundamentals_as_of or d
-    fresh_cutoff = as_of - timedelta(days=FUNDAMENTAL_STALENESS_DAYS)
-    window = md.fundamentals[(md.fundamentals["date"] <= as_of) & (md.fundamentals["date"] >= fresh_cutoff)]
+    fund = md.fundamentals[md.fundamentals["date"] <= as_of]
+    if "fundamentals_source" in fund.columns:
+        yahoo_cut = as_of - timedelta(days=FUNDAMENTAL_STALENESS_DAYS)
+        sec_cut = as_of - timedelta(days=SEC_FUNDAMENTAL_STALENESS_DAYS)
+        window = fund[
+            ((fund["fundamentals_source"] == "yahoo") & (fund["date"] >= yahoo_cut))
+            | ((fund["fundamentals_source"] == "sec") & (fund["date"] >= sec_cut))
+            | (~fund["fundamentals_source"].isin(("yahoo", "sec")) & (fund["date"] >= yahoo_cut))
+        ]
+    else:
+        fresh_cutoff = as_of - timedelta(days=FUNDAMENTAL_STALENESS_DAYS)
+        window = fund[fund["date"] >= fresh_cutoff]
     assert window.empty or window["date"].max() <= as_of, "fundamental row dated after decision date"
-    latest = window.groupby("symbol").tail(1).set_index("symbol").drop(columns=["date"])
+    latest = window.groupby("symbol").tail(1).set_index("symbol").drop(columns=["date"], errors="ignore")
     out = cross.join(latest.reindex(universe))
     # Boolean flags must never be NaN: bool(NaN) is True, and a missing thesis
     # evaluation must read as "no signal", not as a fired sell rule.

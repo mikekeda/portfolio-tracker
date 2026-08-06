@@ -192,6 +192,11 @@ class Instrument(Base):
     position_reviews: Mapped[list["PositionReview"]] = relationship(back_populates="instrument")
     # Daily point-in-time feature snapshots (trade-suggestion agent / ML training)
     features: Mapped[list["FeaturesDaily"]] = relationship(back_populates="instrument")
+    # SEC companyfacts-derived PIT features (CIK names; separate from features_daily)
+    sec_features: Mapped[list["SecFeaturesDaily"]] = relationship(back_populates="instrument")
+    sec_companyfacts: Mapped["SecCompanyFacts | None"] = relationship(
+        back_populates="instrument", uselist=False
+    )
     # Daily agent trade suggestions
     trade_suggestions: Mapped[list["TradeSuggestion"]] = relationship(back_populates="instrument")
 
@@ -396,6 +401,66 @@ class FeaturesDaily(Base):
 
     def __repr__(self) -> str:
         return f"<FeaturesDaily(instrument_id={self.instrument_id}, date='{self.date}')>"
+
+
+class SecCompanyFacts(Base):
+    """Cached SEC companyfacts JSON blob per instrument (CIK filers only)."""
+
+    __tablename__ = "sec_companyfacts"
+
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), primary_key=True)
+    cik: Mapped[str] = mapped_column(String(10), nullable=False)
+    facts: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    # Precomputed as-restated FY ROIC for the stock page (avoids parsing facts on every request).
+    roic_as_restated: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSONB, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="sec_companyfacts")
+
+    def __repr__(self) -> str:
+        return f"<SecCompanyFacts(instrument_id={self.instrument_id}, cik='{self.cik}')>"
+
+
+class SecFeaturesDaily(Base):
+    """Point-in-time statement fundamentals from SEC companyfacts (CIK universe).
+
+    Separate from features_daily so the Yahoo nightly writer stays single-writer
+    and backfills remain idempotent. Statement Tier B only — no screener_score.
+    SEC depth must not feed scored screeners until an explicit cutover rebuild.
+    """
+
+    __tablename__ = "sec_features_daily"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
+    roic: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    roic_ttm: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    roic_ttm_trend: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    gross_margin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    operating_margin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    profit_margin: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    revenue_growth: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    fcf_yield: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    debt_to_equity: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    rule_of_40: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    f_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    gross_margin_trend_4q: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    operating_margin_trend_4q: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    revenue_growth_4q_avg: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Fiscal period end used for the snapshot's annual ROIC (diagnostics).
+    period_end: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (UniqueConstraint("instrument_id", "date", name="uq_sec_features_instrument_date"),)
+
+    instrument: Mapped["Instrument"] = relationship("Instrument", back_populates="sec_features")
+
+    def __repr__(self) -> str:
+        return f"<SecFeaturesDaily(instrument_id={self.instrument_id}, date='{self.date}')>"
 
 
 class CurrencyRateDaily(Base):

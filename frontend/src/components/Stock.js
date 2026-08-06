@@ -863,6 +863,15 @@ const Stock = () => {
       .map(r => ({ ...r, date: formatDate(r.date) }));
   }, [data?.quality_history]);
 
+  // Labelled SEC as-restated FY ROIC — separate from Yahoo quality trend / holdings scalar.
+  const secRoicTrend = useMemo(() => {
+    return (data?.roic_sec_history || [])
+      .filter(r => r.roic != null)
+      .map(r => ({ period_end: formatDate(r.period_end), roic_sec: r.roic }));
+  }, [data?.roic_sec_history]);
+
+  const yahooRoicMarker = data?.roic_yahoo_marker || null;
+
   if (loading) return (
     <div className="page-fixed stock-container">
       <div className="skeleton skeleton-breadcrumb" />
@@ -1523,6 +1532,38 @@ const Stock = () => {
                 <Line type="monotone" dataKey="operating_margin" name="Op Margin" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
                 <Line type="monotone" dataKey="profit_margin" name="Net Margin" stroke="#8b5cf6" strokeWidth={1.5} dot={false} />
                 <Line type="monotone" dataKey="revenue_growth" name="Rev Growth" stroke="#f59e0b" strokeWidth={1.5} strokeDasharray="4 2" dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {secRoicTrend.length >= 3 && (
+          <div className="panel">
+            <h3>ROIC (SEC as-restated)</h3>
+            <p className="text-muted" style={{ fontSize: '0.85rem', marginTop: 0 }}>
+              Fiscal-year ROIC from SEC companyfacts. Holdings table still uses Yahoo; the marker is Yahoo&apos;s latest ROIC for comparison — not spliced into the series.
+            </p>
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={secRoicTrend}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="period_end" />
+                <YAxis tickFormatter={(v) => `${v}%`} />
+                <Tooltip
+                  content={<SharedTooltip
+                    valueFormatter={(v) => (typeof v === 'number' ? `${v.toFixed(1)}%` : v)}
+                    nameMap={{ roic_sec: 'SEC ROIC' }}
+                  />}
+                />
+                <Legend />
+                <Line type="monotone" dataKey="roic_sec" name="SEC as-restated" stroke="#0f766e" strokeWidth={2.5} dot />
+                {yahooRoicMarker && (
+                  <ReferenceLine
+                    y={yahooRoicMarker.roic}
+                    stroke="#16a34a"
+                    strokeDasharray="4 3"
+                    label={{ value: `Yahoo ${yahooRoicMarker.roic.toFixed(1)}%`, position: 'insideTopRight', fill: '#16a34a', fontSize: 12 }}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           </div>

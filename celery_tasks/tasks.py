@@ -14,6 +14,7 @@ from scripts.update_features import update_features
 from scripts.update_market_metrics import update_market_metrics
 from scripts.update_pies import update_pies
 from scripts.sync_transactions import sync_transactions
+from scripts.update_sec_features import update_sec_features
 
 
 def _run_async_db_job(coro) -> None:
@@ -133,6 +134,15 @@ def update_features_task():
     the historical series the trade-suggestion agent trains and backtests on.
     """
     _run_async_db_job(update_features())
+
+
+@app.task
+def update_sec_features_task():
+    """Refresh SEC companyfacts and month-end sec_features_daily for CIK names.
+
+    Filing-driven fetch; statement Tier B only. Does not write screener_score.
+    """
+    update_sec_features(only_holdings=False)
 
 
 @app.task

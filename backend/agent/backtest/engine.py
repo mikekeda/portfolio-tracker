@@ -18,7 +18,13 @@ import pandas as pd
 from backend.agent.constraints import apply_constraints
 from backend.agent.strategy import Strategy
 from backend.agent.types import AgentLimits, PortfolioState, TradeOrder, trade_fee_rate
-from backend.agent.backtest.data import MarketData, features_for_date, risk_columns, tradable_universe
+from backend.agent.backtest.data import (
+    MarketData,
+    features_for_date,
+    risk_columns,
+    tradable_universe,
+    use_sec_universe,
+)
 
 
 @dataclass
@@ -78,7 +84,7 @@ def run_backtest(
         if d not in rebs or i == len(dates) - 1:
             continue
 
-        universe = tradable_universe(md, d)
+        universe = tradable_universe(md, d, sec_only=use_sec_universe(md, d))
         if not universe:
             continue
         weights = {
