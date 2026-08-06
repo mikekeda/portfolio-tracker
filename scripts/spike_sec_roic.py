@@ -24,7 +24,6 @@ from backend.utils.sec_companyfacts import (
     fy_roic_series,
     pad_cik,
     rate_limited_get,
-    require_sec_user_agent,
     restatement_retention_ok,
 )
 from config import SEC_USER_AGENT, logger
@@ -66,8 +65,6 @@ def _yahoo_roic(session: Session, symbol: str) -> dict:
 
 
 def main() -> None:
-    require_sec_user_agent()
-
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     summary: dict = {
         "ua": SEC_USER_AGENT,

@@ -32,7 +32,6 @@ from backend.utils.sec_companyfacts import (
     fetch_companyfacts,
     pad_cik,
     rate_limited_get,
-    require_sec_user_agent,
     share_count_for_fscore,
 )
 from backend.utils.splits import adjust_share_count
@@ -248,8 +247,6 @@ def update_sec_features(
     only_holdings: bool = False,
 ) -> None:
     """Refresh companyfacts and backfill sec_features_daily for CIK instruments."""
-    require_sec_user_agent()
-
     end = datetime.now(TIMEZONE).date()
     start = backfill_start or date(2018, 1, 1)
 

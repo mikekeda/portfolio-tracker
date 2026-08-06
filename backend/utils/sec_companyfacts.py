@@ -17,7 +17,7 @@ import requests
 
 from backend.utils.roic import _roic_for_period, get_roic_ttm_series
 from backend.utils.splits import adjust_share_count
-from config import DEFAULT_SEC_USER_AGENT, SEC_USER_AGENT
+from config import SEC_USER_AGENT
 
 COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 
@@ -138,18 +138,6 @@ class ShareCount:
     concept: str
 
 
-def require_sec_user_agent() -> None:
-    """Refuse to hit data.sec.gov unless SEC_USER_AGENT is overridden from the placeholder.
-
-    Checks the resolved value (env / IMDS / GCP metadata via get_env_var), not the
-    transport — production often sets T212_SEC_USER_AGENT only in instance metadata.
-    """
-    if not SEC_USER_AGENT.strip() or SEC_USER_AGENT.strip() == DEFAULT_SEC_USER_AGENT:
-        raise SystemExit(
-            "Set T212_SEC_USER_AGENT to an identifiable 'AppName contact@email' before calling data.sec.gov"
-        )
-
-
 def pad_cik(cik: str) -> str:
     """Zero-pad a CIK to 10 digits."""
     return str(cik).strip().zfill(10)
@@ -157,7 +145,6 @@ def pad_cik(cik: str) -> str:
 
 def fetch_companyfacts(cik: str, *, session: requests.Session | None = None) -> dict[str, Any]:
     """GET companyfacts JSON for a CIK (User-Agent only — never Host: www.sec.gov)."""
-    require_sec_user_agent()
     url = COMPANYFACTS_URL.format(cik=pad_cik(cik))
     headers = {"User-Agent": SEC_USER_AGENT, "Accept-Encoding": "gzip, deflate"}
     http = session or requests

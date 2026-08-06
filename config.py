@@ -75,9 +75,11 @@ FRED_API_KEY = get_env_var("FRED_API_KEY")
 GEMINI_API_KEY = get_env_var("GEMINI_API_KEY")
 
 # SEC EDGAR requires User-Agent in the form "Company Name email@example.com".
-# Override in production with T212_SEC_USER_AGENT — placeholder emails risk blocks.
-DEFAULT_SEC_USER_AGENT = "PortfolioTracker/1.0 (mkeda@users.noreply.github.com)"
-SEC_USER_AGENT = get_env_var("SEC_USER_AGENT", DEFAULT_SEC_USER_AGENT)
+# Same default used by earnings / 13F; optional T212_SEC_USER_AGENT override.
+SEC_USER_AGENT = get_env_var(
+    "SEC_USER_AGENT",
+    "PortfolioTracker/1.0 (mkeda@users.noreply.github.com)",
+)
 
 # Yahoo Finance Configuration
 PRICE_FIELD = "Adj Close"  # or "close_price" if you prefer raw closes
