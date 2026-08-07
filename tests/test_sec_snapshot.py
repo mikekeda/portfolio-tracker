@@ -181,3 +181,36 @@ def test_revenue_era_prefers_asc606_only_after_valid_from():
     assert series[date(2017, 12, 31)].value == 100
     assert date(2019, 12, 31) in series
     assert series[date(2019, 12, 31)].value == 200
+
+
+def test_snapshot_refuses_a_period_older_than_the_age_bound():
+    """Financials stop tagging OperatingIncomeLoss; don't report an ancient year as current."""
+    facts = _facts_blob(
+        {
+            "Assets": [
+                {"end": "2012-12-31", "filed": "2013-02-01", "form": "10-K", "fp": "FY", "val": 1000, "accn": "1"},
+            ],
+            "LiabilitiesCurrent": [
+                {"end": "2012-12-31", "filed": "2013-02-01", "form": "10-K", "fp": "FY", "val": 200, "accn": "1"},
+            ],
+            "OperatingIncomeLoss": [
+                {
+                    "end": "2012-12-31",
+                    "start": "2012-01-01",
+                    "filed": "2013-02-01",
+                    "form": "10-K",
+                    "fp": "FY",
+                    "val": 100,
+                    "accn": "1",
+                },
+            ],
+        }
+    )
+    # Shortly after the filing the period is fresh enough to use.
+    assert compute_sec_feature_snapshot(
+        facts, as_of=date(2013, 3, 1), splits=None, adj_close=10.0, vintage="pit"
+    ) is not None
+    # Years later it must be None, not a stale ROIC presented as current.
+    assert compute_sec_feature_snapshot(
+        facts, as_of=date(2026, 7, 31), splits=None, adj_close=10.0, vintage="pit"
+    ) is None

@@ -1,7 +1,9 @@
 """Fetch SEC companyfacts and backfill sec_features_daily (CIK instruments).
 
-Filing-driven by default: refreshes companyfacts when a newer 10-K/10-Q/20-F
-appears in submissions since the last fetch. Use --force-fetch to re-pull all.
+Filing-driven by default, decided locally: refreshes when a newer EarningsReport
+row exists than the cached blob, or the blob is older than the refresh floor —
+no submissions request per instrument. Use --force-fetch to re-pull all, and
+--rebuild to recompute rows from cached facts after a logic change.
 
 Backfill writes month-end PIT snapshots (filed < as_of) for statement Tier B
 columns only — never screener_score. See CLAUDE.md / STRATEGY caveats:
@@ -19,29 +21,37 @@ import math
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select
+import requests
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.sec_companyfacts import (
+    CompanyFactsUnavailable,
     as_restated_roic_payload,
     build_statement_pair,
     compute_sec_feature_snapshot,
     concept_series,
-    fetch_companyfacts,
     pad_cik,
     rate_limited_get,
     share_count_for_fscore,
 )
 from backend.utils.splits import adjust_share_count
 from config import SEC_USER_AGENT, TIMEZONE, logger
-from models import Instrument, InstrumentYahoo, PricesDaily, SecCompanyFacts, SecFeaturesDaily
+from models import (
+    EarningsReport,
+    Instrument,
+    InstrumentYahoo,
+    PricesDaily,
+    SecCompanyFacts,
+    SecFeaturesDaily,
+)
 from scripts.update_data import get_session
 
-import requests
-
-SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+# Refresh floor for names the earnings job never files a report for, so a stale
+# blob still turns over eventually without a nightly submissions request.
+COMPANYFACTS_REFRESH_FLOOR_DAYS = 90
 
 
 def _num(value: Any) -> float | None:
@@ -124,45 +134,26 @@ def _f_score_split_safe(
     return int(result["score"]) if result and result["available"] else None
 
 
-def _should_fetch(session: Session, instrument_id: int, cik: str, force: bool) -> bool:
+def _should_fetch(session: Session, instrument_id: int, force: bool) -> bool:
+    """Whether to re-pull companyfacts, decided locally — no SEC request.
+
+    The 04:00 earnings job already records when a filing landed, so a newer
+    EarningsReport row is the refresh trigger.
+    """
     if force:
         return True
     row = session.get(SecCompanyFacts, instrument_id)
     if row is None:
         return True
-    # Filing-driven: refresh if submissions show a newer 10-K/10-Q/20-F filed after fetched_at.
-    url = SUBMISSIONS_URL.format(cik=pad_cik(cik))
-    try:
-        resp = requests.get(
-            url,
-            headers={
-                "User-Agent": SEC_USER_AGENT,
-                "Accept": "application/json",
-                "Accept-Encoding": "gzip, deflate",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("submissions check failed for CIK %s: %s — fetching anyway", cik, exc)
+
+    fetched = row.fetched_at
+    if (datetime.now(TIMEZONE).replace(tzinfo=None) - fetched).days >= COMPANYFACTS_REFRESH_FLOOR_DAYS:
         return True
 
-    recent = payload.get("filings", {}).get("recent", {})
-    forms = recent.get("form", [])
-    filed = recent.get("filingDate", [])
-    fetched = row.fetched_at.date() if isinstance(row.fetched_at, datetime) else row.fetched_at
-    for form, fdate in zip(forms, filed):
-        if form not in ("10-K", "10-Q", "10-K/A", "10-Q/A", "20-F", "20-F/A"):
-            continue
-        try:
-            d = date.fromisoformat(fdate)
-        except ValueError:
-            continue
-        if d >= fetched:
-            return True
-        break  # recent list is newest-first
-    return False
+    newest_report = session.execute(
+        select(func.max(EarningsReport.created_at)).where(EarningsReport.instrument_id == instrument_id)
+    ).scalar()
+    return newest_report is not None and newest_report > fetched
 
 
 def upsert_companyfacts(session: Session, instrument_id: int, cik: str, facts: dict[str, Any]) -> None:
@@ -231,6 +222,16 @@ def backfill_instrument(
             }
         )
 
+    # Upsert never removes: a date that stops computing (age bound, restatement)
+    # would otherwise keep serving its last value forever.
+    stale = [
+        SecFeaturesDaily.instrument_id == instrument_id,
+        SecFeaturesDaily.date.between(start, end),
+    ]
+    if rows:
+        stale.append(SecFeaturesDaily.date.notin_([r["date"] for r in rows]))
+    session.execute(delete(SecFeaturesDaily).where(*stale))
+
     if not rows:
         return 0
 
@@ -253,6 +254,7 @@ def update_sec_features(
     force_fetch: bool = False,
     backfill_start: date | None = None,
     only_holdings: bool = False,
+    rebuild: bool = False,
 ) -> None:
     """Refresh companyfacts and backfill sec_features_daily for CIK instruments."""
     end = datetime.now(TIMEZONE).date()
@@ -278,12 +280,14 @@ def update_sec_features(
 
         total_rows = 0
         fetched = 0
+        skipped_no_xbrl = 0
         logger.info("SEC companyfacts User-Agent=%r", SEC_USER_AGENT)
         for instrument_id, symbol, cik in instruments:
             if not symbol or not cik:
                 continue
             try:
-                if _should_fetch(session, instrument_id, cik, force_fetch):
+                refreshed = _should_fetch(session, instrument_id, force_fetch)
+                if refreshed:
                     facts = rate_limited_get(cik)
                     upsert_companyfacts(session, instrument_id, cik, facts)
                     fetched += 1
@@ -296,12 +300,25 @@ def update_sec_features(
                     if not row.roic_as_restated:
                         row.roic_as_restated = as_restated_roic_payload(facts)
 
+                # Unchanged facts produce identical rows; recomputing all ~57k of
+                # them nightly is pure CPU. --rebuild forces it after a logic change.
+                if not facts or not (refreshed or rebuild):
+                    session.commit()
+                    continue
+
                 yh = session.get(InstrumentYahoo, instrument_id)
                 splits = (yh.splits if yh else None) or {}
                 n = backfill_instrument(session, instrument_id, symbol, facts, splits, start, end)
                 total_rows += n
                 session.commit()
                 logger.info("%s: %d sec_features rows", symbol, n)
+            except CompanyFactsUnavailable as exc:
+                # Valid CIK, no XBRL. Cache an empty blob so it is not retried nightly.
+                upsert_companyfacts(session, instrument_id, cik, {})
+                session.commit()
+                skipped_no_xbrl += 1
+                logger.info("%s: %s — cached as no-XBRL", symbol, exc)
+                continue
             except requests.HTTPError as exc:
                 session.rollback()
                 # Keep hammering a banned IP extends the ban — stop the run.
@@ -322,11 +339,12 @@ def update_sec_features(
                 continue
 
         logger.info(
-            "SEC features: fetched %d companyfacts, upserted %d feature rows for %d instruments "
-            "(backfill %s→%s). Caveats: backfilled composite ~68%% Tier A; ROIC-only quality gate; "
-            "~23-name quarterly universe; thesis sell flags forced False on SEC rows; "
+            "SEC features: fetched %d companyfacts (%d no-XBRL), upserted %d feature rows for %d "
+            "instruments (backfill %s→%s). Caveats: backfilled composite ~68%% Tier A; ROIC-only "
+            "quality gate; ~23-name quarterly universe; thesis sell flags forced False on SEC rows; "
             "fcf_yield uses adj_close × split-adjusted shares.",
             fetched,
+            skipped_no_xbrl,
             total_rows,
             len(instruments),
             start,
@@ -339,11 +357,15 @@ def main() -> None:
     parser.add_argument("--force-fetch", action="store_true")
     parser.add_argument("--backfill-start", type=date.fromisoformat, default=None)
     parser.add_argument("--only-holdings", action="store_true")
+    parser.add_argument(
+        "--rebuild", action="store_true", help="Recompute rows from cached facts (after a logic change)"
+    )
     args = parser.parse_args()
     update_sec_features(
         force_fetch=args.force_fetch,
         backfill_start=args.backfill_start,
         only_holdings=args.only_holdings,
+        rebuild=args.rebuild,
     )
 
 

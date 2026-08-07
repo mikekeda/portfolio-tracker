@@ -35,6 +35,9 @@ Q_FORMS = frozenset({"10-Q", "10-Q/A"})
 # Instant (balance sheet) vs duration (income / cash flow) heuristics.
 _ANNUAL_DAYS = (300, 400)
 _QUARTER_DAYS = (70, 100)
+# Banks/insurers/REITs never tag OperatingIncomeLoss, so an unbounded search for a
+# computable year reports a decade-old ROIC as current. Give up past this age.
+MAX_PERIOD_AGE_DAYS = 460
 
 Vintage = Literal["pit", "as_restated"]
 
@@ -119,6 +122,10 @@ TAG_MAP: dict[str, list[TagChoice]] = {
 }
 
 
+class CompanyFactsUnavailable(Exception):
+    """SEC has no XBRL companyfacts for this CIK — a valid filer, just no facts."""
+
+
 @dataclass(frozen=True)
 class FactPoint:
     """One XBRL fact observation."""
@@ -154,11 +161,14 @@ def fetch_companyfacts(cik: str, *, session: requests.Session | None = None) -> 
     url = COMPANYFACTS_URL.format(cik=pad_cik(cik))
     http = session or requests
     response = http.get(url, headers=_SEC_HEADERS, timeout=60)
-    if response.status_code == 403:
+    if response.status_code == 404:
+        raise CompanyFactsUnavailable(f"no XBRL companyfacts for CIK{pad_cik(cik)}")
+    if response.status_code in (403, 429):
+        retry_after = response.headers.get("Retry-After")
         raise requests.HTTPError(
-            f"403 from data.sec.gov for CIK{pad_cik(cik)} — SEC blocked this client "
-            f"(User-Agent={SEC_USER_AGENT!r}). Use a reachable contact email in "
-            f"T212_SEC_USER_AGENT, or wait ~10m if the IP was rate-banned.",
+            f"{response.status_code} from data.sec.gov for CIK{pad_cik(cik)} — rate-limited or blocked"
+            f"{f' (Retry-After: {retry_after})' if retry_after else ''}. Slow the run down and wait; "
+            f"if it persists check User-Agent={SEC_USER_AGENT!r} is an identifiable contact.",
             response=response,
         )
     response.raise_for_status()
@@ -612,19 +622,25 @@ def compute_sec_feature_snapshot(
     if not balance_sheet or not income_stmt:
         return None
 
-    # Latest ROIC
+    # Latest ROIC, searching newest-first but never past MAX_PERIOD_AGE_DAYS.
     roic = None
+    latest_end: date | None = None
+    oldest_usable = as_of - timedelta(days=MAX_PERIOD_AGE_DAYS)
+    is_dates = sorted(income_stmt.keys(), reverse=True)
     for bs_date in sorted(balance_sheet.keys(), reverse=True):
-        is_date = next((d for d in sorted(income_stmt.keys(), reverse=True) if d <= bs_date), None)
+        end = date.fromisoformat(bs_date)
+        if end < oldest_usable:
+            break
+        is_date = next((d for d in is_dates if d <= bs_date), None)
         if is_date is None:
             continue
         roic = _roic_for_period(balance_sheet[bs_date], income_stmt[is_date])
         if roic is not None:
-            latest_end = date.fromisoformat(bs_date)
+            latest_end = end
             latest_is = income_stmt[is_date]
             latest_bs = balance_sheet[bs_date]
             break
-    else:
+    if latest_end is None:
         return None
 
     # Quarterly TTM ROIC / trends — filter filed < as_of
