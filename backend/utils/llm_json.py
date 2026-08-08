@@ -18,3 +18,19 @@ def undo_double_escapes(obj: Any) -> Any:
     if isinstance(obj, list):
         return [undo_double_escapes(v) for v in obj]
     return obj
+
+
+def strip_nuls(obj: Any) -> Any:
+    """Recursively remove NUL (0x00) from string values.
+
+    Gemini sporadically emits a NUL escape mid-string. Postgres rejects NUL in
+    both TEXT and JSONB, so an otherwise valid payload cannot be stored; the
+    byte carries no meaning, and dropping it preserves the rest.
+    """
+    if isinstance(obj, str):
+        return obj.replace("\x00", "")
+    if isinstance(obj, dict):
+        return {k: strip_nuls(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [strip_nuls(v) for v in obj]
+    return obj

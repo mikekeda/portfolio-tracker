@@ -60,6 +60,8 @@ async def run_position_reviews() -> None:
         skipped_invalid_thesis = 0
         skipped_no_thesis = 0
         saved = 0
+        failed_llm = 0
+        failed_error = 0
 
         # Phase 1 — read everything out of ORM state up front. Phase 2 must not
         # touch ORM instances: a rollback there expires them, and lazy-reloading
@@ -107,6 +109,7 @@ async def run_position_reviews() -> None:
                 payload = generate_assessment(ctx, ticker=sym)
                 if payload is None:
                     logger.warning("[skip] %s — Gemini call failed", sym)
+                    failed_llm += 1
                     processed += 1
                     continue
 
@@ -132,17 +135,21 @@ async def run_position_reviews() -> None:
             except Exception:
                 logger.exception("Position-review failed for %s", sym)
                 await session.rollback()
+                failed_error += 1
 
             processed += 1
 
         logger.info(
             "Position-review complete: %d processed | %d saved | %d skipped (unchanged) | "
-            "%d skipped (invalid thesis) | %d skipped (no thesis)",
+            "%d skipped (invalid thesis) | %d skipped (no thesis) | %d failed (llm) | "
+            "%d failed (error)",
             processed,
             saved,
             skipped_unchanged,
             skipped_invalid_thesis,
             skipped_no_thesis,
+            failed_llm,
+            failed_error,
         )
 
 

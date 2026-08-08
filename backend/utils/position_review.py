@@ -13,12 +13,12 @@ import math
 from datetime import date, datetime
 from typing import Any, Literal
 
-from dateutil.relativedelta import relativedelta
 from google import genai
 from pydantic import BaseModel, Field
 
 from backend.schemas.instrument_thesis import InstrumentThesisSchema
-from backend.utils.llm_json import undo_double_escapes
+from backend.utils.llm_json import strip_nuls, undo_double_escapes
+from backend.utils.pe_history import MIN_PE_SAMPLE, harmonic_mean_pe, pe_series
 from config import GEMINI_API_KEY, TIMEZONE, logger
 from models import EarningsReport, Instrument, MarketMetricsDaily
 
@@ -254,34 +254,28 @@ def _get_genai_client() -> genai.Client:
     return _genai_client
 
 
-def _pe_history_summary(pes: dict | None) -> dict[str, Any]:
-    out: dict[str, Any] = {"min_5y": None, "avg_5y": None, "max_5y": None, "samples": 0}
-    if not pes:
-        return out
-    today = datetime.now(TIMEZONE).date()
-    cutoff = today + relativedelta(years=-5)
-    values: list[float] = []
-    for k, v in pes.items():
-        try:
-            d = date.fromisoformat(k[:10])
-        except (ValueError, TypeError):
-            continue
-        # d > today: forward estimate rows must not enter the 5y history stats
-        if d < cutoff or d > today:
-            continue
-        try:
-            pe = float(v.get("pe_ratio")) if isinstance(v, dict) else float(v)
-        except (TypeError, ValueError):
-            continue
-        if pe > 0 and math.isfinite(pe):
-            values.append(pe)
-    if not values:
-        return out
-    out["min_5y"] = round(min(values), 2)
-    out["max_5y"] = round(max(values), 2)
-    out["avg_5y"] = round(sum(values) / len(values), 2)
-    out["samples"] = len(values)
-    return out
+def _pe_history_summary(pes: dict | None, *, comparable: bool) -> dict[str, Any]:
+    """Trailing 5y P/E stats, empty unless the basis is comparable to Yahoo's.
+
+    `comparable` is the caller's `pe_basis_matches`. When it is False the
+    scraped GAAP series and Yahoo `trailingPE` measure different things, and
+    the prompt's mandated current-vs-history comparison would read a basis gap
+    as a re-rating — so the whole history is withheld rather than qualified.
+    """
+    empty: dict[str, Any] = {"min_5y": None, "avg_5y": None, "max_5y": None, "samples": 0}
+    if not pes or not comparable:
+        return empty
+
+    values = [pe for _, pe in pe_series(pes, datetime.now(TIMEZONE).date(), years=5)]
+    if len(values) < MIN_PE_SAMPLE:
+        return empty
+
+    return {
+        "min_5y": round(min(values), 2),
+        "avg_5y": round(harmonic_mean_pe(values), 2),
+        "max_5y": round(max(values), 2),
+        "samples": len(values),
+    }
 
 
 def _summarize_earnings(reports: list[EarningsReport]) -> list[dict[str, Any]]:
@@ -332,7 +326,10 @@ def build_context(
 ) -> dict[str, Any]:
     """Build the canonical input dict the LLM sees for one held instrument."""
     info = (instrument.yahoo.info or {}) if instrument.yahoo else {}
-    pe_history = _pe_history_summary((instrument.yahoo.pes or {}) if instrument.yahoo else None)
+    pe_history = _pe_history_summary(
+        (instrument.yahoo.pes or {}) if instrument.yahoo else None,
+        comparable=bool(holding.get("pe_basis_matches")),
+    )
 
     sorted_earnings = sorted(
         instrument.earnings_reports or [],
@@ -383,7 +380,7 @@ def build_context(
             "forward_pe_ratio": holding.get("forward_pe_ratio"),
             "peg_ratio": holding.get("peg_ratio"),
             "ps_ratio": holding.get("ps_ratio"),
-            "pe_5y_avg": holding.get("avg_pe"),
+            "pe_5y_avg": pe_history["avg_5y"],
             "pe_5y_min": pe_history["min_5y"],
             "pe_5y_max": pe_history["max_5y"],
             "pe_5y_samples": pe_history["samples"],
@@ -437,13 +434,7 @@ def _round_floats(obj: Any, decimals: int = 2) -> Any:
 
 # Bump to force portfolio-wide review regeneration on the next run (busts every
 # stored inputs_hash) after schema or prompt changes that alter the payload.
-# v3: valuation-basis rule (no fwd-vs-trailing comparisons) + rebut-the-
-#     strongest-opposing-signal requirement for add/trim/exit.
-# v4: fundamentals exempted from the contrarian reweight (28 of 28 `eroding`
-#     theses had returned `hold` — the fear discount was suppressing every
-#     trim); `add` blocked above the band and in capped sleeves; tags added;
-#     falsifiable opportunity-cost claim required for `add`.
-_CONTEXT_VERSION = 4
+_CONTEXT_VERSION = 5
 
 
 def _slow_inputs(ctx: dict) -> dict:
@@ -524,15 +515,24 @@ def generate_assessment(ctx: dict, *, ticker: str) -> dict[str, Any] | None:
             ).text
 
         try:
-            result_dict = json.loads(_generate(TEMPERATURE))
+            raw = _generate(TEMPERATURE)
+            result_dict = json.loads(raw)
         except json.JSONDecodeError as e:
             # Structured output occasionally comes back malformed; one regeneration
             # usually fixes it. A second failure falls to the outer handler and the
             # nightly hash gate retries the instrument tomorrow.
             logger.warning("%s: invalid JSON from Gemini (%s) — retrying once", ticker, e)
-            result_dict = json.loads(_generate(RETRY_TEMPERATURE))
+            raw = _generate(RETRY_TEMPERATURE)
+            result_dict = json.loads(raw)
 
-        validated = PositionAssessmentSchema.model_validate(undo_double_escapes(result_dict))
+        # A NUL blocks the insert, but it also marks a degenerate sample — repair
+        # it to save the row, and log so the rate stays visible.
+        if "\\u0000" in raw:
+            logger.warning("%s: stripped NUL escape from Gemini output", ticker)
+
+        validated = PositionAssessmentSchema.model_validate(
+            strip_nuls(undo_double_escapes(result_dict))
+        )
         return validated.model_dump()
 
     except Exception as e:
