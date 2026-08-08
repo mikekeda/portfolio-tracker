@@ -12,6 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
+import { ytdDays } from '../utils/dates';
 import SharedTooltip from './SharedTooltip';
 
 // Resolve benchmark symbols to friendly names (mirrors PortfolioChart).
@@ -30,7 +31,7 @@ const UnderwaterChart = ({ timeRange }) => {
     try {
       setLoading(true);
       setError(null);
-      const days = timeRange === 'all' ? null : parseInt(timeRange);
+      const days = timeRange === 'all' ? null : timeRange === 'ytd' ? ytdDays() : parseInt(timeRange);
       const resp = await portfolioAPI.getUnderwater(days);
 
       const names = (resp.benchmark || []).map((s) => BENCH_NAME_MAP[s] || s);

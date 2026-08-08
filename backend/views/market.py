@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import aiohttp
@@ -24,13 +24,12 @@ async def get_movers(
     session: AsyncSession = Depends(get_db_session),
 ) -> list[dict[str, Any]]:
     """Get all portfolio movers (holdings with price changes) for a given period."""
-    valid_periods = {"1d": 1, "1w": 7, "1m": 30, "90d": 90}
-    if period not in valid_periods:
-        raise HTTPException(status_code=400, detail="Invalid period. Use: 1d, 1w, 1m, 90d")
+    period_days = {"1d": 1, "1w": 7, "1m": 30, "90d": 90}
+    if period != "ytd" and period not in period_days:
+        raise HTTPException(status_code=400, detail="Invalid period. Use: 1d, 1w, 1m, 90d, ytd")
 
-    days = valid_periods[period]
     today = datetime.now(TIMEZONE).date()
-    start_date = today - timedelta(days=days)
+    start_date = date(today.year, 1, 1) if period == "ytd" else today - timedelta(days=period_days[period])
 
     currency_rates = await get_rates(session)
 

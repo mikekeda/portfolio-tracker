@@ -12,6 +12,7 @@ import {
   YAxis,
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
+import { ytdDays } from '../utils/dates';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import TopMovers from './TopMovers';
 import PortfolioChart from './PortfolioChart';
@@ -662,6 +663,7 @@ const PORTFOLIO_INDICATOR_CONFIGS = {
 const RANGE_OPTIONS = [
   { label: '3M', days: 90 },
   { label: '6M', days: 180 },
+  { label: 'YTD', days: 'ytd' },
   { label: '1Y', days: 365 },
   { label: 'All', days: 0 },
 ];
@@ -741,7 +743,7 @@ const MacroChartModal = ({ config, currentValue, fetchHistory, clusterKey, onClo
   useEffect(() => {
     let isCurrent = true;
     setLoadingChart(true);
-    fetchRef.current(range)
+    fetchRef.current(range === 'ytd' ? ytdDays() : range)
       .then(data  => { if (isCurrent) setHistory(data); })
       .catch(err  => { if (isCurrent) console.error('Failed to load indicator history', err); })
       .finally(() => { if (isCurrent) setLoadingChart(false); });
@@ -861,6 +863,10 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedPeriod, setSelectedPeriod] = useState('1d');
+  // Movers drive both the Top Movers table and the allocation treemap; fetched
+  // here so the two panels share one request per period.
+  const [movers, setMovers] = useState(null);
+  const [moversError, setMoversError] = useState(null);
   // { config, currentValue, fetchHistory, clusterKey } | null
   const [macroModal, setMacroModal] = useState(null);
   const openMacroModal = useCallback((config, currentValue, fetchHistory, clusterKey = null) => {
@@ -886,6 +892,24 @@ const Dashboard = () => {
 
     fetchData();
   }, []);
+
+  useEffect(() => {
+    let isCurrent = true;
+    setMovers(null);
+    setMoversError(null);
+    portfolioAPI.getTopMovers(selectedPeriod)
+      .then(res => {
+        if (!isCurrent) return;
+        if (!Array.isArray(res)) throw new Error('Invalid response format');
+        setMovers(res);
+      })
+      .catch(err => {
+        if (!isCurrent) return;
+        console.error('Error fetching top movers:', err);
+        setMoversError('Failed to fetch top movers data');
+      });
+    return () => { isCurrent = false; };
+  }, [selectedPeriod]);
 
   if (loading) {
     return (
@@ -1309,12 +1333,17 @@ const Dashboard = () => {
 
       {/* Portfolio Analytics Charts */}
       <div className="portfolio-charts-section">
-        <PortfolioChart selectedPeriod={selectedPeriod} />
+        <PortfolioChart selectedPeriod={selectedPeriod} movers={movers} moversError={moversError} />
       </div>
 
       {/* Top Movers Section */}
       <div className="top-movers-section">
-        <TopMovers selectedPeriod={selectedPeriod} setSelectedPeriod={setSelectedPeriod} />
+        <TopMovers
+          selectedPeriod={selectedPeriod}
+          setSelectedPeriod={setSelectedPeriod}
+          movers={movers}
+          error={moversError}
+        />
       </div>
 
       {/* Indicator History Modal */}

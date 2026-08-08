@@ -10,6 +10,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -17,6 +18,7 @@ import {
   YAxis
 } from 'recharts';
 import { renderCountryWithFlag } from '../utils/countryUtils';
+import { ytdDays } from '../utils/dates';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import { getPbThresholds, getPsThresholds } from '../utils/valuationUtils';
 import { computeComposite, compositeTooltip, screenerRatio } from '../utils/compositeScore';
@@ -35,6 +37,14 @@ const CHART_DAYS_OPTIONS = [
   { value: 1825, label: '5Y' },
   { value: 3652, label: '10Y' }
 ];
+
+// Quarterly and monthly series need a year of history to read as a trend, so
+// shorter chart ranges floor here rather than rendering one or two bars.
+const EVENT_SERIES_MIN_DAYS = 365;
+
+// Recharts mounts a component per data point, so a 10Y daily series costs
+// ~2700 of them per render. Past this count the series is thinned.
+const MAX_CHART_POINTS = 800;
 
 const PRICE_METRICS = [
   { value: 'price', label: 'Price' },
@@ -226,42 +236,19 @@ PriceTooltip.defaultProps = {
   benchSymbols: [],
 };
 
-const OrderDot = ({ cx, cy, payload }) => {
-  if (payload?.order) {
-    return (
-      <circle
-        cx={cx}
-        cy={cy}
-        r={payload.order.radius}
-        fill={payload.order.color}
-        fillOpacity={payload.order.opacity}
-        stroke="#fff"
-        strokeWidth={2}
-        strokeOpacity={payload.order.opacity}
-      />
-    );
-  }
-  return null;
+// Chart panel subhead: the span actually plotted, plus how the range was applied.
+// Renders nothing without a span — a lone note would describe an empty chart.
+const PanelSpan = ({ span, note }) =>
+  span ? <p className="panel-span">{span}{note && ` · ${note}`}</p> : null;
+
+PanelSpan.propTypes = {
+  span: PropTypes.string,
+  note: PropTypes.string,
 };
 
-OrderDot.propTypes = {
-  cx: PropTypes.number,
-  cy: PropTypes.number,
-  payload: PropTypes.shape({
-    order: PropTypes.shape({
-      radius: PropTypes.number,
-      color: PropTypes.string,
-      opacity: PropTypes.number,
-      action: PropTypes.string,
-      total: PropTypes.number,
-    }),
-  }),
-};
-
-OrderDot.defaultProps = {
-  cx: 0,
-  cy: 0,
-  payload: null,
+PanelSpan.defaultProps = {
+  span: null,
+  note: null,
 };
 
 // Transaction categories for color coding
@@ -336,6 +323,46 @@ const getRangeCutoff = (chartDays) => {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - Number(chartDays));
   return cutoff;
+};
+
+// Covered span of a chronologically sorted series, for the panel subheads
+const formatSpan = (rows) => {
+  if (rows.length === 0) return null;
+  const fmt = (r) => new Date(r.originalDate ?? r.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  return `${fmt(rows[0])} – ${fmt(rows[rows.length - 1])}`;
+};
+
+/**
+ * Thin a dense daily series to roughly MAX_CHART_POINTS for rendering.
+ *
+ * Keeps each bucket's high and low so the envelope survives, plus every point
+ * carrying an order marker. Series at or under the cap are returned untouched.
+ */
+const thinSeries = (rows) => {
+  if (rows.length <= MAX_CHART_POINTS) return rows;
+  const stride = Math.ceil(rows.length / Math.floor(MAX_CHART_POINTS / 2));
+  const keep = new Set([0, rows.length - 1]);
+  for (let i = 0; i < rows.length; i += stride) {
+    let lo = i;
+    let hi = i;
+    for (let j = i; j < Math.min(i + stride, rows.length); j++) {
+      if (rows[j].value < rows[lo].value) lo = j;
+      if (rows[j].value > rows[hi].value) hi = j;
+    }
+    keep.add(lo);
+    keep.add(hi);
+  }
+  rows.forEach((r, i) => {
+    if (r.order) keep.add(i);
+  });
+  return [...keep].sort((a, b) => a - b).map((i) => rows[i]);
+};
+
+// An empty chart is worse than an out-of-range one, so a window that predates
+// every point falls back to the full series.
+const withinCutoff = (rows, cutoff) => {
+  const kept = rows.filter((r) => new Date(r.originalDate ?? r.date) >= cutoff);
+  return kept.length > 0 ? kept : rows;
 };
 
 
@@ -500,6 +527,8 @@ const Stock = () => {
   const [priceMetric, setPriceMetric] = useState(() =>
     localStorage.getItem('stock_price_metric') || 'price'
   );
+  const chartWindowDays = chartDays === 'ytd' ? ytdDays() : Number(chartDays);
+  const eventRangeFloored = chartWindowDays < EVENT_SERIES_MIN_DAYS;
 
   // Event handlers
   const handlePriceMetricChange = (value) => {
@@ -537,21 +566,13 @@ const Stock = () => {
     setReportHtml(null);
   };
 
-  // Helper function to calculate YTD days
-  const calculateYTDDays = () => {
-    const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const diffTime = Math.abs(now - startOfYear);
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  };
-
   // Full payload on symbol change. Fetch 300 extra calendar days (~207 trading
   // days) so SMA 200 is warmed up from the very first displayed data point.
   useEffect(() => {
     const load = async () => {
       try {
         setLoading(true);
-        const daysParam = chartDays === 'ytd' ? calculateYTDDays() : chartDays;
+        const daysParam = chartDays === 'ytd' ? ytdDays() : chartDays;
         const res = await portfolioAPI.getInstrument(symbol, Number(daysParam) + 300);
         setData(res);
         setError(null);
@@ -573,7 +594,7 @@ const Stock = () => {
     const load = async () => {
       try {
         setChartLoading(true);
-        const daysParam = chartDays === 'ytd' ? calculateYTDDays() : chartDays;
+        const daysParam = chartDays === 'ytd' ? ytdDays() : chartDays;
         const res = await portfolioAPI.getInstrumentPrices(symbol, Number(daysParam) + 300);
         setData(prev => (prev ? { ...prev, ...res } : prev));
       } catch (e) {
@@ -643,6 +664,20 @@ const Stock = () => {
       .sort((a, b) => a.date.localeCompare(b.date));
   }, [data]);
 
+  // Yahoo has the announcement date as soon as a company reports; our own report
+  // row only lands once the SEC filing is ingested, days later.
+  const pendingEarningsDate = useMemo(() => {
+    const today = new Date().toLocaleDateString('en-CA');
+    const announced = Object.keys(data?.earnings || {})
+      .map((k) => k.slice(0, 10))
+      .filter((d) => d <= today)
+      .sort();
+    const latest = announced[announced.length - 1];
+    if (!latest) return null;
+    const covered = (data?.earnings_reports || []).some((r) => (r.announcement_date || r.date) >= latest);
+    return covered ? null : latest;
+  }, [data]);
+
   const cashflowSeries = useMemo(() => {
     const cf = data?.cashflow || {};
     return Object.entries(cf)
@@ -659,6 +694,7 @@ const Stock = () => {
     const recs = data?.recommendations || {};
     return Object.entries(recs)
       .map(([date, v]) => ({
+        originalDate: date,
         date: formatDate(date),
         strongBuy: v.strongBuy || 0,
         buy: v.buy || 0,
@@ -667,7 +703,7 @@ const Stock = () => {
         strongSell: v.strongSell || 0,
         total: (v.strongBuy || 0) + (v.buy || 0) + (v.hold || 0) + (v.sell || 0) + (v.strongSell || 0)
       }))
-      .sort((a, b) => new Date(a.date) - new Date(b.date));
+      .sort((a, b) => a.originalDate.localeCompare(b.originalDate));
   }, [data]);
 
   const newsArticles = useMemo(() => {
@@ -767,7 +803,7 @@ const Stock = () => {
         : raw;
     };
 
-    return priceData.map(pricePoint => {
+    return thinSeries(priceData.map(pricePoint => {
       const point = { ...pricePoint };
 
       const order = ordersByDate.get(pricePoint.originalDate);
@@ -796,8 +832,15 @@ const Stock = () => {
       }
 
       return point;
-    });
+    }));
   }, [priceData, data?.orders, data?.prices, priceMetric, benchSeries]);
+
+  // The PE, EPS and analyst series ship whole in the payload, so the range is a
+  // client-side slice — only the price chart refetches.
+  const eventCutoff = useMemo(
+    () => getRangeCutoff(eventRangeFloored ? EVENT_SERIES_MIN_DAYS : chartDays),
+    [eventRangeFloored, chartDays]
+  );
 
   // Process PE history data from the new API response. Forward estimates come
   // separately and render as a dashed continuation; the last historical point
@@ -805,13 +848,18 @@ const Stock = () => {
   const peData = useMemo(() => {
     const peHistory = data?.pe_history || {};
     const peEstimates = data?.pe_estimates || {};
-    const rows = Object.entries(peHistory)
-      .map(([date, pe]) => ({
-        originalDate: date,
-        date: formatDate(date),
-        pe,
-      }))
-      .sort((a, b) => new Date(a.originalDate) - new Date(b.originalDate));
+    // The payload carries 300 extra days for SMA warm-up; PE is quarterly, so
+    // it follows the floored window rather than the raw range.
+    const rows = withinCutoff(
+      Object.entries(peHistory)
+        .map(([date, pe]) => ({
+          originalDate: date,
+          date: formatDate(date),
+          pe,
+        }))
+        .sort((a, b) => new Date(a.originalDate) - new Date(b.originalDate)),
+      eventCutoff
+    );
     const estRows = Object.entries(peEstimates)
       .map(([date, pe]) => ({
         originalDate: date,
@@ -824,7 +872,17 @@ const Stock = () => {
       rows[rows.length - 1] = { ...rows[rows.length - 1], peEstimate: rows[rows.length - 1].pe };
     }
     return rows.concat(estRows);
-  }, [data?.pe_history, data?.pe_estimates]);
+  }, [data?.pe_history, data?.pe_estimates, eventCutoff]);
+
+  const orderMarkers = useMemo(() => chartData.filter(d => d.order), [chartData]);
+  const epsInRange = useMemo(() => withinCutoff(epsSeries, eventCutoff), [epsSeries, eventCutoff]);
+  const recsInRange = useMemo(() => withinCutoff(recommendationsSeries, eventCutoff), [recommendationsSeries, eventCutoff]);
+
+  const priceSpan = formatSpan(priceData);
+  const peSpan = formatSpan(peData);
+  const epsSpan = formatSpan(epsInRange);
+  const cashflowSpan = formatSpan(cashflowSeries);
+  const recsSpan = formatSpan(recsInRange);
 
   // Calculate smart Y-axis domain for PE chart
   const peDomain = useMemo(() => {
@@ -1456,6 +1514,32 @@ const Stock = () => {
             {s.label}
           </a>
         ))}
+        <div
+          className="stock-nav-range"
+          style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}
+        >
+          <div className="stock-segmented">
+            {CHART_DAYS_OPTIONS.map(option => (
+              <button
+                key={option.value}
+                className={`stock-seg-btn${chartDays === option.value ? ' active' : ''}`}
+                onClick={() => handleChartDaysChange(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <select
+            className="stock-range-select"
+            value={chartDays}
+            onChange={(e) => handleChartDaysChange(e.target.value === 'ytd' ? 'ytd' : Number(e.target.value))}
+            aria-label="Chart range"
+          >
+            {CHART_DAYS_OPTIONS.map(option => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
       </nav>
 
       <div className="stock-panels">
@@ -1782,6 +1866,7 @@ const Stock = () => {
 
         <div className="panel" id="sec-price">
           <h3>Price {priceMetric === 'price_pct_change' ? '(%)' : ''}</h3>
+          <PanelSpan span={priceSpan} />
           <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
             <div className="stock-segmented">
               {PRICE_METRICS.map(metric => (
@@ -1791,17 +1876,6 @@ const Stock = () => {
                   onClick={() => handlePriceMetricChange(metric.value)}
                 >
                   {metric.label}
-                </button>
-              ))}
-            </div>
-            <div className="stock-segmented">
-              {CHART_DAYS_OPTIONS.map(option => (
-                <button
-                  key={option.value}
-                  className={`stock-seg-btn${chartDays === option.value ? ' active' : ''}`}
-                  onClick={() => handleChartDaysChange(option.value)}
-                >
-                  {option.label}
                 </button>
               ))}
             </div>
@@ -1854,9 +1928,22 @@ const Stock = () => {
                   name={priceMetric === 'price_pct_change' ? 'Price %' : 'Price'}
                   stroke="#6f42c1"
                   strokeWidth={2}
-                  dot={<OrderDot />}
+                  dot={false}
                   activeDot={false}
                 />
+                {orderMarkers.map(d => (
+                  <ReferenceDot
+                    key={d.originalDate}
+                    x={d.date}
+                    y={d.value}
+                    r={d.order.radius}
+                    fill={d.order.color}
+                    fillOpacity={d.order.opacity}
+                    stroke="#fff"
+                    strokeWidth={2}
+                    strokeOpacity={d.order.opacity}
+                  />
+                ))}
                 {/* Add invisible lines for order legends */}
                 {['BUY', 'SELL', 'DIVIDEND', 'CASH', 'ADMIN'].map(category => {
                   const hasTransactions = chartData.some(d => d.order?.category === category);
@@ -1919,7 +2006,7 @@ const Stock = () => {
                     connectNulls={false}
                   />
                 ))}
-                {Number(chartDays) >= 30 && (
+                {chartWindowDays >= 30 && (
                   <Line
                     type="monotone"
                     dataKey="sma50"
@@ -1932,7 +2019,7 @@ const Stock = () => {
                     connectNulls={false}
                   />
                 )}
-                {Number(chartDays) >= 30 && (
+                {chartWindowDays >= 30 && (
                   <Line
                     type="monotone"
                     dataKey="sma200"
@@ -1967,20 +2054,7 @@ const Stock = () => {
 
         <div className="panel" id="sec-pe">
           <h3>PE Ratio</h3>
-          <div className="inline-controls" style={{ opacity: chartLoading ? 0.6 : 1, pointerEvents: chartLoading ? 'none' : 'auto' }}>
-            <div></div>
-            <div className="stock-segmented">
-              {CHART_DAYS_OPTIONS.map(option => (
-                <button
-                  key={option.value}
-                  className={`stock-seg-btn${chartDays === option.value ? ' active' : ''}`}
-                  onClick={() => handleChartDaysChange(option.value)}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <PanelSpan span={peSpan} note={eventRangeFloored ? '1Y minimum for quarterly data' : null} />
           {peData.length > 0 ? (
             <div style={{ position: 'relative' }}>
               {chartLoading && (
@@ -2101,9 +2175,10 @@ const Stock = () => {
 
         <div className="panel" id="sec-eps">
           <h3>EPS: Estimate vs Reported (with Surprise%)</h3>
-          {epsSeries.length > 0 ? (
+          <PanelSpan span={epsSpan} note={eventRangeFloored ? '1Y minimum for quarterly data' : null} />
+          {epsInRange.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={epsSeries}>
+              <BarChart data={epsInRange}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis yAxisId="left" />
@@ -2142,6 +2217,7 @@ const Stock = () => {
 
         <div className="panel" id="sec-cashflow">
           <h3>Cash Flow (OCF, CapEx, FCF)</h3>
+          <PanelSpan span={cashflowSpan} note="all available (annual)" />
           {cashflowSeries.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
               <BarChart data={cashflowSeries}>
@@ -2173,9 +2249,10 @@ const Stock = () => {
 
         <div className="panel" id="sec-analysts">
           <h3>Analyst Recommendations</h3>
-          {recommendationsSeries.length > 0 ? (
+          <PanelSpan span={recsSpan} note={eventRangeFloored ? '1Y minimum for monthly data' : null} />
+          {recsInRange.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={recommendationsSeries}>
+              <BarChart data={recsInRange}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="date" />
                 <YAxis tickFormatter={(v) => `${v}`} />
@@ -2271,6 +2348,9 @@ const Stock = () => {
           const announcedFmt = report.announcement_date
             ? new Date(report.announcement_date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
             : null;
+          const pendingFmt = pendingEarningsDate
+            ? new Date(pendingEarningsDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+            : null;
 
           return (
             <div className="panel" id="sec-reports">
@@ -2303,8 +2383,17 @@ const Stock = () => {
                 )}
               </div>
 
-              {data.earnings_reports.length > 1 && (
+              {(data.earnings_reports.length > 1 || pendingEarningsDate) && (
                 <div className="earnings-tabs">
+                  {pendingEarningsDate && (
+                    <button
+                      className="earnings-tab earnings-tab-pending"
+                      disabled
+                      title={`Reported ${pendingFmt} · report not available yet`}
+                    >
+                      {new Date(pendingEarningsDate + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                    </button>
+                  )}
                   {data.earnings_reports.map((r, idx) => {
                     // Label by period-end month — calendar-quarter labels are wrong
                     // for companies with off-calendar fiscal years (e.g. FY ending Oct)
@@ -2322,6 +2411,12 @@ const Stock = () => {
                     );
                   })}
                 </div>
+              )}
+
+              {pendingEarningsDate && (
+                <p className="earnings-pending-note">
+                  Reported {pendingFmt} — summary pending, waiting on the filing.
+                </p>
               )}
 
               {metricCards.length > 0 && (
@@ -2562,7 +2657,7 @@ const Stock = () => {
                   >
                     {thumbnailUrl ? (
                       <div className="news-thumbnail">
-                        <img src={thumbnailUrl} alt={content?.title} />
+                        <img src={thumbnailUrl} alt={content?.title} loading="lazy" decoding="async" />
                       </div>
                     ) : (
                       <div className="news-thumbnail news-thumbnail-placeholder">

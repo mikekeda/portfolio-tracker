@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import SharedTooltip from './SharedTooltip';
+import { ytdDays } from '../utils/dates';
 import './Chart.css';
 
 // Days selector configuration
@@ -17,14 +18,6 @@ const DAYS_OPTIONS = [
   { label: '5Y', value: 1825 },
   { label: '10Y', value: 3650 },
 ];
-
-// Helper function to calculate YTD days
-const calculateYTDDays = () => {
-  const now = new Date();
-  const startOfYear = new Date(now.getFullYear(), 0, 1);
-  const diffTime = Math.abs(now - startOfYear);
-  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-};
 
 const Chart = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -152,7 +145,7 @@ const Chart = () => {
         setLoading(true);
         setError(null);
 
-        const daysParam = days === 'ytd' ? calculateYTDDays() : days;
+        const daysParam = days === 'ytd' ? ytdDays() : days;
 
         let response;
         if (selectedMetric === 'price' || selectedMetric === 'price_pct_change') {

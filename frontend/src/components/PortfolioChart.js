@@ -15,6 +15,7 @@ import {
   ReferenceLine,
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
+import { ytdDays } from '../utils/dates';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import './PortfolioChart.css';
 import SharedTooltip from './SharedTooltip';
@@ -92,6 +93,8 @@ const BAND_THRESHOLDS = {
   '1w':  { low: 2,   mid: 4,    strong: 6 },
   '1m':  { low: 3.3, mid: 6.7,  strong: 10 },
   '90d': { low: 6.7, mid: 13.3, strong: 20 },
+  // Anchored to a mid-year YTD (~180 days); early January runs narrow.
+  'ytd': { low: 10,  mid: 20,   strong: 30 },
 };
 
 const PERIOD_LABELS = {
@@ -99,13 +102,14 @@ const PERIOD_LABELS = {
   '1w': '1 week',
   '1m': '1 month',
   '90d': '90 days',
+  'ytd': 'year to date',
 };
 
 // Holdings smaller than this share of their bucket collapse into a single
 // "Other" tile so the long tail doesn't fill the treemap with unreadable boxes.
 const OTHER_THRESHOLD_PCT = 0.5;
 
-const PortfolioChart = ({ selectedPeriod }) => {
+const PortfolioChart = ({ selectedPeriod, movers, moversError }) => {
   const navigate = useNavigate();
   const { hideAmounts } = useHideAmounts();
   const [chartData, setChartData] = useState(null);
@@ -114,8 +118,6 @@ const PortfolioChart = ({ selectedPeriod }) => {
   const [timeRange, setTimeRange] = useState('30'); // days
   const [benchmarkNames, setBenchmarkNames] = useState(['S&P 500', 'NASDAQ']);
   const [deposits, setDeposits] = useState([]);
-  const [assetAllocation, setAssetAllocation] = useState(null);
-  const [allocationLoading, setAllocationLoading] = useState(true);
   const [groupBy, setGroupBy] = useState('flat'); // 'flat' | 'sector' | 'region'
   const [selectedGroup, setSelectedGroup] = useState(null); // active group filter
   const [expandOther, setExpandOther] = useState(false);
@@ -124,6 +126,7 @@ const PortfolioChart = ({ selectedPeriod }) => {
     { label: '1 Month', value: '30' },
     { label: '3 Months', value: '90' },
     { label: '6 Months', value: '180' },
+    { label: 'YTD', value: 'ytd' },
     { label: '1 Year', value: '365' },
     { label: 'All', value: 'all' }
   ];
@@ -133,7 +136,7 @@ const PortfolioChart = ({ selectedPeriod }) => {
     try {
       setLoading(true);
       setError(null);
-      const days = timeRange === 'all' ? 365 : parseInt(timeRange);
+      const days = timeRange === 'all' ? 365 : timeRange === 'ytd' ? ytdDays() : parseInt(timeRange);
       const [historyData, depositsData] = await Promise.all([
         portfolioAPI.getHistory(days),
         portfolioAPI.getDeposits(days),
@@ -202,44 +205,26 @@ const PortfolioChart = ({ selectedPeriod }) => {
     fetchChartData();
   }, [fetchChartData]);
 
-  useEffect(() => {
-    const fetchAssetAllocation = async () => {
-      try {
-        setAllocationLoading(true);
-        const movers = await portfolioAPI.getTopMovers(selectedPeriod);
+  const allocationLoading = !movers && !moversError;
 
-        if (movers && Array.isArray(movers) && movers.length > 0) {
-          // Calculate total portfolio value to determine allocation percentages
-          const totalValue = movers.reduce((sum, asset) => sum + (asset.value || 0), 0);
-
-          const assetsWithAllocation = movers
-            .filter(asset => asset.value > 0)
-            .map(asset => ({
-              symbol: asset.symbol || 'N/A',
-              name: asset.name || '',
-              value: asset.value || 0,
-              allocation_pct: totalValue > 0 ? ((asset.value || 0) / totalValue) * 100 : 0,
-              change_pct: asset.change_pct || 0,
-              sector: asset.sector || 'Other',
-              country: asset.country || 'Other',
-            }))
-            .sort((a, b) => b.value - a.value);
-
-          setAssetAllocation(assetsWithAllocation);
-        } else {
-          console.warn('No movers data found');
-          setAssetAllocation([]);
-        }
-      } catch (err) {
-        console.error('Error fetching asset allocation:', err);
-        setAssetAllocation([]);
-      } finally {
-        setAllocationLoading(false);
-      }
-    };
-
-    fetchAssetAllocation();
-  }, [selectedPeriod]);
+  // Allocation shares the movers payload Dashboard fetches for the Top Movers
+  // table — the same rows, weighted by value instead of by change.
+  const assetAllocation = useMemo(() => {
+    if (!movers) return null;
+    const totalValue = movers.reduce((sum, asset) => sum + (asset.value || 0), 0);
+    return movers
+      .filter(asset => asset.value > 0)
+      .map(asset => ({
+        symbol: asset.symbol || 'N/A',
+        name: asset.name || '',
+        value: asset.value || 0,
+        allocation_pct: totalValue > 0 ? ((asset.value || 0) / totalValue) * 100 : 0,
+        change_pct: asset.change_pct || 0,
+        sector: asset.sector || 'Other',
+        country: asset.country || 'Other',
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [movers]);
 
   // Drop any drill-down filter / Other-expansion when the user switches
   // grouping or period, so the view doesn't reference stale group names.
@@ -525,7 +510,7 @@ const PortfolioChart = ({ selectedPeriod }) => {
           />
         ) : (
           <div className="error">
-            No asset allocation data available
+            {moversError || 'No asset allocation data available'}
           </div>
         )}
 
@@ -548,10 +533,14 @@ const PortfolioChart = ({ selectedPeriod }) => {
 
 PortfolioChart.propTypes = {
   selectedPeriod: PropTypes.string,
+  movers: PropTypes.arrayOf(PropTypes.object),
+  moversError: PropTypes.string,
 };
 
 PortfolioChart.defaultProps = {
   selectedPeriod: '1d',
+  movers: null,
+  moversError: null,
 };
 
 export default PortfolioChart;

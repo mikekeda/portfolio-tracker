@@ -1,55 +1,29 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useMemo } from 'react';
 import PropTypes from 'prop-types';
 import { Link } from 'react-router-dom';
-import { portfolioAPI } from '../services/api';
 import { nativePrice } from '../utils/currency';
 import './TopMovers.css';
 
-const TopMovers = ({ selectedPeriod, setSelectedPeriod }) => {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-
+const TopMovers = ({ selectedPeriod, setSelectedPeriod, movers, error }) => {
   const periods = [
     { value: '1d', label: '1 Day' },
     { value: '1w', label: '1 Week' },
     { value: '1m', label: '1 Month' },
-    { value: '90d', label: '90 Days' }
+    { value: '90d', label: '90 Days' },
+    { value: 'ytd', label: 'YTD' }
   ];
 
-  const fetchTopMovers = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const movers = await portfolioAPI.getTopMovers(selectedPeriod);
-
-      if (!Array.isArray(movers)) {
-        throw new Error('Invalid response format');
-      }
-
-      // Derive gainers and losers from movers array
-      const limit = 10;
-      const gainers = movers.slice(0, limit);
-      const losers = movers.slice(-limit).reverse(); // Reverse to show biggest losers first
-      const total_symbols = movers.length;
-
-      setData({
-        movers,
-        gainers,
-        losers,
-        total_symbols,
-      });
-    } catch (err) {
-      setError('Failed to fetch top movers data');
-      console.error('Error fetching top movers:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedPeriod]);
-
-  useEffect(() => {
-    fetchTopMovers();
-  }, [fetchTopMovers]);
+  const loading = !movers && !error;
+  const data = useMemo(() => {
+    if (!movers) return null;
+    const limit = 10;
+    return {
+      movers,
+      gainers: movers.slice(0, limit),
+      losers: movers.slice(-limit).reverse(), // Reverse to show biggest losers first
+      total_symbols: movers.length,
+    };
+  }, [movers]);
 
   const formatChange = (change) => {
     const isPositive = change >= 0;
@@ -224,11 +198,15 @@ const TopMovers = ({ selectedPeriod, setSelectedPeriod }) => {
 TopMovers.propTypes = {
   selectedPeriod: PropTypes.string,
   setSelectedPeriod: PropTypes.func,
+  movers: PropTypes.arrayOf(PropTypes.object),
+  error: PropTypes.string,
 };
 
 TopMovers.defaultProps = {
   selectedPeriod: '1d',
   setSelectedPeriod: undefined,
+  movers: null,
+  error: null,
 };
 
 export default TopMovers;
