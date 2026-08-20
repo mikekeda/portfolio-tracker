@@ -2,12 +2,14 @@
 
 from scripts.scrape_13f import (
     amendment_disposition,
+    find_info_table_xml,
     investor_ciks,
     merge_new_holdings,
     merge_same_quarter,
     normalize_cusip,
     parse_amendment_type,
     parse_nt_successor_ciks,
+    primary_doc_name,
     select_recent_filings,
 )
 
@@ -103,6 +105,28 @@ def test_parse_nt_successor_ciks_skips_managers_without_a_cik():
         "</otherManagersInfo></edgarSubmission>"
     )
     assert parse_nt_successor_ciks(xml) == []
+
+
+def test_primary_doc_name_strips_the_stylesheet_path():
+    # EDGAR reports this path, which it renders as HTML; the raw XML is at the bare basename.
+    assert primary_doc_name("xslForm13F_X02/primary_doc.xml") == "primary_doc.xml"
+    assert primary_doc_name("primary_doc.xml") == "primary_doc.xml"
+    assert primary_doc_name("") == "primary_doc.xml"
+
+
+def test_find_info_table_xml_never_ranks_the_cover_page():
+    # Berkshire's 2025-03-31 amendment: the 4-row info table is smaller than primary_doc.xml,
+    # so a plain largest-file rule picks the cover page and parses zero holdings.
+    index = {"directory": {"item": [{"name": "43981.xml", "size": "2134"}, {"name": "primary_doc.xml", "size": "2854"}]}}
+    assert find_info_table_xml(index) == "43981.xml"
+
+
+def test_find_info_table_xml_prefers_infotable_then_falls_back():
+    named = {"directory": {"item": [{"name": "infotable.xml", "size": "10"}, {"name": "big.xml", "size": "999"}]}}
+    assert find_info_table_xml(named) == "infotable.xml"
+    only_cover = {"directory": {"item": [{"name": "primary_doc.xml", "size": "2854"}]}}
+    assert find_info_table_xml(only_cover) == "primary_doc.xml"
+    assert find_info_table_xml({"directory": {"item": []}}) is None
 
 
 def test_amendment_disposition_classifies_the_three_cases():

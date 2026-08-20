@@ -291,6 +291,16 @@ def get_filing_index(cik: str, accession: str) -> Optional[dict]:
     return response.json()
 
 
+def primary_doc_name(primary_document: str) -> str:
+    """
+    Raw cover-page filename from a submissions `primaryDocument` value.
+
+    EDGAR reports 13F cover pages as `xslForm13F_X02/primary_doc.xml`; that path renders the
+    document as HTML through a stylesheet, while the parseable XML sits at the bare basename.
+    """
+    return primary_document.rsplit("/", 1)[-1] or "primary_doc.xml"
+
+
 def find_info_table_xml(index_data: dict) -> Optional[str]:
     """
     Determines which XML file contains the information table.
@@ -320,7 +330,11 @@ def find_info_table_xml(index_data: dict) -> Optional[str]:
         if name.lower() == "infotable.xml":
             return name
 
-    # Otherwise use largest XML (info table is typically the biggest)
+    # Otherwise use largest XML (info table is typically the biggest), but never rank the cover
+    # page: on a small amendment primary_doc.xml outweighs a four-row info table.
+    ranked = sorted((f for f in xml_files if primary_doc_name(f[0]).lower() != "primary_doc.xml"), key=lambda x: -x[1])
+    if ranked:
+        return ranked[0][0]
     xml_files.sort(key=lambda x: x[1], reverse=True)
     return xml_files[0][0]
 
@@ -336,6 +350,21 @@ def download_xml(cik: str, accession: str, filename: str) -> Optional[str]:
     return response.content.decode("utf-8", errors="replace")
 
 
+def _parse_xml(xml_content: str) -> Optional[etree._Element]:
+    """
+    Parse a filing document, or None when it is not well-formed XML.
+
+    EDGAR renders some document paths as HTML, so callers must degrade rather than raise: an
+    unreadable cover page has to reach amendment_disposition's "skip" branch, not abort the
+    whole investor.
+    """
+    try:
+        return etree.fromstring(xml_content.encode("utf-8"))
+    except etree.XMLSyntaxError as e:
+        logger.warning("Not well-formed XML (%s) — treating the document as unreadable", e)
+        return None
+
+
 def parse_13f_xml(xml_content: str) -> list[ParsedHolding]:
     """
     Parses 13F information table XML and extracts holdings.
@@ -345,7 +374,9 @@ def parse_13f_xml(xml_content: str) -> list[ParsedHolding]:
     Pre-2023 filings may report value in thousands; caller may need to scale.
     """
     holdings: list[ParsedHolding] = []
-    root = etree.fromstring(xml_content.encode("utf-8"))
+    root = _parse_xml(xml_content)
+    if root is None:
+        return holdings
 
     # infoTable elements (use double quotes for XPath predicate compatibility)
     info_tables = root.xpath(".//*[local-name()='infoTable']")
@@ -402,7 +433,9 @@ def parse_13f_xml(xml_content: str) -> list[ParsedHolding]:
 
 def _first_text(xml_content: str, tag: str) -> str:
     """Text of the first element with this local name, or empty."""
-    root = etree.fromstring(xml_content.encode("utf-8"))
+    root = _parse_xml(xml_content)
+    if root is None:
+        return ""
     found = root.xpath(f".//*[local-name()='{tag}']")
     return (found[0].text or "").strip() if found else ""
 
@@ -434,7 +467,9 @@ def amendment_disposition(form: str, amendment_type: str) -> str:
 
 def parse_nt_successor_ciks(xml_content: str) -> list[str]:
     """CIKs listed as other managers on a 13F-NT — where this manager's holdings now report."""
-    root = etree.fromstring(xml_content.encode("utf-8"))
+    root = _parse_xml(xml_content)
+    if root is None:
+        return []
     return [
         (el.text or "").strip()
         for el in root.xpath(".//*[local-name()='otherManager']/*[local-name()='cik']")
@@ -536,14 +571,14 @@ def _fetch_filing(name: str, cik: str, metadata: FilingMetadata) -> Optional[Scr
 def _fetch_amendment_type(cik: str, metadata: FilingMetadata) -> str:
     """Amendment type for a 13F-HR/A, or empty when the primary document is unreadable."""
     sleep(REQUEST_DELAY)
-    xml_content = download_xml(cik, metadata["accessionNumber"], metadata["primaryDocument"] or "primary_doc.xml")
+    xml_content = download_xml(cik, metadata["accessionNumber"], primary_doc_name(metadata["primaryDocument"]))
     return parse_amendment_type(xml_content) if xml_content else ""
 
 
 def _report_notice(name: str, cik: str, metadata: FilingMetadata) -> None:
     """Log a 13F-NT loudly — the manager's holdings now report under a different CIK."""
     sleep(REQUEST_DELAY)
-    xml_content = download_xml(cik, metadata["accessionNumber"], metadata["primaryDocument"] or "primary_doc.xml")
+    xml_content = download_xml(cik, metadata["accessionNumber"], primary_doc_name(metadata["primaryDocument"]))
     successors = parse_nt_successor_ciks(xml_content) if xml_content else []
     logger.error(
         "%s (CIK %s) filed a 13F-NT for %s — holdings now report under CIK(s) %s. "
