@@ -19,6 +19,20 @@ FORM13F_INCREASE_EFFECTIVE_NEW = 1000  # +1000%+ = effectively new position
 FORM13F_TRIM_EFFECTIVE_LIQUIDATION = -90  # -90%+ = effectively liquidated
 
 
+def current_manager_ids(latest_by_manager: dict[int, date]) -> tuple[set[int], Optional[date]]:
+    """
+    Manager ids filed up to the consensus quarter, and that quarter (the newest any has filed).
+
+    A manager that stopped filing still has two filings on record, so a cross-manager view that
+    just takes each manager's two most recent compares its stale delta against everyone else's
+    current one. Callers aggregating across managers must drop the ids this omits.
+    """
+    if not latest_by_manager:
+        return set(), None
+    quarter = max(latest_by_manager.values())
+    return {mid for mid, report_date in latest_by_manager.items() if report_date >= quarter}, quarter
+
+
 class Form13FHolder(TypedDict):
     """13F holder with change and optional report data."""
 
@@ -160,8 +174,12 @@ def aggregate_signal_score(scoring_pairs: list[tuple[float, float]]) -> Optional
     return round(max(-2.0, min(2.0, weighted)), 1)
 
 
-def _score_reason(score: int, change: str, value: int, filing_total_value: int | None = None) -> str | None:
-    """Human-readable explanation for why a holder has score=0 (shown in tooltip)."""
+def _score_reason(
+    score: int, change: str, value: int, filing_total_value: int | None = None, stale: bool = False
+) -> str | None:
+    """Human-readable explanation for why a holder does not contribute to the score (tooltip)."""
+    if stale:
+        return "has not filed for the latest quarter — change is from an older filing"
     if score != 0:
         return None  # contributing to score — no explanation needed
     if change == "—":
@@ -212,20 +230,20 @@ async def _get_form13f_for_instruments(
         )
     ).all()
 
-    # Also fetch the two most recent filing dates per manager so we can detect
-    # genuinely new positions (manager had a prior filing but no prior holding).
-    all_manager_ids = {manager.id for _, _, manager in rows}
+    # Every manager, not just holders of these instruments: the consensus quarter has to be the
+    # newest across all managers, or a wholly stale subset would look current.
     manager_filing_dates: dict[int, list[date]] = defaultdict(list)
-    if all_manager_ids:
-        filing_rows = (
-            await session.execute(
-                select(Form13FFiling.manager_id, Form13FFiling.report_date)
-                .where(Form13FFiling.manager_id.in_(all_manager_ids))
-                .order_by(Form13FFiling.manager_id, Form13FFiling.report_date.desc())
+    filing_rows = (
+        await session.execute(
+            select(Form13FFiling.manager_id, Form13FFiling.report_date).order_by(
+                Form13FFiling.manager_id, Form13FFiling.report_date.desc()
             )
-        ).all()
-        for mid, rdate in filing_rows:
-            manager_filing_dates[mid].append(rdate)
+        )
+    ).all()
+    for mid, rdate in filing_rows:
+        manager_filing_dates[mid].append(rdate)
+
+    current_ids, _ = current_manager_ids({mid: dates[0] for mid, dates in manager_filing_dates.items()})
 
     by_manager_filing: dict[tuple[int, int, int], dict[str, str | int | date | None]] = {}
     for holding, filing, manager in rows:
@@ -274,6 +292,7 @@ async def _get_form13f_for_instruments(
         by_instrument[iid].append(
             {
                 "manager_id": mid,
+                "stale": mid not in current_ids,
                 "manager_name": latest["manager_name"],
                 "change": change,
                 "score": score,
@@ -291,7 +310,7 @@ async def _get_form13f_for_instruments(
     for iid, holders in by_instrument.items():
         # Only holders with a directional signal contribute. score == 0 is mostly
         # a position below the AUM floors, sometimes stable or a first filing.
-        scoring_holders = [h for h in holders if h["score"] != 0]
+        scoring_holders = [h for h in holders if h["score"] != 0 and not h["stale"]]
         scoring_set = set(id(h) for h in scoring_holders)
         result[iid] = {
             "score": aggregate_signal_score([(h["score"], h["conviction"]) for h in scoring_holders]),
@@ -306,7 +325,13 @@ async def _get_form13f_for_instruments(
                     "value": h.get("value"),
                     "value_prev": h.get("value_prev"),
                     "scored": id(h) in scoring_set,
-                    "score_reason": _score_reason(h["score"], h["change"], h.get("value") or 0, h.get("filing_total_value")),
+                    "score_reason": _score_reason(
+                        h["score"],
+                        h["change"],
+                        h.get("value") or 0,
+                        h.get("filing_total_value"),
+                        stale=h["stale"],
+                    ),
                 }
                 for h in holders
             ],

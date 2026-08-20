@@ -35,6 +35,9 @@ STALE_PR_DAYS = 45
 # A successful Wisesheets scrape leaves a year-end forward-estimate key, so a
 # newest pes key this far in the past means the scrape has failed for months.
 STALE_PE_DAYS = 120
+# 13F is due 45 days after quarter end; past that plus a few days' grace, a manager still
+# behind the newest filed quarter has stopped filing rather than being late.
+STALE_13F_DAYS = 50
 PORTFOLIO_DIFF_PCT = 1.0  # T212 total vs holdings sum; small FX drift is normal
 # Same bounds as the split detector: an unadjusted 2:1 split shows as ~0.5x.
 MOVE_UPPER, MOVE_LOWER = 1.8, 0.55
@@ -468,6 +471,59 @@ CHECKS: list[tuple[str, str, str, str]] = [
         ORDER BY (h.instrument_id IS NOT NULL) DESC, last_pe_key NULLS FIRST
         """,
     ),
+    (
+        "form13f_empty_filings",
+        "13F filings stored with no holdings or no total value",
+        "A parse failure or a NEW HOLDINGS amendment overwrote a good quarter. Re-fetch with "
+        "scripts/fix_13f_backfill.py, which merges the original and its amendment.",
+        """
+        SELECT m.name, f.report_date, f.form, f.accession_number, f.total_value,
+               count(h.id) AS holdings
+        FROM form13f_filings f
+        JOIN form13f_managers m ON m.id = f.manager_id
+        LEFT JOIN form13f_holdings h ON h.filing_id = f.id
+        GROUP BY m.name, f.report_date, f.form, f.accession_number, f.total_value
+        HAVING count(h.id) = 0 OR f.total_value = 0
+        ORDER BY f.report_date DESC
+        """,
+    ),
+    (
+        "form13f_stale_managers",
+        "managers still behind the newest filed quarter after the 13F deadline",
+        "Usually the manager re-filed under a new CIK: check EDGAR for a 13F-NT naming a "
+        "successor and add it to that investor's 'ciks' in scripts/scrape_13f.py, then run "
+        "scripts/fix_13f_backfill.py. Stale managers are excluded from consensus and scoring.",
+        """
+        WITH consensus AS (SELECT max(report_date) AS quarter FROM form13f_filings),
+        latest AS (
+            SELECT m.name, max(f.report_date) AS latest_filed
+            FROM form13f_managers m
+            JOIN form13f_filings f ON f.manager_id = m.id
+            GROUP BY m.name
+        )
+        SELECT l.name, l.latest_filed, c.quarter AS consensus_quarter,
+               CURRENT_DATE - c.quarter AS days_since_quarter_end
+        FROM latest l CROSS JOIN consensus c
+        WHERE l.latest_filed < c.quarter
+          AND CURRENT_DATE > c.quarter + :stale_13f_days
+        ORDER BY l.latest_filed, l.name
+        """,
+    ),
+    (
+        "form13f_cusip_casing",
+        "13F holdings stored with a lower-case CUSIP",
+        "The consensus dicts key on the raw CUSIP, so one filer's casing splits a name into two "
+        "entries. Run scripts/fix_13f_cusip_case.sql; the writer normalises via normalize_cusip().",
+        """
+        SELECT m.name, h.cusip, max(h.issuer) AS issuer, count(*) AS rows
+        FROM form13f_holdings h
+        JOIN form13f_filings f ON f.id = h.filing_id
+        JOIN form13f_managers m ON m.id = f.manager_id
+        WHERE h.cusip <> upper(h.cusip)
+        GROUP BY m.name, h.cusip
+        ORDER BY count(*) DESC
+        """,
+    ),
 ]
 
 
@@ -487,6 +543,8 @@ def run_check(session, name: str, description: str, fix: str, sql: str) -> int:
         # points at the pre-rename ticker.
         params["alias_old"] = list(STOCKS_ALIASES.keys())
         params["alias_new"] = list(STOCKS_ALIASES.values())
+    if ":stale_13f_days" in sql:
+        params["stale_13f_days"] = STALE_13F_DAYS
     rows = session.execute(text(sql), params).all()
     if not rows:
         logger.info("PASS  %s", name)

@@ -17,6 +17,7 @@ from backend.utils.form13f import (
     _compute_form13f_signal_score,
     _score_reason,
     aggregate_signal_score,
+    current_manager_ids,
 )
 from backend.utils.pe_history import basis_matches, harmonic_mean_pe, pe_series
 from backend.utils.piotroski import get_piotroski_f_score
@@ -286,20 +287,18 @@ async def get_instrument(
         by_manager_filing[key]["value"] += holding.value
         by_manager_filing[key]["shares"] += holding.shares
 
-    # Fetch two most recent filing dates per manager so we can distinguish
-    # "manager's first filing ever" (no comparison) from "manager had a prior
-    # filing but no prior holding of this instrument" (= genuine new position).
-    # Without this, first-time buyers incorrectly show "—" instead of "New".
-    all_manager_ids = {mid for (mid, _) in by_manager_filing}
+    # Separates "first filing ever" from "filed before but didn't hold this" (= New). Covers
+    # every manager, not just this instrument's holders, so the consensus quarter is the global one.
     manager_filing_dates: dict[int, list[date]] = defaultdict(list)
-    if all_manager_ids:
-        filing_date_rows = await session.execute(
-            select(Form13FFiling.manager_id, Form13FFiling.report_date)
-            .where(Form13FFiling.manager_id.in_(all_manager_ids))
-            .order_by(Form13FFiling.manager_id, Form13FFiling.report_date.desc())
+    filing_date_rows = await session.execute(
+        select(Form13FFiling.manager_id, Form13FFiling.report_date).order_by(
+            Form13FFiling.manager_id, Form13FFiling.report_date.desc()
         )
-        for mid, rdate in filing_date_rows.all():
-            manager_filing_dates[mid].append(rdate)
+    )
+    for mid, rdate in filing_date_rows.all():
+        manager_filing_dates[mid].append(rdate)
+
+    current_ids, _ = current_manager_ids({mid: dates[0] for mid, dates in manager_filing_dates.items()})
 
     # Per manager: latest and prev filing for this instrument, compute change
     by_manager: dict[int, list[Form13FFilingRow]] = {}
@@ -338,7 +337,8 @@ async def get_instrument(
             value_prev=value_prev_h,
             filing_total_value=filing_total,
         )
-        if score != 0:
+        is_stale = mid not in current_ids
+        if score != 0 and not is_stale:
             scoring_pairs.append((score, latest["value"] / filing_total if filing_total > 0 else 0.0))
 
         form13f_holdings.append(
@@ -353,8 +353,8 @@ async def get_instrument(
                 "report_date": latest["report_date"].isoformat(),
                 "report_date_prev": report_date_prev,
                 "change": change,
-                "scored": score != 0,
-                "score_reason": _score_reason(score, change, latest["value"], filing_total or None),
+                "scored": score != 0 and not is_stale,
+                "score_reason": _score_reason(score, change, latest["value"], filing_total or None, stale=is_stale),
                 "sec_filing_url": _build_sec_13f_url(latest.get("manager_cik"), latest.get("accession_number")),
             }
         )

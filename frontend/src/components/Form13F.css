@@ -140,6 +140,18 @@
   color: #adb5bd;
 }
 
+.highlights-stale {
+  font-size: 11px;
+  font-weight: 600;
+  color: #b8860b;
+  background: #fff8e1;
+  border: 1px solid #ffe0a3;
+  padding: 2px 8px;
+  border-radius: 20px;
+  cursor: help;
+  white-space: nowrap;
+}
+
 .highlights-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -598,6 +610,16 @@
   border-radius: 20px;
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+.manager-card-quarter-stale {
+  color: #b8860b;
+  background: #fff8e1;
+  cursor: help;
+}
+
+.manager-card-stale {
+  border-left: 3px solid #ffc107;
 }
 
 .manager-card-stats {

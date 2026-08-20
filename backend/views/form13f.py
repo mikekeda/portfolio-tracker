@@ -11,6 +11,7 @@ from backend.utils.form13f import (
     _compute_form13f_change,
     _compute_form13f_signal_score,
     _safe_pct,
+    current_manager_ids,
 )
 from models import Form13FFiling, Form13FHolding, Form13FManager, HoldingDaily, Instrument
 
@@ -30,9 +31,12 @@ def _aggregate_holdings_by_cusip(holdings: list) -> dict[str, dict]:
     """Aggregate Form13FHolding rows by CUSIP (sums value+shares across share classes)."""
     by_cusip: dict[str, dict] = {}
     for h in holdings:
-        if h.cusip not in by_cusip:
-            by_cusip[h.cusip] = {
-                "cusip": h.cusip,
+        # Upper-cased so a filer's lower-case CUSIP cannot split one name into two entries;
+        # the writer normalises too, this is the guard if a future one does not.
+        cusip = h.cusip.upper()
+        if cusip not in by_cusip:
+            by_cusip[cusip] = {
+                "cusip": cusip,
                 "issuer": h.issuer,
                 "value": 0,
                 "shares": 0,
@@ -40,10 +44,10 @@ def _aggregate_holdings_by_cusip(holdings: list) -> dict[str, dict]:
             }
         else:
             # Prefer the first non-None instrument_id we find for this CUSIP
-            if by_cusip[h.cusip]["instrument_id"] is None and h.instrument_id is not None:
-                by_cusip[h.cusip]["instrument_id"] = h.instrument_id
-        by_cusip[h.cusip]["value"] += h.value
-        by_cusip[h.cusip]["shares"] += h.shares
+            if by_cusip[cusip]["instrument_id"] is None and h.instrument_id is not None:
+                by_cusip[cusip]["instrument_id"] = h.instrument_id
+        by_cusip[cusip]["value"] += h.value
+        by_cusip[cusip]["shares"] += h.shares
     return by_cusip
 
 
@@ -176,7 +180,7 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
     managers_result = await session.execute(select(Form13FManager).order_by(Form13FManager.name))
     managers = managers_result.scalars().all()
     if not managers:
-        return {"most_bought": [], "most_sold": [], "most_held": []}
+        return {"most_bought": [], "most_sold": [], "most_held": [], "disputed": [], "stale_managers": []}
 
     manager_ids = [m.id for m in managers]
     filings_result = await session.execute(
@@ -189,6 +193,19 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
     filings_by_manager: dict[int, list] = defaultdict(list)
     for f in all_filings:
         filings_by_manager[f.manager_id].append(f)
+
+    manager_by_id = {m.id: m for m in managers}
+    current_ids, consensus_report_date = current_manager_ids(
+        {mid: mf[0].report_date for mid, mf in filings_by_manager.items()}
+    )
+    stale_managers = [
+        {"name": manager_by_id[mid].name, "report_date": mf[0].report_date.isoformat()}
+        for mid, mf in sorted(filings_by_manager.items(), key=lambda kv: manager_by_id[kv[0]].name)
+        if mid not in current_ids
+    ]
+    for mid in list(filings_by_manager):
+        if mid not in current_ids:
+            del filings_by_manager[mid]
 
     latest_ids: dict[int, int] = {}
     prev_ids: dict[int, int] = {}
@@ -211,8 +228,6 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
     holdings_by_filing: dict[int, list] = defaultdict(list)
     for h in all_holdings:
         holdings_by_filing[h.filing_id].append(h)
-
-    manager_by_id = {m.id: m for m in managers}
 
     buying: dict[str, dict] = {}
     selling: dict[str, dict] = {}
@@ -435,6 +450,8 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
         "most_sold": most_sold,
         "most_held": most_held,
         "disputed": top_disputed,
+        "consensus_report_date": consensus_report_date.isoformat() if consensus_report_date else None,
+        "stale_managers": stale_managers,
     }
 
 
@@ -459,6 +476,10 @@ async def get_form13f_managers_list(session: AsyncSession = Depends(get_db_sessi
     filings_by_manager: dict[int, list] = defaultdict(list)
     for f in all_filings:
         filings_by_manager[f.manager_id].append(f)
+
+    # Cards show each manager's own QoQ activity, so a stale one is labelled rather than
+    # dropped — only cross-manager aggregates have to exclude it.
+    current_ids, _ = current_manager_ids({mid: mf[0].report_date for mid, mf in filings_by_manager.items()})
 
     # Collect the latest + prev filing IDs to load holdings in one query
     latest_ids: dict[int, int] = {}  # manager_id → latest filing_id
@@ -588,6 +609,7 @@ async def get_form13f_managers_list(session: AsyncSession = Depends(get_db_sessi
                 "name": m.name,
                 "cik": m.cik,
                 "latest_report_date": latest_filing.report_date.isoformat(),
+                "is_stale": mid not in current_ids,
                 "total_value": latest_filing.total_value,
                 "num_positions": len(latest_cusips),
                 "filing_count": len(mf),
@@ -710,11 +732,19 @@ async def get_13f_not_in_portfolio(
     )
     latest_fid_by_mgr: dict[int, int] = {}
     prev_fid_by_mgr: dict[int, int] = {}
+    latest_date_by_mgr: dict[int, date_type] = {}
     for f in filings_result.scalars().all():
         if f.manager_id not in latest_fid_by_mgr:
             latest_fid_by_mgr[f.manager_id] = f.id
+            latest_date_by_mgr[f.manager_id] = f.report_date
         elif f.manager_id not in prev_fid_by_mgr:
             prev_fid_by_mgr[f.manager_id] = f.id
+
+    current_ids, _ = current_manager_ids(latest_date_by_mgr)
+    for mid in list(latest_fid_by_mgr):
+        if mid not in current_ids:
+            del latest_fid_by_mgr[mid]
+            prev_fid_by_mgr.pop(mid, None)
 
     all_fids = list(set(latest_fid_by_mgr.values()) | set(prev_fid_by_mgr.values()))
     latest_fids_set = set(latest_fid_by_mgr.values())

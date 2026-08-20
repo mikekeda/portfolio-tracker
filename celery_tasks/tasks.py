@@ -99,7 +99,7 @@ def scrape_13f_task():
     """Scrape SEC 13F institutional holdings for all configured investors.
 
     Runs weekly — 13F filings are quarterly (deadlines: May 15, Aug 14, Nov 14, Feb 14).
-    The script fetches only missing quarters, so this is a no-op when already up to date.
+    Always re-fetches and rewrites at least the latest quarter, so amendments are picked up.
     """
     scrape_13f_main()
 

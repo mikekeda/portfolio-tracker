@@ -509,7 +509,7 @@ const HighlightsSection = () => {
     // Independent fetches so a failure in one doesn't blank out the other
     apiClient.get('/api/13f/highlights')
       .then(r => setData(r.data))
-      .catch(() => setData({ most_bought: [], most_sold: [], most_held: [], disputed: [] }));
+      .catch(() => setData({ most_bought: [], most_sold: [], most_held: [], disputed: [], stale_managers: [] }));
 
     apiClient.get('/api/13f/not-in-portfolio')
       .then(r => setRadar(r.data || []))
@@ -536,6 +536,7 @@ const HighlightsSection = () => {
   const sells    = data.most_sold   || [];
   const held     = data.most_held   || [];
   const mixed    = data.disputed    || [];
+  const stale    = data.stale_managers || [];
   const hasMixed = mixed.length > 0;
   const hasRadar = radar.length > 0;
   // 5 cols when both Mixed + Radar; 4 cols when only one; 3 cols default.
@@ -550,7 +551,13 @@ const HighlightsSection = () => {
         <h3 className="highlights-title">Consensus Signals</h3>
         <span className="highlights-subtitle">
           Net conviction across all tracked managers · ranked by net buyers − sellers
+          {data.consensus_report_date && ` · quarter ending ${data.consensus_report_date}`}
         </span>
+        {stale.length > 0 && (
+          <span className="highlights-stale" title={stale.map(m => `${m.name} — latest ${m.report_date}`).join('\n')}>
+            {stale.length} manager{stale.length > 1 ? 's' : ''} excluded (no filing this quarter)
+          </span>
+        )}
       </div>
       <div className={`highlights-grid ${gridClass}`}>
         <HighlightPanel className="hl-buys"  title="Consensus Buys"  count={buys.length}  items={buys}  mode="buy"  />
@@ -637,10 +644,15 @@ const ManagerCard = React.memo(function ManagerCard({ manager }) {
   const names = manager.activity_names || {};
 
   return (
-    <div className="manager-card" onClick={() => navigate(`/13f/${manager.id}`)}>
+    <div className={`manager-card${manager.is_stale ? ' manager-card-stale' : ''}`} onClick={() => navigate(`/13f/${manager.id}`)}>
       <div className="manager-card-header">
         <h3 className="manager-card-name">{manager.name}</h3>
-        <span className="manager-card-quarter">{formatQuarter(manager.latest_report_date)}</span>
+        <span
+          className={`manager-card-quarter${manager.is_stale ? ' manager-card-quarter-stale' : ''}`}
+          title={manager.is_stale ? 'No filing for the latest quarter — excluded from consensus signals' : undefined}
+        >
+          {formatQuarter(manager.latest_report_date)}{manager.is_stale ? ' · stale' : ''}
+        </span>
       </div>
 
       <div className="manager-card-stats">
