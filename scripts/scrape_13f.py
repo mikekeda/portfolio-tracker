@@ -465,6 +465,17 @@ def amendment_disposition(form: str, amendment_type: str) -> str:
     return {"RESTATEMENT": "replace", "NEW HOLDINGS": "merge"}.get(amendment_type, "skip")
 
 
+def reported_in_thousands(total_value: int, is_partial: bool) -> bool:
+    """
+    Whether a filing's values look like the pre-2023 thousands convention rather than dollars.
+
+    $100M is the minimum AUM that obliges a manager to file at all, so a whole portfolio below
+    it was reported in thousands. A NEW HOLDINGS amendment is a delta, not a portfolio, and can
+    legitimately be one small lot — scaling that inflates the merged quarter a thousandfold.
+    """
+    return not is_partial and 0 < total_value < 100_000_000
+
+
 def parse_nt_successor_ciks(xml_content: str) -> list[str]:
     """CIKs listed as other managers on a 13F-NT — where this manager's holdings now report."""
     root = _parse_xml(xml_content)
@@ -519,8 +530,12 @@ def merge_same_quarter(filings: list[ScrapedFiling], primary_cik: str) -> list[S
     return list(merged.values())
 
 
-def _fetch_filing(name: str, cik: str, metadata: FilingMetadata) -> Optional[ScrapedFiling]:
-    """Download and parse one filing's information table."""
+def _fetch_filing(name: str, cik: str, metadata: FilingMetadata, is_partial: bool = False) -> Optional[ScrapedFiling]:
+    """Download and parse one filing's information table.
+
+    Set `is_partial` for an amendment that reports only added rows, so its total is not treated
+    as a whole portfolio.
+    """
     accession = metadata["accessionNumber"]
     report_date = metadata["reportDate"]
 
@@ -544,9 +559,7 @@ def _fetch_filing(name: str, cik: str, metadata: FilingMetadata) -> Optional[Scr
     holdings = parse_13f_xml(xml_content)
     total_value = sum(h["value"] for h in holdings)
 
-    # $100M is the minimum AUM required to file a 13F, so a smaller raw sum means the manager
-    # reported in thousands (the pre-2023 convention) on a filing that should be in dollars.
-    if 0 < total_value < 100_000_000:
+    if reported_in_thousands(total_value, is_partial):
         holdings = [{**h, "value": h["value"] * 1000} for h in holdings]
         total_value *= 1000
         logger.warning(
@@ -575,22 +588,35 @@ def _fetch_amendment_type(cik: str, metadata: FilingMetadata) -> str:
     return parse_amendment_type(xml_content) if xml_content else ""
 
 
-def _report_notice(name: str, cik: str, metadata: FilingMetadata) -> None:
-    """Log a 13F-NT loudly — the manager's holdings now report under a different CIK."""
+def _report_notice(name: str, cik: str, metadata: FilingMetadata, known_ciks: list[str]) -> None:
+    """Log a 13F-NT — the manager's holdings now report under a different CIK."""
     sleep(REQUEST_DELAY)
     xml_content = download_xml(cik, metadata["accessionNumber"], primary_doc_name(metadata["primaryDocument"]))
     successors = parse_nt_successor_ciks(xml_content) if xml_content else []
+    tracked = {_normalize_cik(c) for c in known_ciks}
+    missing = [s for s in successors if _normalize_cik(s) not in tracked]
+
+    if successors and not missing:
+        logger.info(
+            "  %s (CIK %s) filed a 13F-NT for %s; successor CIK(s) %s already tracked",
+            name,
+            cik,
+            metadata["reportDate"],
+            ", ".join(successors),
+        )
+        return
+
     logger.error(
         "%s (CIK %s) filed a 13F-NT for %s — holdings now report under CIK(s) %s. "
         "Add them to this investor's 'ciks' in INVESTORS, or the manager silently stops updating.",
         name,
         cik,
         metadata["reportDate"],
-        ", ".join(successors) or "unknown (see the filing's otherManagersInfo)",
+        ", ".join(missing) or "unknown (see the filing's otherManagersInfo)",
     )
 
 
-def _scrape_cik(name: str, cik: str, fetch_count: int) -> list[ScrapedFiling]:
+def _scrape_cik(name: str, cik: str, fetch_count: int, known_ciks: list[str]) -> list[ScrapedFiling]:
     """Scrape one CIK, resolving each report date's original and amendments into one filing."""
     sleep(REQUEST_DELAY)
     filings_metadata = get_recent_13f_filings(cik, max_filings=fetch_count)
@@ -608,7 +634,7 @@ def _scrape_cik(name: str, cik: str, fetch_count: int) -> list[ScrapedFiling]:
         # EDGAR lists newest first; apply amendments oldest-first so the newest wins a restatement.
         amendments = list(reversed([m for m in metas if m["form"] == "13F-HR/A"]))
         if not originals and not amendments:
-            _report_notice(name, cik, metas[0])
+            _report_notice(name, cik, metas[0], known_ciks)
             continue
 
         filing: Optional[ScrapedFiling] = None
@@ -626,7 +652,7 @@ def _scrape_cik(name: str, cik: str, fetch_count: int) -> list[ScrapedFiling]:
                 )
                 continue
 
-            parsed = _fetch_filing(name, cik, metadata)
+            parsed = _fetch_filing(name, cik, metadata, is_partial=disposition == "merge")
             if parsed is None:
                 continue
 
@@ -687,7 +713,7 @@ def scrape_investor(
 
     scraped: list[ScrapedFiling] = []
     for cik in ciks:
-        scraped.extend(_scrape_cik(name, cik, fetch_count))
+        scraped.extend(_scrape_cik(name, cik, fetch_count, ciks))
     return merge_same_quarter(scraped, primary_cik)
 
 

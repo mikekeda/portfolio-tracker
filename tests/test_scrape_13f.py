@@ -10,6 +10,7 @@ from scripts.scrape_13f import (
     parse_amendment_type,
     parse_nt_successor_ciks,
     primary_doc_name,
+    reported_in_thousands,
     select_recent_filings,
 )
 
@@ -140,6 +141,18 @@ def test_amendment_disposition_skips_unclassifiable_amendments():
     # NEW HOLDINGS delta would overwrite a 110-row quarter.
     assert amendment_disposition("13F-HR/A", "") == "skip"
     assert amendment_disposition("13F-HR/A", "SOME FUTURE TYPE") == "skip"
+
+
+def test_reported_in_thousands_ignores_partial_amendments():
+    # Pershing's 2024-12-31 amendment is one $46.5M lot. Scaling it as if it were a whole
+    # portfolio below the $100M filing floor turned a $12.66bn quarter into $59.1bn.
+    assert reported_in_thousands(46_533_105, is_partial=True) is False
+    assert reported_in_thousands(46_533_105, is_partial=False) is True
+
+
+def test_reported_in_thousands_leaves_dollar_filings_alone():
+    assert reported_in_thousands(12_614_560_346, is_partial=False) is False
+    assert reported_in_thousands(0, is_partial=False) is False
 
 
 def test_merge_new_holdings_appends_without_deduping_cusips():
