@@ -7,19 +7,23 @@ parses the information table XML, and saves to database (Form13FManager, Form13F
 13F filings are quarterly disclosures by institutional managers with $100M+ AUM.
 Signals: new positions and large increases are more reliable than sells.
 
+One quarter can span several filings. A 13F-HR/A of type NEW HOLDINGS is a delta added to the
+original, not a replacement; a 13F-NT means the manager now reports under another CIK, which
+has to be added to its INVESTORS entry. Filings from a manager's CIKs merge into one per quarter.
+
 Note: Value is in dollars (nearest dollar) for filings from Jan 2023 onward.
 Pre-2023 filings may report value in thousands.
 
 SEC requires User-Agent: "CompanyName admin@example.com"
 """
 
-from datetime import date, datetime
+from datetime import date
 from time import sleep
 from typing import Optional, TypedDict
 
 import requests
 from lxml import etree
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from config import SEC_USER_AGENT, logger
@@ -162,11 +166,14 @@ class ScrapedFiling(TypedDict):
 #          Soros (macro bets not visible in 13F),
 #          Scion (fund deregistered 2025-11-10; Burry liquidated and returned capital),
 #          Tiger Global (high turnover; redundant tech-growth signal vs Coatue/Lone Pine).
-INVESTORS: list[dict[str, str]] = [
+
+# "cik" is the primary (stored on Form13FManager); optional "ciks" lists every CIK whose filings
+# belong to this manager, merged per quarter, for managers that re-filed under a new entity.
+INVESTORS: list[dict[str, str | list[str]]] = [
     # Value / long-term
     {"name": "Berkshire Hathaway", "cik": "1067983"},
     {"name": "Baupost Group", "cik": "1061768"},
-    {"name": "Pershing Square", "cik": "1336528"},
+    {"name": "Pershing Square", "cik": "1336528", "ciks": ["1336528", "2026053"]},
     {"name": "Pabrai Investment Funds", "cik": "1549575"},  # Filed under "Dalal Street, LLC"; personal CIK 1173334 stopped filing after 2011
     {
         "name": "Yacktman Asset Management",
@@ -216,40 +223,61 @@ def _normalize_cik(cik: str) -> str:
     return str(cik).zfill(10)
 
 
+def normalize_cusip(cusip: str) -> str:
+    """Canonical CUSIP form for storage and matching."""
+    return cusip.strip().upper()
+
+
+def investor_ciks(investor: dict[str, str | list[str]]) -> list[str]:
+    """Every CIK to scrape for an investor, primary first."""
+    ciks = investor.get("ciks")
+    if isinstance(ciks, list) and ciks:
+        return [str(c) for c in ciks]
+    return [str(investor["cik"])]
+
+
+def select_recent_filings(recent: dict, max_filings: int) -> list[FilingMetadata]:
+    """
+    Pick every 13F in a submissions `filings.recent` block covering its newest report dates.
+
+    Keeps all filings for each of the `max_filings` newest report dates rather than one per
+    date, so a quarter's original and its amendments both surface for the caller to combine.
+    13F-NT rows are kept so a manager that stopped filing under this CIK is detectable rather
+    than looking like a late filer.
+    """
+    forms = recent.get("form", [])
+    accessions = recent.get("accessionNumber", [])
+    primary_docs = recent.get("primaryDocument", [])
+    report_dates = recent.get("reportDate", [])
+
+    candidates = [
+        (report_dates[i] if i < len(report_dates) else "", i)
+        for i, form in enumerate(forms)
+        if form in ("13F-HR", "13F-HR/A", "13F-NT")
+    ]
+    # Chosen by report date, not position: EDGAR orders by filing date, so an amendment for an
+    # older quarter can precede a newer quarter's original.
+    wanted = set(sorted({report_date for report_date, _ in candidates}, reverse=True)[:max_filings])
+
+    return [
+        {
+            "accessionNumber": accessions[i] if i < len(accessions) else "",
+            "primaryDocument": primary_docs[i] if i < len(primary_docs) else "",
+            "form": forms[i],
+            "reportDate": report_date,
+        }
+        for report_date, i in candidates
+        if report_date in wanted
+    ]
+
+
 def get_recent_13f_filings(cik: str, max_filings: int = 2) -> list[FilingMetadata]:
-    """Fetches the most recent 13F-HR/13F-HR/A filings for the given CIK (latest + previous quarter)."""
+    """Fetch 13F metadata for the `max_filings` most recent report dates of a CIK."""
     cik = _normalize_cik(cik)
     url = SEC_SUBMISSIONS_URL.format(cik=cik)
     response = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
     response.raise_for_status()
-    data = response.json()
-
-    filings = data.get("filings", {}).get("recent", {})
-    forms = filings.get("form", [])
-    accessions = filings.get("accessionNumber", [])
-    primary_docs = filings.get("primaryDocument", [])
-    report_dates = filings.get("reportDate", [])
-
-    result: list[FilingMetadata] = []
-    seen_dates: set[str] = set()
-    for i, form in enumerate(forms):
-        if form not in ("13F-HR", "13F-HR/A"):
-            continue
-        report_date = report_dates[i] if i < len(report_dates) else ""
-        if report_date in seen_dates:
-            continue
-        seen_dates.add(report_date)
-        result.append(
-            {
-                "accessionNumber": accessions[i] if i < len(accessions) else "",
-                "primaryDocument": primary_docs[i] if i < len(primary_docs) else "",
-                "form": form,
-                "reportDate": report_date,
-            }
-        )
-        if len(result) >= max_filings:
-            break
-    return result
+    return select_recent_filings(response.json().get("filings", {}).get("recent", {}), max_filings)
 
 
 def get_filing_index(cik: str, accession: str) -> Optional[dict]:
@@ -372,96 +400,260 @@ def parse_13f_xml(xml_content: str) -> list[ParsedHolding]:
     return holdings
 
 
+def _first_text(xml_content: str, tag: str) -> str:
+    """Text of the first element with this local name, or empty."""
+    root = etree.fromstring(xml_content.encode("utf-8"))
+    found = root.xpath(f".//*[local-name()='{tag}']")
+    return (found[0].text or "").strip() if found else ""
+
+
+def parse_amendment_type(xml_content: str) -> str:
+    """
+    Amendment type from a 13F primary_doc.xml: "RESTATEMENT", "NEW HOLDINGS", or "".
+
+    RESTATEMENT replaces the whole info table; NEW HOLDINGS carries only rows not previously
+    reported (typically confidential-treatment positions being released), so it must be added
+    to the original filing rather than replacing it.
+    """
+    return _first_text(xml_content, "amendmentType").upper()
+
+
+def amendment_disposition(form: str, amendment_type: str) -> str:
+    """
+    How one filing combines with a quarter's existing rows: "replace", "merge", or "skip".
+
+    An original states the full table. An amendment replaces it only when SEC-classified as a
+    RESTATEMENT; NEW HOLDINGS is a delta to merge. Anything else — usually an unreadable
+    primary_doc, which parses to "" — is skipped: guessing "replace" would let a four-row
+    delta stand in for the whole quarter.
+    """
+    if form != "13F-HR/A":
+        return "replace"
+    return {"RESTATEMENT": "replace", "NEW HOLDINGS": "merge"}.get(amendment_type, "skip")
+
+
+def parse_nt_successor_ciks(xml_content: str) -> list[str]:
+    """CIKs listed as other managers on a 13F-NT — where this manager's holdings now report."""
+    root = etree.fromstring(xml_content.encode("utf-8"))
+    return [
+        (el.text or "").strip()
+        for el in root.xpath(".//*[local-name()='otherManager']/*[local-name()='cik']")
+        if (el.text or "").strip()
+    ]
+
+
+def merge_new_holdings(base: ScrapedFiling, amendment: ScrapedFiling) -> ScrapedFiling:
+    """
+    Add a NEW HOLDINGS amendment's rows to the original filing.
+
+    Rows are appended, never deduplicated by CUSIP: an amendment can report a further lot of a
+    CUSIP the original already carries, and duplicate CUSIP rows per filing are expected anyway
+    (share classes, otherManager splits). Keeps the original's form and accession so the row
+    still identifies as the full filing.
+    """
+    holdings = base["holdings"] + amendment["holdings"]
+    return {
+        **base,
+        "holdingsCount": len(holdings),
+        "totalValue": base["totalValue"] + amendment["totalValue"],
+        "holdings": holdings,
+    }
+
+
+def merge_same_quarter(filings: list[ScrapedFiling], primary_cik: str) -> list[ScrapedFiling]:
+    """
+    Combine one manager's filings from several CIKs into one filing per report date.
+
+    Sets every result's cik to the primary so _save_to_db resolves a single Form13FManager,
+    keeping one filing per manager per quarter as uq_form13f_manager_report_date requires.
+    """
+    merged: dict[str, ScrapedFiling] = {}
+    for filing in filings:
+        report_date = filing["reportDate"]
+        existing = merged.get(report_date)
+        if existing is None:
+            merged[report_date] = {**filing, "cik": primary_cik}
+            continue
+        holdings = existing["holdings"] + filing["holdings"]
+        merged[report_date] = {
+            **existing,
+            "holdingsCount": len(holdings),
+            "totalValue": existing["totalValue"] + filing["totalValue"],
+            "holdings": holdings,
+        }
+    return list(merged.values())
+
+
+def _fetch_filing(name: str, cik: str, metadata: FilingMetadata) -> Optional[ScrapedFiling]:
+    """Download and parse one filing's information table."""
+    accession = metadata["accessionNumber"]
+    report_date = metadata["reportDate"]
+
+    sleep(REQUEST_DELAY)
+    index_data = get_filing_index(cik, accession)
+    if not index_data:
+        logger.warning("Could not fetch index for %s accession %s", name, accession)
+        return None
+
+    xml_filename = find_info_table_xml(index_data)
+    if not xml_filename:
+        logger.warning("No info table XML found for %s accession %s", name, accession)
+        return None
+
+    sleep(REQUEST_DELAY)
+    xml_content = download_xml(cik, accession, xml_filename)
+    if not xml_content:
+        logger.warning("Could not download XML for %s accession %s", name, accession)
+        return None
+
+    holdings = parse_13f_xml(xml_content)
+    total_value = sum(h["value"] for h in holdings)
+
+    # $100M is the minimum AUM required to file a 13F, so a smaller raw sum means the manager
+    # reported in thousands (the pre-2023 convention) on a filing that should be in dollars.
+    if 0 < total_value < 100_000_000:
+        holdings = [{**h, "value": h["value"] * 1000} for h in holdings]
+        total_value *= 1000
+        logger.warning(
+            "  Non-compliant filing for %s (%s): raw AUM %s < 100M. Scaled ×1000",
+            name,
+            report_date,
+            f"${total_value / 1000:,}",
+        )
+
+    return {
+        "investor": name,
+        "cik": cik,
+        "reportDate": report_date,
+        "form": metadata["form"],
+        "accessionNumber": accession,
+        "holdingsCount": len(holdings),
+        "totalValue": total_value,
+        "holdings": holdings,
+    }
+
+
+def _fetch_amendment_type(cik: str, metadata: FilingMetadata) -> str:
+    """Amendment type for a 13F-HR/A, or empty when the primary document is unreadable."""
+    sleep(REQUEST_DELAY)
+    xml_content = download_xml(cik, metadata["accessionNumber"], metadata["primaryDocument"] or "primary_doc.xml")
+    return parse_amendment_type(xml_content) if xml_content else ""
+
+
+def _report_notice(name: str, cik: str, metadata: FilingMetadata) -> None:
+    """Log a 13F-NT loudly — the manager's holdings now report under a different CIK."""
+    sleep(REQUEST_DELAY)
+    xml_content = download_xml(cik, metadata["accessionNumber"], metadata["primaryDocument"] or "primary_doc.xml")
+    successors = parse_nt_successor_ciks(xml_content) if xml_content else []
+    logger.error(
+        "%s (CIK %s) filed a 13F-NT for %s — holdings now report under CIK(s) %s. "
+        "Add them to this investor's 'ciks' in INVESTORS, or the manager silently stops updating.",
+        name,
+        cik,
+        metadata["reportDate"],
+        ", ".join(successors) or "unknown (see the filing's otherManagersInfo)",
+    )
+
+
+def _scrape_cik(name: str, cik: str, fetch_count: int) -> list[ScrapedFiling]:
+    """Scrape one CIK, resolving each report date's original and amendments into one filing."""
+    sleep(REQUEST_DELAY)
+    filings_metadata = get_recent_13f_filings(cik, max_filings=fetch_count)
+    if not filings_metadata:
+        logger.warning("No 13F filing found for %s (CIK %s)", name, cik)
+        return []
+
+    by_date: dict[str, list[FilingMetadata]] = {}
+    for metadata in filings_metadata:
+        by_date.setdefault(metadata["reportDate"], []).append(metadata)
+
+    results: list[ScrapedFiling] = []
+    for report_date, metas in by_date.items():
+        originals = [m for m in metas if m["form"] == "13F-HR"]
+        # EDGAR lists newest first; apply amendments oldest-first so the newest wins a restatement.
+        amendments = list(reversed([m for m in metas if m["form"] == "13F-HR/A"]))
+        if not originals and not amendments:
+            _report_notice(name, cik, metas[0])
+            continue
+
+        filing: Optional[ScrapedFiling] = None
+        for metadata in originals[:1] + amendments:
+            amendment_type = _fetch_amendment_type(cik, metadata) if metadata["form"] == "13F-HR/A" else ""
+            disposition = amendment_disposition(metadata["form"], amendment_type)
+            if disposition == "skip":
+                logger.error(
+                    "%s %s: cannot classify amendment %s (amendmentType %r) — keeping the original, "
+                    "since a NEW HOLDINGS delta would otherwise replace the full filing",
+                    name,
+                    report_date,
+                    metadata["accessionNumber"],
+                    amendment_type,
+                )
+                continue
+
+            parsed = _fetch_filing(name, cik, metadata)
+            if parsed is None:
+                continue
+
+            if disposition == "replace":
+                filing = parsed
+            elif filing is None:
+                logger.error(
+                    "%s %s: NEW HOLDINGS amendment %s has no readable original — skipping, "
+                    "storing the delta alone would look like the whole quarter",
+                    name,
+                    report_date,
+                    metadata["accessionNumber"],
+                )
+            else:
+                filing = merge_new_holdings(filing, parsed)
+                logger.info("  %s: %s amendment added %d holding(s)", name, report_date, parsed["holdingsCount"])
+
+        if filing is None:
+            continue
+        results.append(filing)
+        logger.info(
+            "  %s: report %s, %d holdings, $%s",
+            name,
+            report_date,
+            filing["holdingsCount"],
+            f"{filing['totalValue']:,}",
+        )
+
+    return results
+
+
 def scrape_investor(
-    investor: dict[str, str],
+    investor: dict[str, str | list[str]],
     existing_dates: set[str],
     default_quarters: int = 2,
 ) -> list[ScrapedFiling]:
     """
-    Scrapes 13F data for a single investor.
+    Scrapes 13F data for a single investor across all of its CIKs.
 
     Fetches `default_quarters` quarters until the DB has enough history for
     trend detection. Once the target is reached, fetches only the most recent
     quarter to pick up new filings and amendments.
     """
-    name = investor["name"]
-    cik = investor["cik"]
+    name = str(investor["name"])
+    primary_cik = str(investor["cik"])
+    ciks = investor_ciks(investor)
 
-    # Fetch default_quarters until we have enough history; then just fetch 1 (latest)
-    fetch_count = default_quarters if len(existing_dates) < default_quarters else 1
+    # existing_dates counts the manager's stored quarters, which says nothing about how much of
+    # a secondary CIK we hold — fetch the full window whenever more than one CIK is in play.
+    fetch_count = default_quarters if len(existing_dates) < default_quarters or len(ciks) > 1 else 1
     logger.info(
         "Fetching 13F for %s (CIK %s) — %d quarter(s) [%d in DB]",
         name,
-        cik,
+        ", ".join(ciks),
         fetch_count,
         len(existing_dates),
     )
-    sleep(REQUEST_DELAY)
 
-    filings_metadata = get_recent_13f_filings(cik, max_filings=fetch_count)
-    if not filings_metadata:
-        logger.warning("No 13F-HR filing found for %s", name)
-        return []
-
-    results: list[ScrapedFiling] = []
-    for metadata in filings_metadata:
-        accession = metadata["accessionNumber"]
-        report_date = metadata["reportDate"]
-
-        sleep(REQUEST_DELAY)
-        index_data = get_filing_index(cik, accession)
-        if not index_data:
-            logger.warning("Could not fetch index for %s accession %s", name, accession)
-            continue
-
-        xml_filename = find_info_table_xml(index_data)
-        if not xml_filename:
-            logger.warning("No info table XML found for %s", name)
-            continue
-
-        sleep(REQUEST_DELAY)
-        xml_content = download_xml(cik, accession, xml_filename)
-        if not xml_content:
-            logger.warning("Could not download XML for %s", name)
-            continue
-
-        holdings = parse_13f_xml(xml_content)
-        # Scale values for pre-2023 filings: SEC reported in thousands before 2023
-        try:
-            filing_date = date.fromisoformat(report_date)
-        except ValueError:
-            filing_date = datetime.now().date()
-
-        total_value = sum(h["value"] for h in holdings)
-
-        # Scale by 1000 if date < 2023 OR if total_value < $100M.
-        # $100M is the minimum AUM required to file a 13F. If the raw sum is < 100M,
-        # the manager definitely mistakenly filled out the form in thousands.
-        if 0 < total_value < 100_000_000:
-            holdings = [{**h, "value": h["value"] * 1000} for h in holdings]
-            total_value *= 1000
-            logger.warning(
-                "  Non-compliant 2024+ filing for %s (%s): raw AUM %s < 100M. Scaled ×1000",
-                name,
-                report_date,
-                f"${total_value / 1000:,}",
-            )
-
-        results.append(
-            {
-                "investor": name,
-                "cik": cik,
-                "reportDate": report_date,
-                "form": metadata["form"],
-                "accessionNumber": accession,
-                "holdingsCount": len(holdings),
-                "totalValue": total_value,
-                "holdings": holdings,
-            }
-        )
-        logger.info("  %s: report %s, %d holdings, $%s", name, report_date, len(holdings), f"{total_value:,}")
-
-    return results
+    scraped: list[ScrapedFiling] = []
+    for cik in ciks:
+        scraped.extend(_scrape_cik(name, cik, fetch_count))
+    return merge_same_quarter(scraped, primary_cik)
 
 
 def _get_existing_report_dates(session: Session, cik: str) -> set[str]:
@@ -530,6 +722,23 @@ def _save_to_db(session: Session, results: list[ScrapedFiling]) -> None:
         ).scalar_one_or_none()
 
         if filing:
+            # An empty parse must never wipe a good quarter — that is how Berkshire's Q1 2025
+            # book (110 holdings, $258.7bn) was replaced by a zero-row row.
+            if not r["holdings"]:
+                existing = session.execute(
+                    select(func.count()).select_from(Form13FHolding).where(Form13FHolding.filing_id == filing.id)
+                ).scalar_one()
+                if existing:
+                    logger.error(
+                        "Refusing to overwrite %s %s (%d holdings) with a filing that parsed to none — "
+                        "accession %s",
+                        r["investor"],
+                        r["reportDate"],
+                        existing,
+                        r["accessionNumber"],
+                    )
+                    continue
+
             # Delete existing holdings (we're replacing)
             session.execute(delete(Form13FHolding).where(Form13FHolding.filing_id == filing.id))
             filing.accession_number = r["accessionNumber"]
@@ -548,15 +757,15 @@ def _save_to_db(session: Session, results: list[ScrapedFiling]) -> None:
 
         # Insert holdings
         for h in r["holdings"]:
-            cusip = h["cusip"].strip()
+            cusip = normalize_cusip(h["cusip"])
             if not cusip:
                 continue
             issuer = h["issuer"].strip() or "Unknown"
-            instrument_id = cusip_to_instrument.get(cusip.upper())
+            instrument_id = cusip_to_instrument.get(cusip)
             if instrument_id:
                 matched_count += 1
             else:
-                key = cusip.upper()
+                key = cusip
                 row = unmatched_agg.get(key)
                 v = h["value"]
                 if row is None:
@@ -607,7 +816,7 @@ def main(limit: Optional[int] = None, default_quarters: int = 4) -> None:
 
     with get_session() as session:
         for inv in investors:
-            existing_dates = _get_existing_report_dates(session, inv["cik"])
+            existing_dates = _get_existing_report_dates(session, str(inv["cik"]))
             try:
                 data_list = scrape_investor(inv, existing_dates=existing_dates, default_quarters=default_quarters)
                 results.extend(data_list)
