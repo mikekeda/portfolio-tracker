@@ -114,6 +114,30 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     "IE00BDVJJQ56": "G6700G107",  # nVent Electric plc
     "LU0974299876": "L44385109",  # Globant S.A.
     "IL0010824113": "M22465104",  # Check Point Software
+    # 2026-08-20 — instruments with no 13F match at all, found by cross-checking every monitored
+    # instrument against unmatched CUSIPs. CINS lines (non-US domicile) and US ADR lines.
+    "NL0009805522": "N97284108",  # Nebius Group N.V.
+    "NL0009538784": "N6596X109",  # NXP Semiconductors N.V.
+    "IE00BKVD2N49": "G7997R103",  # Seagate Technology Holdings plc
+    "JE00BTDN8H13": "G3265R107",  # Aptiv plc (Jersey)
+    "JE00BJ1F3079": "G0250X107",  # Amcor plc (Jersey)
+    "IE00BFRT3W74": "G0176J109",  # Allegion plc
+    "IE00BFY8C754": "G8473T100",  # Steris plc
+    "GB00BMHVL512": "G5279N105",  # Klarna Group plc
+    "IL0011858912": "M7S64L123",  # Pagaya Technologies Ltd
+    "IL0011741688": "M5216V106",  # Global-E Online Ltd
+    "IL0011582033": "M4R82T106",  # Fiverr International Ltd
+    "IL0010952641": "M20791105",  # Camtek Ltd
+    "DE0007164600": "803054204",  # SAP SE (Xetra line vs US ADR CUSIP)
+    "GB00BP6MXD84": "780259305",  # Shell plc
+    "GB00B2B0DG97": "759530108",  # RELX plc
+    "GB0007099541": "74435K204",  # Prudential plc
+    "GB00BDR05C01": "636274409",  # National Grid plc
+    "GB0009223206": "83175M205",  # Smith & Nephew plc
+    "GB0005405286": "404280406",  # HSBC Holdings plc
+    "GB0007188757": "767204100",  # Rio Tinto plc
+    "FR0000120271": "F92124100",  # TotalEnergies SE
+    "US4228061093": "422806208",  # Heico Corp — managers file only the Class A line
 }
 
 # Some issuers file under multiple CUSIPs (e.g. ADR + ordinary-share lines), but the
@@ -123,6 +147,10 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
 # the ISIN whose instrument they should resolve to.
 EXTRA_CUSIP_TO_ISIN_ALIASES: dict[str, str] = {
     "G0593M107": "GB0009895292",  # AstraZeneca PLC ordinary shares -> same instrument as ADR line
+    # 2026-08-20 — second lines for instruments that already match on another CUSIP.
+    "904767704": "GB00BVZK7T90",  # Unilever PLC — older ADR line alongside 904767803
+    "G2004J103": "PA1436583006",  # Carnival plc — dual-listed twin of Carnival Corp (143658300)
+    "K08588103": "US04351P1012",  # Ascendis Pharma A/S Danish ordinary -> same instrument as ADR
 }
 
 
