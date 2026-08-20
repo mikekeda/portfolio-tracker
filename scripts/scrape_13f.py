@@ -65,7 +65,8 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
     # 2026-04-08 run — top unmatched by 13F $ (issuer ISIN vs SEC CUSIP)
     "BE0974293251": "03524A108",  # Anheuser-Busch InBev SA/NV (vs US ADR ISIN)
     "IE00B8KQN827": "G29183103",  # Eaton Corp plc
-    "BRPETRACNOR9": "71654V408",  # Petróleo Brasileiro Petrobras (ordinary vs ADR line in 13F)
+    # Petrobras is deliberately absent: the PBR instrument (US71654V4086) derives 71654V408
+    # itself, so an override for the Brazilian line would fight it for the same CUSIP.
     "IE0005711209": "G4705A100",  # ICON plc
     "CH0012005267": "66987V109",  # Novartis AG (Swiss line vs NYSE ADR CUSIP)
     "GB0002875804": "110448107",  # British American Tobacco plc (UK vs ADR CUSIP)
@@ -762,16 +763,29 @@ def _build_cusip_to_instrument_map(session: Session) -> dict[str, int]:
     for Brookfield Corp BN). Keys are uppercased for case-insensitive lookup.
     EXTRA_CUSIP_TO_ISIN_ALIASES adds further CUSIPs for issuers filed under more than one
     (e.g. ADR + ordinary-share lines)."""
-    result = session.execute(select(Instrument.id, Instrument.isin).where(Instrument.isin.is_not(None)))
+    result = session.execute(
+        select(Instrument.id, Instrument.isin).where(Instrument.isin.is_not(None)).order_by(Instrument.id)
+    )
     mapping: dict[str, int] = {}
     isin_to_id: dict[str, int] = {}
+    derived: set[str] = set()
     for row in result.all():
         isin = (row.isin or "").strip().upper()
         if len(isin) < 11:
             continue
         isin_to_id[isin] = row.id
-        cusip = ISIN_TO_CUSIP_OVERRIDES.get(isin, isin[2:11])
-        mapping[cusip.upper()] = row.id
+        override = ISIN_TO_CUSIP_OVERRIDES.get(isin)
+        cusip = (override or isin[2:11]).upper()
+        # Two ISINs can claim one CUSIP (an override plus the instrument that embeds it, e.g.
+        # Petrobras). Prefer the natural derivation, and never let row order decide silently.
+        if cusip in mapping and mapping[cusip] != row.id:
+            if override is not None and cusip in derived:
+                logger.warning("CUSIP %s: keeping instrument %d over the %s override", cusip, mapping[cusip], isin)
+                continue
+            logger.warning("CUSIP %s reassigned from instrument %d to %d (%s)", cusip, mapping[cusip], row.id, isin)
+        mapping[cusip] = row.id
+        if override is None:
+            derived.add(cusip)
     for alias_cusip, alias_isin in EXTRA_CUSIP_TO_ISIN_ALIASES.items():
         instrument_id = isin_to_id.get(alias_isin.upper())
         if instrument_id is not None:
