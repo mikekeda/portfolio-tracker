@@ -54,6 +54,7 @@ STOCKS_ALIASES: dict[str, str] = {  # updated 2026-08-01, event-driven
     "DMYI": "IONQ",
     "DPS": "KDP",
     "EJFA": "PGY",
+    "ECM": "RS1",  # Electrocomponents -> RS Group, renamed Mar 2022
     "FB": "META",
     "FLT": "CPAY",
     "FP": "TTE",
