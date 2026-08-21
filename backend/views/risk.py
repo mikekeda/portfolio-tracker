@@ -42,6 +42,7 @@ from backend.utils.risk_math import (
 )
 from backend.views._shared import PRICE_COLUMN
 from config import (
+    LOOKTHROUGH_MIN_EXPOSURE_GBP,
     MAX_TOLERABLE_ANNUAL_LOSS,
     logger,
     SPY,
@@ -76,11 +77,6 @@ EXTREME_DAILY_RETURN = 0.60
 SUSPECT_SAME_DAY_SYMBOLS = 3
 # The un-enumerated tail bucket in ETF_CONSTITUENTS, not a tradable symbol.
 OTHER_KEY = "Other"
-# Look-through depth is bounded by the estimator, not the data. Enumerating every
-# constituent gives 673 assets on 442 observations, where Ledoit-Wolf shrinks toward
-# constant correlation and reads vol 2.6pp low; this floor holds T/N near 2.4 and
-# leaves ~1.3% of the book unattributed. Raise it if the return window shortens.
-LOOKTHROUGH_MIN_EXPOSURE_GBP = 5.0
 # Positions with avg pairwise correlation above this move as one bet.
 GROUP_MIN_CORR = 0.5
 # Normal 5% expected shortfall as a multiple of sigma: phi(Phi^-1(0.05)) / 0.05.

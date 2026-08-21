@@ -18,7 +18,7 @@ import argparse
 
 from sqlalchemy import text
 
-from config import BENCHES, VIX, logger
+from config import BENCHES, LOOKTHROUGH_MIN_EXPOSURE_GBP, VIX, logger
 from data import ETF_CONSTITUENTS, QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED, WISESHEETS_NO_PE
 from scripts.update_data import get_session
 
@@ -54,20 +54,45 @@ FX_INCEPTION_ROWS = 20   # series-start window where USD junk rows cluster
 CHECKS: list[tuple[str, str, str, str]] = [
     (
         "etf_constituent_prices",
-        "ETF look-through constituents with missing or stale prices",
-        "The /risk look-through silently drops a constituent it cannot price, which "
-        "shifts that weight into the fund's residual and understates the name's true "
-        "exposure. Constituents stay priced because they sit in SP500/QQQ; a finding "
-        "means one left an index (re-sync ETF_CONSTITUENTS from the provider), "
-        "or its ticker was renamed — add it to STOCKS_ALIASES.",
+        "material ETF look-through constituents with missing or stale prices",
+        "The look-through drops a constituent it cannot price, shifting that weight into "
+        "the fund's residual and understating the name's true exposure. Most constituents "
+        "are not in SP500/QQQ so nothing fetches them — that is expected and immaterial, "
+        "which is why only slices above LOOKTHROUGH_MIN_EXPOSURE_GBP are reported here. "
+        "A finding is usually a stale yahoo_symbol on the Instrument the ISIN maps to "
+        "(RB.L for Reckitt, renamed RKT.L): fix instruments.yahoo_symbol, add the old "
+        "ticker to STOCKS_ALIASES, and rename any prices_daily rows.",
         f"""
-        WITH wanted AS (SELECT unnest(CAST(:etf_constituents AS text[])) AS symbol)
-        SELECT w.symbol, count(p.date) AS obs, max(p.date) AS last_price
-        FROM wanted w LEFT JOIN prices_daily p ON p.symbol = w.symbol
-        GROUP BY w.symbol
-        HAVING count(p.date) = 0
-            OR max(p.date) < CURRENT_DATE - {STALE_PRICE_DAYS}
-        ORDER BY count(p.date)
+        WITH fx AS (
+            SELECT from_currency, rate FROM currency_rates_daily
+            WHERE date = (SELECT max(date) FROM currency_rates_daily)
+        ),
+        fund_value AS (
+            SELECT i.yahoo_symbol AS fund,
+                   h.quantity * h.current_price * (CASE
+                       WHEN i.currency = 'GBX' THEN 0.01
+                       WHEN i.currency = 'GBP' THEN 1.0
+                       ELSE COALESCE((SELECT rate FROM fx WHERE from_currency = i.currency), 1)
+                   END) AS gbp
+            FROM holdings_daily h
+            JOIN instruments i ON i.id = h.instrument_id
+            WHERE h.date = (SELECT max(date) FROM holdings_daily) AND h.quantity > 0
+        ),
+        want AS (
+            SELECT t.sym, t.fund, fv.gbp * t.pct / 100.0 AS exposure_gbp
+            FROM unnest(
+                CAST(:lt_funds AS text[]), CAST(:lt_syms AS text[]), CAST(:lt_pcts AS float8[])
+            ) AS t(fund, sym, pct)
+            JOIN fund_value fv ON fv.fund = t.fund
+        )
+        SELECT w.sym, w.fund, round(w.exposure_gbp::numeric, 2) AS exposure_gbp,
+               count(p.date) AS obs, max(p.date) AS last_price
+        FROM want w
+        LEFT JOIN prices_daily p ON p.symbol = w.sym
+        WHERE w.exposure_gbp >= :lt_floor
+        GROUP BY w.sym, w.fund, w.exposure_gbp
+        HAVING count(p.date) = 0 OR max(p.date) < CURRENT_DATE - {STALE_PRICE_DAYS}
+        ORDER BY w.exposure_gbp DESC
         """,
     ),
     (
@@ -561,10 +586,19 @@ def run_check(session, name: str, description: str, fix: str, sql: str) -> int:
         # points at the pre-rename ticker.
         params["alias_old"] = list(STOCKS_ALIASES.keys())
         params["alias_new"] = list(STOCKS_ALIASES.values())
-    if ":etf_constituents" in sql:
-        params["etf_constituents"] = sorted(
-            {t for weights in ETF_CONSTITUENTS.values() for t in weights if t != "Other"}
-        )
+    if ":lt_syms" in sql:
+        # Parallel arrays rather than a VALUES list: the fund is needed to turn a
+        # constituent weight into a pounds exposure the floor can be applied to.
+        triples = [
+            (fund, sym, pct)
+            for fund, weights in ETF_CONSTITUENTS.items()
+            for sym, pct in weights.items()
+            if sym != "Other"
+        ]
+        params["lt_funds"] = [f for f, _, _ in triples]
+        params["lt_syms"] = [s for _, s, _ in triples]
+        params["lt_pcts"] = [p for _, _, p in triples]
+        params["lt_floor"] = LOOKTHROUGH_MIN_EXPOSURE_GBP
     if ":stale_13f_days" in sql:
         params["stale_13f_days"] = STALE_13F_DAYS
     rows = session.execute(text(sql), params).all()

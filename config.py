@@ -172,6 +172,10 @@ AGENT_MAX_DAILY_TURNOVER = 0.05  # per side (sells and buys each), fraction of p
 AGENT_MIN_HOLDINGS = 5
 AGENT_MAX_POSITION_WEIGHT = 0.16  # NVDA is ~15% today; cap must not force an immediate trim
 AGENT_MIN_TRADE_GBP = 150.0
+# Smallest look-through slice worth modelling: enumerating every ETF constituent
+# pushes assets past observations and Ledoit-Wolf then reads volatility ~2.6pp low.
+LOOKTHROUGH_MIN_EXPOSURE_GBP = 5.0
+
 # Maximum tolerable 12-month loss (IPS, STRATEGY.md §1.3) — the policy's only
 # binding risk parameter. The Risk page tests expected shortfall against it.
 MAX_TOLERABLE_ANNUAL_LOSS = 0.50
