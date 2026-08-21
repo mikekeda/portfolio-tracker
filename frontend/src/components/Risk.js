@@ -158,7 +158,7 @@ const Risk = () => {
   const [data, setData] = useState(null);
   const [scores, setScores] = useState(null);
   const [error, setError] = useState(null);
-  const [buySort, setBuySort] = useState({ key: 'breakeven_excess_return', dir: 'asc' });
+  const [buySort, setBuySort] = useState({ key: 'breakeven_excess_return', dir: 'desc' });
   const [detailSort, setDetailSort] = useState({ key: 'risk_contribution', dir: 'desc' });
   const { hideAmounts } = useHideAmounts();
 
@@ -233,6 +233,10 @@ const Risk = () => {
   const etfLineRisk = lookThrough
     ? lookThrough.funds.reduce((acc, f) => acc + (lineItemRisk[f.symbol] ?? 0), 0)
     : 0;
+  const viaFundOnly = (lookThrough?.exposures ?? [])
+    .filter((e) => !e.held_directly && !lookThrough.funds.some((f) => f.symbol === e.symbol))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 8);
 
   return (
     <div className="page-fixed risk-container">
@@ -469,9 +473,9 @@ const Risk = () => {
           Adding to a position only improves compounded return if it beats the variance drag it
           adds — so each one carries a hurdle: the excess return over the portfolio it must earn
           to be worth funding, σ²(β−1). Negative means it can underperform and still help; a
-          steep positive hurdle needs conviction to match. This is not a ranking — a low hurdle
-          is not a recommendation, it is a low bar. Δvol and the screener score are shown as
-          supporting detail.
+          steep positive hurdle needs conviction to match. Sorted steepest first, because the
+          question this answers is which positions have the most to prove — a low hurdle is a low
+          bar, not a recommendation. Δvol and the screener score are shown as supporting detail.
         </p>
         <table className="risk-table">
           <thead>
@@ -486,13 +490,9 @@ const Risk = () => {
             </tr>
           </thead>
           <tbody>
-            {/* Blocked names sort last rather than being hidden — a cap breach is
-                information, and silently dropping rows reads as a bug. Filtering
-                happens before the slice so they can't crowd out fundable ones. */}
-            {sortRows(rows, buySort)
-              .sort((a, b) => (a.blocked_tags?.length ? 1 : 0) - (b.blocked_tags?.length ? 1 : 0))
-              .slice(0, 12)
-              .map((h) => (
+            {/* Every holding, unsliced: the point of this table is the spread between
+                the cheapest and steepest hurdle, and a top-N of either end inverts it. */}
+            {sortRows(rows, buySort).map((h) => (
                 <tr key={h.symbol} className={h.blocked_tags?.length ? 'risk-row-blocked' : undefined}>
                   <td>
                     <StockLink symbol={h.symbol} />
@@ -518,7 +518,7 @@ const Risk = () => {
                   </td>
                   <td className="num">{formatPct(h.weight)}</td>
                 </tr>
-              ))}
+            ))}
           </tbody>
         </table>
       </div>
@@ -584,6 +584,13 @@ const Risk = () => {
               })}
             </tbody>
           </table>
+          {viaFundOnly.length > 0 && (
+            <p className="risk-section-note">
+              Largest companies you hold <strong>only</strong> through a fund, never bought
+              directly:{' '}
+              {viaFundOnly.map((e) => `${e.symbol} ${formatPct(e.weight)}`).join(' · ')}.
+            </p>
+          )}
         </div>
       )}
 
