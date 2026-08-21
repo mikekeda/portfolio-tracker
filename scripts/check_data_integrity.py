@@ -19,7 +19,7 @@ import argparse
 from sqlalchemy import text
 
 from config import BENCHES, LOOKTHROUGH_MIN_EXPOSURE_GBP, VIX, logger
-from data import ETF_CONSTITUENTS, QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED, WISESHEETS_NO_PE
+from data import ETF_HOLDING_SOURCES, QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED, WISESHEETS_NO_PE
 from scripts.update_data import get_session
 
 # Findings shown per check before truncating — keeps logs readable when a
@@ -38,6 +38,9 @@ STALE_PE_DAYS = 120
 # 13F is due 45 days after quarter end; past that plus a few days' grace, a manager still
 # behind the newest filed quarter has stopped filing rather than being late.
 STALE_13F_DAYS = 50
+# The refresh runs weekly; a gap past this means it stopped, whether or not
+# the index itself moved (an unchanged fetch still stamps updated_at).
+STALE_ETF_HOLDING_DAYS = 30
 PORTFOLIO_DIFF_PCT = 1.0  # T212 total vs holdings sum; small FX drift is normal
 # Same bounds as the split detector: an unadjusted 2:1 split shows as ~0.5x.
 MOVE_UPPER, MOVE_LOWER = 1.8, 0.55
@@ -53,46 +56,84 @@ FX_INCEPTION_ROWS = 20   # series-start window where USD junk rows cluster
 # so it can be pasted into psql/pgAdmin unchanged when digging into a finding.
 CHECKS: list[tuple[str, str, str, str]] = [
     (
-        "etf_constituent_prices",
+        "etf_holding_prices",
         "material ETF look-through constituents with missing or stale prices",
         "The look-through drops a constituent it cannot price, shifting that weight into "
-        "the fund's residual and understating the name's true exposure. Most constituents "
-        "are not in SP500/QQQ so nothing fetches them — that is expected and immaterial, "
-        "which is why only slices above LOOKTHROUGH_MIN_EXPOSURE_GBP are reported here. "
-        "A finding is usually a stale yahoo_symbol on the Instrument the ISIN maps to "
-        "(RB.L for Reckitt, renamed RKT.L): fix instruments.yahoo_symbol, add the old "
-        "ticker to STOCKS_ALIASES, and rename any prices_daily rows.",
+        "the fund's residual. Only slices above LOOKTHROUGH_MIN_EXPOSURE_GBP are reported: "
+        "most constituents are not in SP500/QQQ so nothing fetches them, which is expected "
+        "and immaterial. A finding is usually a stale yahoo_symbol on the resolved "
+        "Instrument (ECM.L for RS Group, renamed RS1.L): fix instruments.yahoo_symbol and "
+        "add the old ticker to STOCKS_ALIASES.",
         f"""
         WITH fx AS (
             SELECT from_currency, rate FROM currency_rates_daily
             WHERE date = (SELECT max(date) FROM currency_rates_daily)
         ),
         fund_value AS (
-            SELECT i.yahoo_symbol AS fund,
+            SELECT i.id AS instrument_id,
                    h.quantity * h.current_price * (CASE
                        WHEN i.currency = 'GBX' THEN 0.01
                        WHEN i.currency = 'GBP' THEN 1.0
-                       ELSE COALESCE((SELECT rate FROM fx WHERE from_currency = i.currency), 1)
+                       ELSE (SELECT rate FROM fx WHERE from_currency = i.currency)
                    END) AS gbp
             FROM holdings_daily h
             JOIN instruments i ON i.id = h.instrument_id
             WHERE h.date = (SELECT max(date) FROM holdings_daily) AND h.quantity > 0
         ),
-        want AS (
-            SELECT t.sym, t.fund, fv.gbp * t.pct / 100.0 AS exposure_gbp
-            FROM unnest(
-                CAST(:lt_funds AS text[]), CAST(:lt_syms AS text[]), CAST(:lt_pcts AS float8[])
-            ) AS t(fund, sym, pct)
-            JOIN fund_value fv ON fv.fund = t.fund
+        latest AS (
+            SELECT etf_instrument_id, max(date) AS date
+            FROM etf_holdings GROUP BY etf_instrument_id
         )
-        SELECT w.sym, w.fund, round(w.exposure_gbp::numeric, 2) AS exposure_gbp,
+        SELECT ci.yahoo_symbol AS sym, f.yahoo_symbol AS fund,
+               round((fv.gbp * ec.weight_pct / 100.0)::numeric, 2) AS exposure_gbp,
                count(p.date) AS obs, max(p.date) AS last_price
-        FROM want w
-        LEFT JOIN prices_daily p ON p.symbol = w.sym
-        WHERE w.exposure_gbp >= :lt_floor
-        GROUP BY w.sym, w.fund, w.exposure_gbp
+        FROM etf_holdings ec
+        JOIN latest l ON l.etf_instrument_id = ec.etf_instrument_id AND l.date = ec.date
+        JOIN fund_value fv ON fv.instrument_id = ec.etf_instrument_id
+        JOIN instruments f ON f.id = ec.etf_instrument_id
+        JOIN instruments ci ON ci.id = ec.instrument_id
+        LEFT JOIN prices_daily p ON p.symbol = ci.yahoo_symbol
+        WHERE fv.gbp * ec.weight_pct / 100.0 >= :lt_floor
+        GROUP BY ci.yahoo_symbol, f.yahoo_symbol, fv.gbp, ec.weight_pct
         HAVING count(p.date) = 0 OR max(p.date) < CURRENT_DATE - {STALE_PRICE_DAYS}
-        ORDER BY w.exposure_gbp DESC
+        ORDER BY fv.gbp * ec.weight_pct / 100.0 DESC
+        """,
+    ),
+    (
+        "etf_holding_snapshots",
+        "held ETFs whose stored holdings are missing, un-refreshed, or do not sum to ~100%",
+        "Each held ETF in ETF_HOLDING_SOURCES should have been refreshed recently and sum "
+        "near 100%. missing = update_etf_holdings.py has never succeeded for it; "
+        "not_refreshed = the weekly job stopped (checked is max(updated_at), which every "
+        "run stamps even when the index has not moved); low_sum = the "
+        "issuer file was truncated, so the fund's look-through silently under-attributes.",
+        f"""
+        WITH latest AS (
+            SELECT etf_instrument_id, max(date) AS date
+            FROM etf_holdings GROUP BY etf_instrument_id
+        ),
+        snap AS (
+            SELECT i.yahoo_symbol, l.date, max(ec.updated_at)::date AS checked,
+                   sum(ec.weight_pct) AS total_pct, count(ec.id) AS rows,
+                   count(ec.instrument_id) AS resolved_rows,
+                   sum(ec.weight_pct) FILTER (WHERE ec.instrument_id IS NOT NULL) AS resolved_pct
+            FROM instruments i
+            LEFT JOIN latest l ON l.etf_instrument_id = i.id
+            LEFT JOIN etf_holdings ec
+                   ON ec.etf_instrument_id = i.id AND ec.date = l.date
+            WHERE i.yahoo_symbol = ANY(:sourced_etfs)
+            GROUP BY i.yahoo_symbol, l.date
+        )
+        SELECT yahoo_symbol, date, checked, round(total_pct::numeric, 2) AS total_pct, rows,
+               resolved_rows, round(resolved_pct::numeric, 2) AS resolved_pct,
+               CASE WHEN date IS NULL THEN 'missing'
+                    WHEN checked < CURRENT_DATE - {STALE_ETF_HOLDING_DAYS} THEN 'not_refreshed'
+                    ELSE 'low_sum' END AS problem
+        FROM snap
+        WHERE date IS NULL
+           OR checked < CURRENT_DATE - {STALE_ETF_HOLDING_DAYS}
+           OR total_pct < 95.0
+        ORDER BY yahoo_symbol
         """,
     ),
     (
@@ -586,19 +627,10 @@ def run_check(session, name: str, description: str, fix: str, sql: str) -> int:
         # points at the pre-rename ticker.
         params["alias_old"] = list(STOCKS_ALIASES.keys())
         params["alias_new"] = list(STOCKS_ALIASES.values())
-    if ":lt_syms" in sql:
-        # Parallel arrays rather than a VALUES list: the fund is needed to turn a
-        # constituent weight into a pounds exposure the floor can be applied to.
-        triples = [
-            (fund, sym, pct)
-            for fund, weights in ETF_CONSTITUENTS.items()
-            for sym, pct in weights.items()
-            if sym != "Other"
-        ]
-        params["lt_funds"] = [f for f, _, _ in triples]
-        params["lt_syms"] = [s for _, s, _ in triples]
-        params["lt_pcts"] = [p for _, _, p in triples]
+    if ":lt_floor" in sql:
         params["lt_floor"] = LOOKTHROUGH_MIN_EXPOSURE_GBP
+    if ":sourced_etfs" in sql:
+        params["sourced_etfs"] = [s for s, spec in ETF_HOLDING_SOURCES.items() if spec]
     if ":stale_13f_days" in sql:
         params["stale_13f_days"] = STALE_13F_DAYS
     rows = session.execute(text(sql), params).all()

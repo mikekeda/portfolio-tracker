@@ -6,6 +6,7 @@ from scripts.fix_split_prices import fix_split_prices
 from scripts.get_earnings_reports import get_earnings_reports
 from scripts.get_uk_earnings_reports import get_uk_earnings_reports
 from scripts.scrape_13f import main as scrape_13f_main
+from scripts.update_etf_holdings import refresh as refresh_etf_holdings
 from scripts.scrape_wisesheets_pe import update_pe_data
 from scripts.run_position_review import run_position_reviews
 from scripts.run_trade_agent import run_trade_agent
@@ -92,6 +93,18 @@ def fetch_uk_earnings_reports_task(limit: int = 100):
     selection model and per-instrument decision flow.
     """
     get_uk_earnings_reports(limit=limit)
+
+
+@app.task
+def update_etf_holdings_task():
+    """Refresh ETF look-through constituents from issuer holdings files.
+
+    Weekly rather than quarterly: issuer files change on their own cadence, the
+    fetch is a handful of small requests, and every run re-resolves holdings
+    against `instruments` — including when the composition is unchanged — so
+    coverage improves as instruments are added.
+    """
+    _run_async_db_job(refresh_etf_holdings())
 
 
 @app.task

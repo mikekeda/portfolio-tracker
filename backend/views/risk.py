@@ -28,6 +28,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends
 from pydantic import ValidationError
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agent.constraints import ETF_TAG
@@ -50,8 +51,14 @@ from config import (
     TAG_RISK_ALERT_PCT,
     TRADING_DAYS_PER_YEAR,
 )
-from data import ETF_CONSTITUENTS
-from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
+from models import (
+    CurrencyRateDaily,
+    EtfHolding,
+    HoldingDaily,
+    Instrument,
+    PortfolioDaily,
+    PricesDaily,
+)
 
 router = APIRouter()
 
@@ -75,8 +82,6 @@ EXTREME_DAILY_RETURN = 0.60
 # "move" on the same day; a real melt-up (ETL.PA Mar 2025) is one symbol on
 # its own dates. Same-day extremes across this many symbols mean bad inputs.
 SUSPECT_SAME_DAY_SYMBOLS = 3
-# The un-enumerated tail bucket in ETF_CONSTITUENTS, not a tradable symbol.
-OTHER_KEY = "Other"
 # Positions with avg pairwise correlation above this move as one bet.
 GROUP_MIN_CORR = 0.5
 # Normal 5% expected shortfall as a multiple of sigma: phi(Phi^-1(0.05)) / 0.05.
@@ -88,9 +93,38 @@ _GBP_FACTORS = {"GBP": 1.0, "GBX": 0.01, "GBp": 0.01}
 _cache: dict[str, Any] = {"payload": None, "fetched_at": 0.0}
 
 
-async def _load_inputs(session: AsyncSession) -> tuple[date, list, list, list, list]:
+async def _etf_holdings(session: AsyncSession) -> dict[str, dict[str, float]]:
+    """Newest stored snapshot per fund, as {fund symbol: {constituent symbol: pct}}.
+
+    Only constituents that resolved to a tracked instrument come back; the rest
+    stay in the fund's residual, and the shortfall is reported as coverage.
+    """
+    fund, holding = aliased(Instrument), aliased(Instrument)
+    latest = (
+        select(EtfHolding.etf_instrument_id, func.max(EtfHolding.date).label("date"))
+        .group_by(EtfHolding.etf_instrument_id)
+        .subquery()
+    )
+    rows = (
+        await session.execute(
+            select(fund.yahoo_symbol, holding.yahoo_symbol, EtfHolding.weight_pct)
+            .join(latest, (latest.c.etf_instrument_id == EtfHolding.etf_instrument_id)
+                  & (latest.c.date == EtfHolding.date))
+            .join(fund, fund.id == EtfHolding.etf_instrument_id)
+            .join(holding, holding.id == EtfHolding.instrument_id)
+        )
+    ).all()
+    out: dict[str, dict[str, float]] = {}
+    for fund_symbol, holding_symbol, pct in rows:
+        out.setdefault(fund_symbol, {})[holding_symbol] = (
+            out.setdefault(fund_symbol, {}).get(holding_symbol, 0.0) + pct
+        )
+    return out
+
+
+async def _load_inputs(session: AsyncSession) -> tuple[date, list, list, list, list, dict]:
     """Fetch the latest holdings snapshot, the monitored universe, price
-    history, and FX history."""
+    history, FX history, and each held ETF's stored holdings."""
     latest_date = (await session.execute(select(func.max(HoldingDaily.date)))).scalar_one()
     holdings = (
         await session.execute(
@@ -131,7 +165,7 @@ async def _load_inputs(session: AsyncSession) -> tuple[date, list, list, list, l
             )
         )
     ).all()
-    return latest_date, holdings, instruments, price_rows, fx_rows
+    return latest_date, holdings, instruments, price_rows, fx_rows, await _etf_holdings(session)
 
 
 def _fx_frame(fx_rows: list) -> pd.DataFrame:
@@ -281,9 +315,10 @@ def _thesis_risk_band(raw: Any, beta: float) -> dict[str, Any]:
 
 def _look_through(
     returns: pd.DataFrame,
-    info: dict[str, Any],
+    etf_holdings: dict[str, dict[str, float]],
     included: list[str],
     values: np.ndarray,
+    dates: pd.Index,
 ) -> dict[str, Any] | None:
     """Risk attribution with each fund expanded into its published constituents.
 
@@ -296,6 +331,11 @@ def _look_through(
     hundreds of sub-0.01% exposures that inflate an entropy measure without
     representing decisions, so it would not be comparable to the line-item one.
 
+    Runs on the line-item model's own dates: a constituent that does not cover
+    them is left in the residual rather than allowed to truncate the panel. One
+    recent listing among hundreds would otherwise drop the shared history from
+    501 observations to 301 and quietly weaken every correlation in the matrix.
+
     That residual proxy carries whole-fund beta rather than tail beta, so it
     slightly overstates correlation and prints a higher portfolio vol than the
     line-item model. The reattribution is sound; the vol gap is an artifact and
@@ -306,16 +346,14 @@ def _look_through(
     exposures: dict[str, float] = {}
     funds = []
     for sym, value in zip(included, values):
-        spec = ETF_CONSTITUENTS.get(sym)
+        spec = etf_holdings.get(sym)
         if spec is None:
             exposures[sym] = exposures.get(sym, 0.0) + float(value)
             continue
         enumerated = 0.0
         for name, pct in spec.items():
-            if name == OTHER_KEY:
-                continue  # the tail; falls into the residual below
-            if name not in returns.columns or returns[name].count() < MIN_RETURN_OBS:
-                continue  # no usable history: leave this slice in the residual too
+            if name not in returns.columns or returns[name].reindex(dates).isna().any():
+                continue  # cannot cover the panel: leave this slice in the residual
             slice_gbp = float(value) * pct / 100.0
             if slice_gbp < LOOKTHROUGH_MIN_EXPOSURE_GBP:
                 continue  # immaterial, and each one costs a degree of freedom
@@ -327,8 +365,8 @@ def _look_through(
         return None
 
     symbols = sorted(exposures)
-    matrix = returns[symbols].dropna()
-    if matrix.shape[0] < MIN_RETURN_OBS:
+    matrix = returns[symbols].reindex(dates)
+    if matrix.isna().to_numpy().any() or matrix.shape[0] < MIN_RETURN_OBS:
         return None
 
     cov, _ = ledoit_wolf_cov(matrix.values)
@@ -337,7 +375,7 @@ def _look_through(
     rc, port_var = risk_contributions(cov, w)
     ann_vol = float(np.sqrt(port_var * TRADING_DAYS_PER_YEAR))
 
-    held = {s for s in included if s not in ETF_CONSTITUENTS}
+    held = {s for s in included if s not in etf_holdings}
     rows = sorted(
         (
             {
@@ -353,6 +391,8 @@ def _look_through(
     )
     return {
         "funds": funds,
+        "n_obs": int(matrix.shape[0]),
+        "n_assets": len(symbols),
         "annual_volatility": ann_vol,
         "residual_risk_share": float(sum(rc[symbols.index(f["symbol"])] for f in funds)),
         "exposures": rows,
@@ -360,7 +400,12 @@ def _look_through(
 
 
 def build_risk_payload(
-    latest_date: date, holdings: list, instruments: list, price_rows: list, fx_rows: list
+    latest_date: date,
+    holdings: list,
+    instruments: list,
+    price_rows: list,
+    fx_rows: list,
+    etf_holdings: dict[str, dict[str, float]],
 ) -> dict[str, Any]:
     """Assemble the /api/risk payload. Pure (no I/O) for standalone testing."""
     returns, filled = _gbp_returns(instruments, price_rows, fx_rows)
@@ -552,7 +597,7 @@ def build_risk_payload(
         "candidate_breakeven": candidate_breakeven,
         "holdings": holdings_payload,
         "clusters": clusters,
-        "look_through": _look_through(returns, info, included, values),
+        "look_through": _look_through(returns, etf_holdings, included, values, matrix.index),
         "excluded": excluded,
         "warnings": _data_warnings(matrix, filled),
     }

@@ -463,6 +463,45 @@ class SecFeaturesDaily(Base):
         return f"<SecFeaturesDaily(instrument_id={self.instrument_id}, date='{self.date}')>"
 
 
+class EtfHolding(Base):
+    """What sits inside each held ETF, as published by the issuer.
+
+    Keyed on the issuer's own identifier rather than a foreign key, so a holding
+    that is not a tracked instrument is still stored rather than discarded — most
+    of a small-cap fund is exactly that, and coverage improves on its own as
+    instruments are added. `instrument_id` is the resolved link, re-derived on
+    every refresh; NULL means "published by the issuer, not tracked here".
+
+    Rows are dated: a refresh writes a new snapshot rather than mutating the last,
+    so a half-finished run cannot corrupt the current snapshot.
+    """
+
+    __tablename__ = "etf_holdings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    etf_instrument_id: Mapped[int] = mapped_column(Integer, ForeignKey("instruments.id"), nullable=False)
+    date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+
+    # The issuer's identifier: ISIN from DWS/SSGA/iShares, ticker for the
+    # SP500-derived weights, which have no issuer file behind them.
+    source_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    weight_pct: Mapped[float] = mapped_column(Float, nullable=False)
+
+    instrument_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("instruments.id"), nullable=True, index=True
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("etf_instrument_id", "date", "source_key", name="uq_etf_holding"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<EtfHolding(etf={self.etf_instrument_id}, key='{self.source_key}', pct={self.weight_pct})>"
+
+
 class CurrencyRateDaily(Base):
     """Currency exchange rates cache."""
 

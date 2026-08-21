@@ -114,6 +114,14 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=1, day_of_week="mon"),
         "args": (),
     },
+    # Refresh ETF look-through constituents: Weekly on Monday at 1:30 AM UTC.
+    # Each run also re-resolves published holdings against instruments, so a
+    # constituent added mid-week is picked up without re-fetching the issuer.
+    "update_etf_holdings_weekly": {
+        "task": "celery_tasks.tasks.update_etf_holdings_task",
+        "schedule": crontab(minute=30, hour=1, day_of_week="mon"),
+        "args": (),
+    },
     # Sync transaction + dividend history from Trading212 API: Daily at 5 AM UTC.
     # Upserts by reference ID — idempotent, safe to re-run.
     # Runs after other nightly tasks (PE at 2am, pies at 3am, earnings at 4am).
