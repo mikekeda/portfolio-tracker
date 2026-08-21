@@ -1,7 +1,7 @@
 """Static lookup tables and symbol normalization data used across the project."""
 
 # ─── Exchange‑suffix + alias tables ───────────────────────────────────────────
-STOCKS_SUFFIX: dict[str, str] = {
+STOCKS_SUFFIX: dict[str, str] = {  # updated 2026-04-11, event-driven
     "US": "",  # NYSE / Nasdaq
     "l": ".L",  # London
     "m": ".L",  # LSE
@@ -26,7 +26,7 @@ STOCKS_SUFFIX: dict[str, str] = {
 
 # Maps the *core* symbol from Trading212 (before _US_EQ / exchange tag) → Yahoo ticker.
 # Applied in convert_ticker() after stripping the T212 suffix, e.g. JEC_US_EQ → sym JEC → "J".
-STOCKS_ALIASES: dict[str, str] = {
+STOCKS_ALIASES: dict[str, str] = {  # updated 2026-08-01, event-driven
     "3LBA1": "3LBA",
     "AAXN": "AXON",
     "ABC": "COR",
@@ -37,7 +37,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "ASHTY": "SUNB",  # Ashtead ADR → Sunbelt Rentals Holdings, NYSE primary since Mar 2026
     "ASPI1": "ASPI",
     "BDEV": "BTRW",
-    "BK": "BNY",      # BNY Mellon ticker rebrand on NYSE, May 2026
+    "BK": "BNY",  # BNY Mellon ticker rebrand on NYSE, May 2026
     "BMRG": "EOSE",
     "BRK/A": "BRK-A",
     "BRK_B": "BRK-B",
@@ -48,7 +48,7 @@ STOCKS_ALIASES: dict[str, str] = {
     "CCIV": "LCID",
     "CECE": "CECO",
     "CHKK": "EXE",
-    "CLA": "OUST",    # Colonnade Acquisition SPAC → Ouster; T212 kept the pre-merger code
+    "CLA": "OUST",  # Colonnade Acquisition SPAC → Ouster; T212 kept the pre-merger code
     "CNHI": "CNH",
     "DAI": "MBG",
     "DMYI": "IONQ",
@@ -63,8 +63,8 @@ STOCKS_ALIASES: dict[str, str] = {
     "GWAC": "CIFR",
     "HCN": "WELL",
     "HCP": "DOC",
-    "HEICO": "HEI",   # T212 spells out the name; Yahoo quotes the NYSE ticker
-    "HUTMF": "HUT",   # Hut 8 OTC line → Nasdaq HUT after US Bitcoin Corp merger
+    "HEICO": "HEI",  # T212 spells out the name; Yahoo quotes the NYSE ticker
+    "HUTMF": "HUT",  # Hut 8 OTC line → Nasdaq HUT after US Bitcoin Corp merger
     "ICP": "ICG",
     "IIVI": "COHR",
     "IKNX": "WULF",
@@ -85,8 +85,8 @@ STOCKS_ALIASES: dict[str, str] = {
     "RBS": "NWG",
     "RE": "EG",
     "RTP": "JOBY",
-    "RTPY": "AUR",    # Reinvent Technology Partners Y SPAC → Aurora Innovation
-    "SATS": "ECHO",   # EchoStar ticker rebrand on Nasdaq, Jun 2026; Yahoo froze SATS mid-Jul
+    "RTPY": "AUR",  # Reinvent Technology Partners Y SPAC → Aurora Innovation
+    "SATS": "ECHO",  # EchoStar ticker rebrand on Nasdaq, Jun 2026; Yahoo froze SATS mid-Jul
     "SERV1": "SERV",  # Serve Robotics - stale T212 line, live Yahoo ticker is SERV
     "SFTW": "BKSY",
     "SL": "ABDN",
@@ -94,10 +94,10 @@ STOCKS_ALIASES: dict[str, str] = {
     "SNE": "SONY",
     "SQ": "XYZ",
     "SRNG": "DNA",
-    "SV": "SMR",     # NuScale Power - SPAC rename (Spring Valley → NuScale)
+    "SV": "SMR",  # NuScale Power - SPAC rename (Spring Valley → NuScale)
     "SVFC": "SYM",
     "SYMC": "GEN",
-    "TLNE": "TLN",    # Talen Energy OTC line → Nasdaq TLN; Yahoo froze TLNE Jun 2026
+    "TLNE": "TLN",  # Talen Energy OTC line → Nasdaq TLN; Yahoo froze TLNE Jun 2026
     "TMK": "GL",
     "UTX": "RTX",
     "VACQ": "RKLB",
@@ -114,35 +114,36 @@ STOCKS_ALIASES: dict[str, str] = {
 # • Yahoo symbols (e.g. YNDX) — update_prices / backfill skip Instruments with that yahoo_symbol.
 # Prefer STOCKS_ALIASES for simple renames so new syncs get a live Yahoo symbol; use this for
 # halted shells, SPACs that no longer trade under the old symbol, or bad T212 lines to hide.
-STOCKS_DELISTED: set[str] = {
-    "11C.DE",    # 11 bit studios - Xetra line dead on Yahoo; primary 11B.WA is PLN (unsupported)
-    "8GC.DE",    # legacy Xetra entry, no Yahoo price feed
-    "AGR.L",     # Assura - delisted from LSE after PHP takeover, Oct 2025
-    "DKI.DE",    # Daikin - Xetra line dead on Yahoo; primary 6367.T is JPY (unsupported)
-    "FJK.DE",    # Fujikura - Xetra line dead on Yahoo; primary 5803.T is JPY (unsupported)
-    "KEE.DE",    # Keyence - Xetra line dead on Yahoo; primary 6861.T is JPY (unsupported)
-    "KGHA.DE",   # KGHM Polska Miedz - Xetra line dead on Yahoo; primary KGH.WA is PLN (unsupported)
-    "PJXC.DE",   # Petrobras - Xetra line frozen on Yahoo (corrupt adj_close); primary PBR is the NYSE ADR
-    "ALCC1",     # AltC Acquisition - merged into Oklo (OKLO)
-    "BSAQ",      # Black Spade Acquisition - SPAC, no longer trading
-    "CRH.L",     # CRH cancelled its LSE line Apr 2026; NYSE-only now (USD line is a separate instrument)
-    "CTRA",      # Coterra Energy - merged into Devon Energy (DVN), May 2026
-    "DEAC",      # Diamond Eagle Acquisition - merged into DraftKings (DKNG)
-    "DMYQ",      # dMY Squared Technology - SPAC, no longer trading
-    "HOLX",      # Hologic - taken private by Blackstone/TPG, Apr 2026
+STOCKS_DELISTED: set[str] = {  # updated 2026-08-21, event-driven
+    "11C.DE",  # 11 bit studios - Xetra line dead on Yahoo; primary 11B.WA is PLN (unsupported)
+    "8GC.DE",  # legacy Xetra entry, no Yahoo price feed
+    "AGR.L",  # Assura - delisted from LSE after PHP takeover, Oct 2025
+    "DKI.DE",  # Daikin - Xetra line dead on Yahoo; primary 6367.T is JPY (unsupported)
+    "FJK.DE",  # Fujikura - Xetra line dead on Yahoo; primary 5803.T is JPY (unsupported)
+    "KEE.DE",  # Keyence - Xetra line dead on Yahoo; primary 6861.T is JPY (unsupported)
+    "KGHA.DE",  # KGHM Polska Miedz - Xetra line dead on Yahoo; primary KGH.WA is PLN (unsupported)
+    "PJXC.DE",  # Petrobras - Xetra line frozen on Yahoo (corrupt adj_close); primary PBR is the NYSE ADR
+    "ALCC1",  # AltC Acquisition - merged into Oklo (OKLO)
+    "BSAQ",  # Black Spade Acquisition - SPAC, no longer trading
+    "CRH.L",  # CRH cancelled its LSE line Apr 2026; NYSE-only now (USD line is a separate instrument)
+    "CTRA",  # Coterra Energy - merged into Devon Energy (DVN), May 2026
+    "DEAC",  # Diamond Eagle Acquisition - merged into DraftKings (DKNG)
+    "DMYQ",  # dMY Squared Technology - SPAC, no longer trading
+    "EA",  # Electronic Arts - taken private by PIF/Silver Lake/Affinity, Aug 2026
+    "HOLX",  # Hologic - taken private by Blackstone/TPG, Apr 2026
     "HYUDl_EQ",  # raw T212 code (rejected by convert_ticker, filtered in fetch_holdings)
-    "MASI",      # Masimo - acquired by Danaher, Jun 2026
+    "MASI",  # Masimo - acquired by Danaher, Jun 2026
 }
 
 # Live tickers whose Wisesheets page currently has no PE block. Skipped by the nightly
 # scrape but re-probed weekly (Sunday run), so coverage arriving — likely for recent
 # IPOs — is picked up automatically; remove an entry once its probe starts succeeding.
 # Also excluded from the pe_history_gaps audit while listed here.
-WISESHEETS_NO_PE: set[str] = {
-    "SWMR",      # Swarmer - 2025 IPO, not yet covered by Wisesheets
+WISESHEETS_NO_PE: set[str] = {  # updated 2026-07-22, auto re-probed weekly
+    "SWMR",  # Swarmer - 2025 IPO, not yet covered by Wisesheets
 }
 
-SP500 = [
+SP500 = [  # updated 2026-08-21, review quarterly
     "MMM",
     "AOS",
     "ABT",
@@ -304,7 +305,7 @@ SP500 = [
     "ECL",
     "EIX",
     "EW",
-    "EA",
+    "FERG",
     "ELV",
     "EME",
     "EMR",
@@ -650,7 +651,7 @@ SP500 = [
     "VRT",
 ]
 
-QQQ = [
+QQQ = [  # updated 2026-08-21, review quarterly
     "ADBE",
     "AMD",
     "ABNB",
@@ -686,7 +687,6 @@ QQQ = [
     "DXCM",
     "FANG",
     "DASH",
-    "EA",
     "EXC",
     "FAST",
     "FER",
@@ -758,7 +758,7 @@ QQQ = [
     "TER",
 ]
 
-FTSE_100 = [
+FTSE_100 = [  # updated 2026-07-22, review quarterly
     "III.L",
     "ADM.L",
     "AAF.L",
@@ -863,11 +863,283 @@ FTSE_100 = [
 ]
 
 
+# Physically-backed gold ETCs (SGLN=iShares, GLDW=WisdomTree), which Yahoo calls EQUITY.
+# Fund for fees/screeners/earnings; NOT for cluster caps (one commodity, not a basket).
+ETC_SYMBOLS = frozenset({"SGLN.L", "GLDW.L"})  # updated 2026-08-21, event-driven
+
+
+# Where each ETF's holdings come from, for scripts/update_etf_constituents.py.
+# Every held ETF has an issuer source; None would mean hand-maintained.
+ETF_HOLDING_SOURCES = {  # updated 2026-08-21, review quarterly
+    "XUTC.L": {
+        "kind": "dws", "slug": "IE00BGQYRS42-msci-usa-information-technology-ucits-etf-1d",
+        "index_name": "MSCI USA Information Technology 20-35 Custom Index",
+        "source_note": "Xtrackers product-page API, ISIN-keyed",
+    },
+    "XNAS.L": {
+        "kind": "dws", "slug": "IE00BMFKG444-nasdaq-100-ucits-etf-1c",
+        "index_name": "Nasdaq 100",
+        "source_note": "Xtrackers product-page API, ISIN-keyed",
+    },
+    "R1GR.L": {
+        "kind": "ishares", "portfolio_id": "331965",
+        "index_name": "Russell 1000 Growth UCITS 30/18 Capped",
+        "source_note": "iShares portfolioId 331965",
+    },
+    "VUAG.L": {
+        "kind": "sp500",
+        "index_name": "S&P 500",
+        "source_note": "Vanguard publishes no holdings file; cap-weighted from SP500",
+        "caveat": "dual classes split by index ratio; 0.20pp mean error vs published weights",
+    },
+    "R2SC.L": {
+        "kind": "ssga", "ticker": "zprr-gy",
+        "index_name": "Russell 2000",
+        "source_note": "SSGA daily holdings XLSX, ticker zprr-gy",
+        "caveat": "only ~7% maps to tracked instruments — small caps are outside the universe",
+    },
+    "UKDV.L": {
+        "kind": "ssga", "ticker": "spyg-gy",
+        "index_name": "S&P UK Dividend Aristocrats",
+        "source_note": "SSGA daily holdings XLSX, ticker spyg-gy",
+    },
+}
+
+
+# Constituent weights per held ETF, for look-through risk attribution. "Other" is the
+# un-enumerated tail, so each fund sums to 100 like the country/sector tables below.
+# Issuer source is recorded per fund; refresh from there, and prefer the issuer over an
+# aggregator (they disagree, and UCITS funds often track *capped* index variants).
+ETF_CONSTITUENTS = {  # updated 2026-08-21, review quarterly
+    "XUTC.L": {  # MSCI USA Information Technology 20-35 Custom Index, 81 holdings, 2026-08-21
+        # Xtrackers product-page API, ISIN-keyed
+        "NVDA": 18.7082, "AAPL": 18.3465, "MSFT": 14.5358, "AVGO": 7.0119, "MU": 4.7045,
+        "AMD": 3.2772, "CSCO": 1.8538, "INTC": 1.7334, "AMAT": 1.6864, "LRCX": 1.6606,
+        "PLTR": 1.6225, "PANW": 1.2144, "ORCL": 1.0498, "KLAC": 1.0433, "TXN": 1.0355,
+        "IBM": 0.9387, "MRVL": 0.9167, "ANET": 0.8405, "APH": 0.806, "CRWD": 0.8049,
+        "STX": 0.7961, "ADI": 0.7742, "QCOM": 0.7346, "CRM": 0.7019, "WDC": 0.6949, "NOW": 0.5813,
+        "DELL": 0.5611, "GLW": 0.5153, "ACN": 0.4768, "ADBE": 0.4714, "SNOW": 0.4521,
+        "INTU": 0.4285, "FTNT": 0.4061, "CDNS": 0.3708, "NET": 0.3706, "MSI": 0.337,
+        "DDOG": 0.3109, "SNPS": 0.3098, "HPE": 0.3005, "LITE": 0.2686, "MPWR": 0.2627,
+        "TER": 0.2576, "TEL": 0.2522, "NXPI": 0.2414, "CIEN": 0.2385, "KEYS": 0.2326,
+        "COHR": 0.231, "ADSK": 0.227, "ROP": 0.1814, "WDAY": 0.1786, "MCHP": 0.1762,
+        "ALAB": 0.1701, "CRDO": 0.1649, "NTAP": 0.1636, "JBL": 0.1432, "MDB": 0.1401,
+        "TWLO": 0.1361, "TDY": 0.1266, "TEAM": 0.1263, "ON": 0.1262, "MSTR": 0.1252,
+        "CTSH": 0.1242, "Q": 0.1192, "HPQ": 0.1149, "FICO": 0.1132, "CRWV": 0.104, "VRSN": 0.0975,
+        "OKTA": 0.0966, "ENTG": 0.0939, "FSLR": 0.0933, "FFIV": 0.0909, "SMCI": 0.088,
+        "ZS": 0.0779, "PTC": 0.0778, "CDW": 0.0727, "FN": 0.0678, "IONQ": 0.0656, "TYL": 0.0629,
+        "TRMB": 0.06, "IREN": 0.0594, "IOT": 0.0582,
+        "Other": 0.71,
+    },
+    "XNAS.L": {  # Nasdaq 100, 98 holdings, 2026-08-21
+        # Xtrackers product-page API, ISIN-keyed
+        "NVDA": 8.4382, "AAPL": 7.3518, "MSFT": 5.7472, "MU": 4.8773, "AMZN": 4.4992,
+        "AMD": 3.398, "GOOGL": 3.1902, "GOOG": 2.967, "AVGO": 2.7753, "TSLA": 2.7722,
+        "META": 2.5991, "WMT": 2.2486, "INTC": 2.0555, "CSCO": 1.9174, "COST": 1.8383,
+        "PLTR": 1.7731, "AMAT": 1.7488, "LRCX": 1.7238, "NFLX": 1.498, "PANW": 1.2662,
+        "SPCX": 1.1401, "KLAC": 1.0777, "TXN": 1.0731, "SNDK": 1.0521, "AMGN": 1.0392,
+        "LIN": 0.9877, "MRVL": 0.9748, "TMUS": 0.8706, "PEP": 0.862, "CRWD": 0.8604,
+        "STX": 0.8462, "ADI": 0.8007, "SHOP": 0.7969, "GILD": 0.7909, "QCOM": 0.7523,
+        "BKNG": 0.7222, "WDC": 0.7181, "ASML": 0.7125, "VRTX": 0.6097, "ISRG": 0.5895,
+        "SBUX": 0.5268, "ADP": 0.4963, "FTNT": 0.4912, "ADBE": 0.4894, "ARM": 0.4725,
+        "INTU": 0.4407, "CEG": 0.4386, "MELI": 0.4337, "CSX": 0.4214, "APP": 0.42, "CMCSA": 0.419,
+        "MAR": 0.4185, "MNST": 0.4134, "DASH": 0.405, "CDNS": 0.3849, "REGN": 0.3771,
+        "MDLZ": 0.3646, "CTAS": 0.3627, "ABNB": 0.3425, "DDOG": 0.341, "SNPS": 0.3393,
+        "ORLY": 0.3269, "ROST": 0.3267, "WBD": 0.3134, "AEP": 0.3029, "LITE": 0.3028,
+        "PCAR": 0.3005, "MPWR": 0.2851, "BKR": 0.2759, "TER": 0.2657, "PDD": 0.2648,
+        "FANG": 0.2629, "FAST": 0.2575, "NXPI": 0.2493, "PYPL": 0.2434, "ADSK": 0.2345,
+        "ALAB": 0.2205, "AXON": 0.2192, "XEL": 0.2176, "NBIS": 0.2148, "EXC": 0.2042,
+        "FER.MC": 0.2012, "TTWO": 0.1975, "PAYX": 0.195, "KDP": 0.1907, "IDXX": 0.1907,
+        "ODFL": 0.1884, "RKLB": 0.187, "ROP": 0.1832, "MCHP": 0.182, "CRWV": 0.1778,
+        "WDAY": 0.1758, "MSTR": 0.1643, "DXCM": 0.1541, "GEHC": 0.1486, "CPRT": 0.1424,
+        "ALNY": 0.1356, "KHC": 0.1338,
+        "Other": 1.0,
+    },
+    "R1GR.L": {  # Russell 1000 Growth UCITS 30/18 Capped, 280 holdings, 2026-08-21
+        # iShares portfolioId 331965
+        "NVDA": 15.2988, "AAPL": 7.3747, "GOOGL": 6.0036, "MSFT": 5.406, "AVGO": 5.1215,
+        "GOOG": 4.863, "MU": 3.3218, "TSLA": 3.0489, "LLY": 3.0053, "META": 2.9686, "AMD": 2.3098,
+        "V": 1.8265, "MA": 1.4019, "AMAT": 1.1898, "LRCX": 1.1739, "PLTR": 1.1684, "CAT": 1.1195,
+        "GE": 1.0766, "NFLX": 1.017, "PANW": 0.8527, "GEV": 0.7861, "HD": 0.7467, "ORCL": 0.7366,
+        "KLAC": 0.7354, "TXN": 0.7305, "SNDK": 0.7044, "MRVL": 0.6623, "AMZN": 0.6378,
+        "ANET": 0.5806, "CRWD": 0.5778, "APH": 0.5681, "COST": 0.5485, "AMGN": 0.5006,
+        "BKNG": 0.4913, "WDC": 0.4791, "NOW": 0.4024, "ISRG": 0.399, "GLW": 0.3623, "LMT": 0.3512,
+        "HWM": 0.3297, "SNOW": 0.3262, "BA": 0.3204, "VRT": 0.3072, "PWR": 0.2997, "TT": 0.2987,
+        "MCK": 0.2923, "FTNT": 0.2764, "NET": 0.2678, "CDNS": 0.2616, "SPOT": 0.255,
+        "DASH": 0.254, "BX": 0.2531, "ADBE": 0.2341, "ABNB": 0.2318, "DDOG": 0.2316,
+        "APP": 0.2241, "HLT": 0.223, "TJX": 0.2156, "SPG": 0.2135, "CTAS": 0.2068, "SBUX": 0.1986,
+        "SPCX": 0.1947, "ROST": 0.1925, "TRGP": 0.1925, "LITE": 0.1911, "MPWR": 0.1899,
+        "HOOD": 0.1844, "TER": 0.1828, "COR": 0.1779, "MAR": 0.1775, "FIX": 0.1774,
+        "CIEN": 0.1678, "BE": 0.1653, "ADSK": 0.16, "MPC": 0.1596, "AMT": 0.1576, "AU": 0.1565,
+        "AXP": 0.1522, "NU": 0.1491, "GWW": 0.1477, "CVNA": 0.1474, "AXON": 0.144, "FAST": 0.1428,
+        "VST": 0.1425, "CMG": 0.138, "TTWO": 0.1358, "ALAB": 0.1356, "NTRA": 0.1316,
+        "ADP": 0.1224, "RCL": 0.1217, "WMT": 0.1207, "RVMD": 0.1205, "KO": 0.12, "MCHP": 0.1197,
+        "ROK": 0.1182, "RKLB": 0.1165, "CMI": 0.1148, "EXPE": 0.1143, "CRDO": 0.1132,
+        "ABBV": 0.1099, "IDXX": 0.1078, "EME": 0.1035, "DXCM": 0.1027, "MCO": 0.1026,
+        "JBL": 0.1026, "C": 0.1019, "TDG": 0.0993, "ALNY": 0.0948, "CRWV": 0.0928, "P": 0.0926,
+        "INTU": 0.092, "KEYS": 0.0915, "CL": 0.0914, "MNST": 0.0903, "MSI": 0.089, "MDB": 0.089,
+        "LYV": 0.0873, "TEAM": 0.0843, "ATI": 0.0841, "ARES": 0.084, "BAC": 0.0829,
+        "INSM": 0.0798, "CASY": 0.0796, "TPR": 0.079, "ZTS": 0.0773, "DRI": 0.0763,
+        "RBLX": 0.0744, "ETN": 0.0741, "CAH": 0.0726, "NRG": 0.0718, "CRS": 0.0706, "ITW": 0.0702,
+        "PEP": 0.0682, "WM": 0.0672, "XPO": 0.0666, "TPL": 0.0647, "FICO": 0.0644, "BURL": 0.0639,
+        "CPNG": 0.0639, "SHW": 0.0628, "AFRM": 0.0625, "HEIA": 0.0618, "RDDT": 0.0606,
+        "WWD": 0.0604, "FTAI": 0.0603, "ROKU": 0.0576, "ZS": 0.0568, "GH": 0.0564, "SYY": 0.0562,
+        "BAM": 0.0542, "MTSI": 0.0529, "MTZ": 0.0499, "TOST": 0.0488, "DELL": 0.0479,
+        "QSR": 0.0479, "KKR": 0.0477, "LSCC": 0.0475, "FN": 0.0475, "VIK": 0.0473, "URI": 0.0469,
+        "CHRW": 0.0465, "ASTS": 0.0465, "STRL": 0.0464, "IBKR": 0.0463, "HEI": 0.0462,
+        "UBER": 0.0451, "IOT": 0.0432, "IT": 0.0424, "NBIX": 0.0405, "BWXT": 0.0404,
+        "MEDP": 0.0404, "NTAP": 0.0398, "SITM": 0.0395, "BBIO": 0.0395, "SCHW": 0.0392,
+        "GDDY": 0.0391, "KMB": 0.039, "HALO": 0.0389, "MMM": 0.0386, "ADI": 0.0383, "YUM": 0.0374,
+        "MANH": 0.0371, "CW": 0.0368, "LVS": 0.0366, "HUBS": 0.0365, "DKNG": 0.0365,
+        "CORT": 0.0363, "VLO": 0.0362, "UNP": 0.0361, "FTI": 0.036, "PEN": 0.0357, "ASND": 0.0355,
+        "SMTC": 0.0345, "ROL": 0.0327, "PODD": 0.0319, "COHR": 0.0318, "AEIS": 0.0312,
+        "ECHO": 0.0307, "MUSA": 0.0303, "RBRK": 0.0302, "EBAY": 0.0302, "NVT": 0.0301,
+        "LPLA": 0.0301, "TTMI": 0.0299, "IONS": 0.0296, "RMBS": 0.0295, "TLN": 0.0295,
+        "AAOI": 0.0295, "MOD": 0.0295, "CPAY": 0.0287, "DOCN": 0.0276, "MDGL": 0.0272,
+        "SOLS": 0.0268, "AXSM": 0.0267, "FORM": 0.0266, "VIAV": 0.0266, "AAL": 0.0263,
+        "RL": 0.0261, "BNY": 0.024, "GWRE": 0.0239, "PCOR": 0.0236, "ODFL": 0.0234, "TEM": 0.0232,
+        "ARWR": 0.0221, "EQH": 0.022, "CAVA": 0.0219, "PSX": 0.0208, "ONON": 0.0201, "H": 0.0199,
+        "TWLO": 0.0193, "WYNN": 0.0191, "AZO": 0.0187, "PL": 0.0185, "NVR": 0.0181,
+        "BROS": 0.0179, "WULF": 0.0177, "AAON": 0.0177, "IESC": 0.0174, "CEG": 0.0174,
+        "TKO": 0.0171, "POWL": 0.017, "JCI": 0.0166, "ECG": 0.0164, "CELH": 0.0162,
+        "CHWY": 0.0158, "ETSY": 0.0156, "PSA": 0.0154, "FIVE": 0.0152, "VICR": 0.0151,
+        "WSM": 0.0147, "DY": 0.0144, "APPF": 0.0143, "ULTA": 0.0143, "KRMN": 0.014,
+        "ALGM": 0.0137, "CBRE": 0.0137, "PLNT": 0.0136, "WH": 0.0135, "S": 0.0133, "MTN": 0.0132,
+        "ENTG": 0.0129, "FPS": 0.0127, "SCCO": 0.0127, "EL": 0.0126, "TXRH": 0.0126,
+        "GSAT": 0.0126, "VVV": 0.0124, "AMP": 0.0124, "HSY": 0.0124, "ESTC": 0.0118,
+        "LNG": 0.0117, "LII": 0.011, "ALM": 0.0109, "CART": 0.0109, "AUGO": 0.0105,
+        "FERG": 0.0105, "LECO": 0.0105, "FRHC": 0.0103, "EXEL": 0.0102, "MSGS": 0.0101,
+        "Other": 0.53,
+    },
+    "VUAG.L": {  # S&P 500, 489 holdings, 2026-08-21
+        # Vanguard publishes no holdings file; cap-weighted from SP500
+        # dual classes split by index ratio; 0.20pp mean error vs published weights
+        "NVDA": 7.5445, "AAPL": 6.6085, "MSFT": 5.132, "AMZN": 4.0301, "GOOGL": 3.335,
+        "GOOG": 2.6496, "AVGO": 2.4877, "TSLA": 2.0574, "META": 1.9974, "LLY": 1.6126,
+        "MU": 1.5806, "BRK-B": 1.5278, "JPM": 1.3454, "WMT": 1.187, "AMD": 1.0999, "XOM": 0.9814,
+        "V": 0.9808, "JNJ": 0.9399, "MA": 0.7239, "INTC": 0.6984, "ABBV": 0.6743, "CSCO": 0.6345,
+        "BAC": 0.6262, "PLTR": 0.6241, "ORCL": 0.6103, "COST": 0.6047, "CVX": 0.5789,
+        "KO": 0.5599, "LRCX": 0.5582, "AMAT": 0.5557, "MRK": 0.5412, "CAT": 0.5305, "GE": 0.5222,
+        "UNH": 0.4972, "NFLX": 0.4793, "HD": 0.4791, "PG": 0.4782, "MS": 0.468, "PM": 0.433,
+        "GS": 0.4191, "PANW": 0.4171, "RTX": 0.411, "DELL": 0.4035, "WFC": 0.367, "GEV": 0.3622,
+        "TXN": 0.3484, "KLAC": 0.3443, "ANET": 0.3424, "AMGN": 0.3402, "SNDK": 0.3366,
+        "TMO": 0.3333, "AXP": 0.3242, "IBM": 0.322, "LIN": 0.3179, "C": 0.3124, "MRVL": 0.3037,
+        "VZ": 0.2959, "ABT": 0.2871, "TMUS": 0.2792, "PEP": 0.2785, "CRWD": 0.2784, "STX": 0.2767,
+        "SCHW": 0.2754, "MCD": 0.2749, "APH": 0.2746, "BLK": 0.2699, "DIS": 0.2665, "ADI": 0.264,
+        "UNP": 0.2602, "GILD": 0.2583, "NEE": 0.2536, "T": 0.251, "CRM": 0.2475, "WELL": 0.2473,
+        "BA": 0.2436, "BX": 0.2427, "QCOM": 0.2425, "WDC": 0.2414, "DE": 0.2413, "ETN": 0.2351,
+        "BKNG": 0.2336, "COP": 0.2328, "UBER": 0.2305, "PFE": 0.2275, "IBKR": 0.2273,
+        "TJX": 0.2237, "DHR": 0.218, "VRTX": 0.2005, "NEM": 0.1976, "PLD": 0.1972, "NOW": 0.194,
+        "ISRG": 0.1927, "BMY": 0.1921, "COF": 0.1919, "CB": 0.19, "LMT": 0.1895, "GLW": 0.1877,
+        "PGR": 0.1837, "SYK": 0.1835, "SPGI": 0.1831, "PH": 0.1823, "LOW": 0.1753, "CVS": 0.1722,
+        "SBUX": 0.1703, "MDT": 0.1697, "MO": 0.1606, "ACN": 0.16, "ADP": 0.1596, "ABNB": 0.1595,
+        "FTNT": 0.1589, "HWM": 0.1579, "ADBE": 0.1578, "FCX": 0.1559, "BNY": 0.1551,
+        "EQIX": 0.1515, "MPC": 0.1511, "GD": 0.1502, "SO": 0.1489, "CVNA": 0.1484, "APP": 0.1459,
+        "MCK": 0.1449, "KKR": 0.1444, "TT": 0.1442, "VLO": 0.1438, "VRT": 0.1432, "PWR": 0.1431,
+        "INTU": 0.143, "HOOD": 0.14, "USB": 0.14, "CME": 0.1399, "CEG": 0.1385, "PNC": 0.1385,
+        "DASH": 0.1384, "PSX": 0.1376, "DUK": 0.1374, "CMCSA": 0.1372, "CSX": 0.1369,
+        "MMM": 0.1336, "MAR": 0.1331, "MNST": 0.133, "MRSH": 0.1306, "ICE": 0.1299, "HCA": 0.1295,
+        "WM": 0.1286, "UPS": 0.1262, "WMB": 0.1256, "JCI": 0.1253, "ELV": 0.1251, "EMR": 0.1245,
+        "CDNS": 0.1242, "MCO": 0.1241, "REGN": 0.1222, "SHW": 0.121, "SPG": 0.1207,
+        "DDOG": 0.1199, "MDLZ": 0.1188, "CMI": 0.118, "AMT": 0.1176, "CTAS": 0.1173,
+        "EOG": 0.1165, "ITW": 0.1159, "NOC": 0.1146, "SLB": 0.1143, "ECL": 0.1133, "MSI": 0.1126,
+        "LITE": 0.1125, "GM": 0.1119, "FDX": 0.1118, "NSC": 0.1118, "RCL": 0.1117, "APO": 0.1114,
+        "ROST": 0.1099, "TRV": 0.1097, "SNPS": 0.1094, "AON": 0.1078, "HLT": 0.1067,
+        "DLR": 0.1051, "TGT": 0.1043, "CI": 0.1042, "CL": 0.1042, "ORLY": 0.1033, "BSX": 0.1028,
+        "WBD": 0.1026, "HPE": 0.1023, "KMI": 0.101, "HON": 0.0992, "PCAR": 0.099, "APD": 0.0981,
+        "URI": 0.0979, "AJG": 0.0968, "RSG": 0.0967, "TDG": 0.0961, "AEP": 0.0954, "ALL": 0.0931,
+        "MPWR": 0.092, "TRGP": 0.092, "BKR": 0.0891, "GWW": 0.0888, "OXY": 0.0883, "TFC": 0.0881,
+        "COR": 0.0873, "PSA": 0.0864, "TER": 0.086, "NKE": 0.0859, "O": 0.0859, "D": 0.0858,
+        "FANG": 0.0853, "MET": 0.0853, "OKE": 0.0847, "TEL": 0.0839, "AFL": 0.0837,
+        "FAST": 0.0835, "FIX": 0.0833, "F": 0.083, "SRE": 0.0821, "GRMN": 0.0817, "NXPI": 0.0808,
+        "COHR": 0.0803, "CIEN": 0.0801, "AME": 0.079, "NDAQ": 0.079, "NUE": 0.0784, "DAL": 0.0779,
+        "DVN": 0.0779, "CAH": 0.0772, "PYPL": 0.0771, "KEYS": 0.0767, "MRNA": 0.0765,
+        "CTVA": 0.0762, "ADSK": 0.0761, "EW": 0.0743, "BDX": 0.0741, "STT": 0.0731,
+        "CARR": 0.0723, "LHX": 0.0723, "AXON": 0.0717, "ETR": 0.0716, "FITB": 0.0712,
+        "WAB": 0.0711, "AMP": 0.0709, "XEL": 0.0706, "WDAY": 0.07, "XYZ": 0.0695, "AZO": 0.0694,
+        "ROK": 0.0688, "VTR": 0.0683, "EXC": 0.0672, "VST": 0.0672, "EBAY": 0.0666, "HUM": 0.0657,
+        "COIN": 0.0653, "TTWO": 0.0645, "CMG": 0.0641, "CBRE": 0.0639, "A": 0.0634,
+        "PAYX": 0.0628, "KDP": 0.0624, "IDXX": 0.0623, "LYV": 0.0611, "ODFL": 0.0609,
+        "IQV": 0.0605, "PRU": 0.0603, "YUM": 0.0597, "DHI": 0.0595, "MCHP": 0.0591,
+        "MSCI": 0.0591, "ROP": 0.0583, "PCG": 0.0581, "VEEV": 0.0578, "WAT": 0.0576,
+        "AIG": 0.0574, "SYY": 0.0571, "ED": 0.0568, "ADM": 0.0566, "EXPE": 0.0559, "NTAP": 0.0543,
+        "HSY": 0.0539, "HIG": 0.0534, "PEG": 0.0534, "TKO": 0.0533, "KVUE": 0.0528, "IRM": 0.0526,
+        "EL": 0.0524, "KMB": 0.0523, "UAL": 0.0519, "WEC": 0.0508, "VMC": 0.0506, "CCL": 0.0504,
+        "MTB": 0.05, "EME": 0.0499, "HBAN": 0.0497, "KR": 0.0494, "ACGL": 0.049, "DXCM": 0.0489,
+        "EQT": 0.0486, "GEHC": 0.0484, "RJF": 0.0484, "RMD": 0.0484, "NTRS": 0.048,
+        "CPRT": 0.0474, "JBL": 0.0471, "EXR": 0.0467, "CCI": 0.0465, "CNC": 0.0459,
+        "BIIB": 0.0455, "WTW": 0.0455, "ZTS": 0.0455, "STLD": 0.0454, "MLM": 0.0453,
+        "CBOE": 0.0452, "IR": 0.045, "KHC": 0.0436, "AEE": 0.0432, "LVS": 0.0428, "CTSH": 0.0426,
+        "HAL": 0.0424, "CFG": 0.0422, "TDY": 0.0422, "VICI": 0.042, "ON": 0.0418, "ATO": 0.0417,
+        "DTE": 0.0413, "EIX": 0.0407, "MTD": 0.0401, "WSM": 0.0396, "CPAY": 0.0394, "AWK": 0.0392,
+        "FISV": 0.0392, "OTIS": 0.0392, "DOV": 0.0391, "LH": 0.0391, "Q": 0.0391, "ES": 0.0389,
+        "HPQ": 0.0387, "DGX": 0.0387, "DG": 0.0386, "FE": 0.0384, "CNP": 0.0381, "XYL": 0.0381,
+        "AVB": 0.0378, "TPL": 0.0378, "PPL": 0.0376, "RF": 0.0374, "JBHT": 0.0372, "CINF": 0.0371,
+        "SW": 0.0371, "INCY": 0.037, "WRB": 0.0368, "FICO": 0.0364, "ECHO": 0.0364, "PPG": 0.0363,
+        "VRSN": 0.0361, "OMC": 0.036, "SYF": 0.0359, "HUBB": 0.0357, "DRI": 0.0355,
+        "DLTR": 0.0355, "WST": 0.0355, "EQR": 0.0354, "VRSK": 0.0353, "BRO": 0.0351,
+        "EXPD": 0.0351, "GPN": 0.0351, "PHM": 0.0349, "NRG": 0.0348, "VLTO": 0.0348,
+        "TROW": 0.0345, "PFG": 0.034, "SMCI": 0.0339, "KEY": 0.0337, "CHD": 0.0334, "STZ": 0.0331,
+        "FSLR": 0.033, "STE": 0.033, "EXE": 0.0329, "EFX": 0.0328, "ULTA": 0.0325, "BG": 0.0324,
+        "L": 0.0324, "AMCR": 0.0322, "PKG": 0.0322, "RL": 0.0318, "LYB": 0.0317, "FFIV": 0.0311,
+        "IFF": 0.0311, "CMS": 0.031, "IP": 0.0307, "GIS": 0.0306, "FIS": 0.0301, "BR": 0.0298,
+        "LEN": 0.0296, "CHTR": 0.0292, "SNA": 0.0291, "TSN": 0.0291, "NI": 0.0287, "ESS": 0.0285,
+        "LUV": 0.0283, "CF": 0.0281, "EVRG": 0.0275, "SBAC": 0.0275, "ZBH": 0.0274, "DD": 0.0272,
+        "VTRS": 0.0268, "GPC": 0.0266, "BBY": 0.0265, "NDSN": 0.0265, "FTV": 0.0263,
+        "TSCO": 0.0262, "LNT": 0.026, "INVH": 0.0258, "WY": 0.0256, "LDOS": 0.0255, "CDW": 0.0252,
+        "J": 0.0251, "BEN": 0.025, "ROL": 0.025, "IEX": 0.0248, "ZBRA": 0.0247, "NVR": 0.0243,
+        "GEN": 0.0242, "CHRW": 0.0241, "PTC": 0.0239, "KIM": 0.0234, "HST": 0.023, "ALB": 0.0229,
+        "FOXA": 0.0229, "AKAM": 0.0227, "MAA": 0.0226, "APA": 0.0223, "SOLV": 0.0217,
+        "DOC": 0.0216, "MKC": 0.0216, "SWK": 0.0215, "COO": 0.0213, "TXT": 0.0209, "MAS": 0.0208,
+        "REG": 0.0205, "TYL": 0.0205, "EG": 0.0204, "CRL": 0.0202, "IVZ": 0.0202, "LII": 0.0202,
+        "AVY": 0.0201, "UDR": 0.0201, "AIZ": 0.02, "TRMB": 0.0199, "ALLE": 0.0198, "RVTY": 0.0198,
+        "ERIE": 0.0197, "LULU": 0.0197, "BAX": 0.0196, "HAS": 0.019, "GL": 0.0189, "HRL": 0.0189,
+        "SJM": 0.0189, "CSGP": 0.0188, "FOX": 0.0188, "CLX": 0.0185, "DECK": 0.0178,
+        "BXP": 0.0176, "IT": 0.0175, "GNRC": 0.0175, "GDDY": 0.0174, "PNW": 0.0173, "HII": 0.017,
+        "JKHY": 0.0168, "DPZ": 0.0163, "TECH": 0.0162, "DVA": 0.0162, "ALGN": 0.0161,
+        "MGM": 0.0156, "CPT": 0.0155, "FDS": 0.0154, "AES": 0.0151, "APTV": 0.0149,
+        "PODD": 0.0149, "PNR": 0.0149, "FRT": 0.0147, "UHS": 0.0147, "WYNN": 0.0147,
+        "SWKS": 0.0146, "HSIC": 0.0145, "NWSA": 0.0137, "ARE": 0.0131, "AOS": 0.0123,
+        "TAP": 0.0114, "MOS": 0.0112, "NCLH": 0.0109, "BLDR": 0.0108,
+        "Other": 0.02,
+    },
+    "R2SC.L": {  # Russell 2000, 72 holdings, 2026-08-21
+        # SSGA daily holdings XLSX, ticker zprr-gy
+        # only ~7% maps to tracked instruments — small caps are outside the universe
+        "FROG": 0.3071, "HUT": 0.2873, "TWST": 0.2631, "OSCR": 0.238, "AGX": 0.2228,
+        "QBTS": 0.2181, "HIMS": 0.2172, "QLYS": 0.2072, "ZETA": 0.2007, "CIFR": 0.183,
+        "UEC": 0.1722, "CRSP": 0.1674, "RGTI": 0.1671, "MRCY": 0.1636, "JOBY": 0.1606,
+        "HAE": 0.1587, "CAKE": 0.1551, "MYRG": 0.1544, "VRNS": 0.1458, "ACMR": 0.1314,
+        "ACIC": 0.1301, "ADPT": 0.1258, "TENB": 0.1248, "CECO": 0.1194, "LMND": 0.1137,
+        "UUUU": 0.1113, "LEU": 0.1039, "OPEN": 0.1033, "GRAL": 0.1032, "UCTT": 0.1014,
+        "AMBA": 0.0976, "SMR": 0.0937, "BEAM": 0.0905, "SOUN": 0.0877, "NVTS": 0.0759,
+        "OUST": 0.0757, "RDW": 0.0737, "LUNR": 0.0736, "ADMA": 0.072, "STNE": 0.0669,
+        "CTRA": 0.0652, "VOYG": 0.0636, "LTC": 0.0633, "FLY": 0.0604, "RXRX": 0.0558,
+        "INSP": 0.0557, "GLOB": 0.0534, "QUBT": 0.0531, "GIG": 0.0474, "EYE": 0.0469,
+        "AI": 0.0454, "PAGS": 0.0427, "DLO": 0.0423, "UMAC": 0.0385, "EOSE": 0.0381,
+        "COUR": 0.0381, "TDOC": 0.0371, "RCAT": 0.034, "MRVI": 0.0322, "FLNC": 0.0319,
+        "ABR": 0.0318, "NHIC": 0.0296, "BKSY": 0.0289, "NNE": 0.0257, "GOOD": 0.024,
+        "LCID": 0.024, "CCSI": 0.0205, "ODD": 0.0164, "ASPI": 0.0151, "SERV": 0.0113,
+        "DNA": 0.0111, "SPCE": 0.0102,
+        "Other": 92.94,
+    },
+    "UKDV.L": {  # S&P UK Dividend Aristocrats, 25 holdings, 2026-08-21
+        # SSGA daily holdings XLSX, ticker spyg-gy
+        "LGEN.L": 4.9328, "NWG.L": 4.2963, "SGRO.L": 3.8677, "ICG.L": 3.5693, "RB.L": 3.4104,
+        "SBRY.L": 3.3836, "BATS.L": 3.3246, "HIK.L": 3.218, "ROR.L": 2.9656, "UU.L": 2.946,
+        "SGE.L": 2.3343, "BNZL.L": 2.3045, "ITRK.L": 2.2659, "CTEC.L": 2.0426, "REL.L": 1.9195,
+        "SPX.L": 1.717, "SN.L": 1.6581, "PSON.L": 1.5988, "EXPN.L": 1.5937, "BA.L": 1.36,
+        "LSEG.L": 1.0837, "AZN.L": 1.0581, "GNS.L": 1.0577, "DPLM.L": 0.6533, "HLMA.L": 0.2571,
+        "Other": 41.18,
+    },
+}
+
+
 # ETF country and sector allocations — static snapshots that drift as funds rebalance.
 # Update when a holding is added or when allocations look materially stale (typically quarterly).
 # Universal lookup for any LSE-listed ETF: https://www.justetf.com/en/find-etf.html
 # Per-fund provider pages are listed inline below.
-ETF_COUNTRY_ALLOCATION = {
+ETF_COUNTRY_ALLOCATION = {  # updated 2026-05-04, review quarterly
     "XUTC.L": {  # Xtrackers MSCI USA Information Technology (Dist), isin: IE00BGQYRS42
         # https://etf.dws.com/en-gb/IE00BGQYRS42-msci-usa-information-technology-ucits-etf-1d/
         "United States": 99.29,
@@ -935,20 +1207,21 @@ ETF_COUNTRY_ALLOCATION = {
 
 
 # Same update cadence as ETF_COUNTRY_ALLOCATION — provider pages above apply here too.
-ETF_SECTOR_ALLOCATION = {
+ETF_SECTOR_ALLOCATION = {  # updated 2026-05-04, review quarterly
     "XUTC.L": {
         "Technology": 100.0,
     },
-    "XNAS.L": {
-        "Technology": 57.58,
-        "Consumer Cyclical": 17.31,
-        "Consumer Defensive": 6.46,
-        "Healthcare": 5.09,
-        "Communication Services": 3.94,
-        "Industrials": 3.71,
-        "Basic Materials": 1.62,
-        "Utilities": 1.61,
-        "Other": 2.68,
+    "XNAS.L": {  # cap-weighted from constituents, Yahoo sectors, 2026-08-21
+        "Technology": 57.08,
+        "Communication Services": 16.05,
+        "Consumer Cyclical": 12.91,
+        "Industrials": 5.86,
+        "Consumer Defensive": 4.2,
+        "Healthcare": 2.28,
+        "Utilities": 0.64,
+        "Basic Materials": 0.55,
+        "Energy": 0.3,
+        "Financial Services": 0.13,
     },
     "R2SC.L": {
         "Industrials": 19.95,
@@ -976,18 +1249,18 @@ ETF_SECTOR_ALLOCATION = {
         "Technology": 2.04,
         "Communication Services": 0.65,
     },
-    "VUAG.L": {
-        "Technology": 32.91,
-        "Financial Services": 12.60,
-        "Communication Services": 10.29,
-        "Consumer Cyclical": 9.87,
-        "Healthcare": 9.47,
-        "Industrials": 9.02,
-        "Consumer Defensive": 5.25,
-        "Energy": 4.01,
-        "Utilities": 2.54,
-        "Basic Materials": 2.09,
-        "Real Estate": 1.95,
+    "VUAG.L": {  # cap-weighted from constituents, Yahoo sectors, 2026-08-21
+        "Technology": 36.1,
+        "Financial Services": 12.54,
+        "Communication Services": 10.42,
+        "Consumer Cyclical": 10.15,
+        "Healthcare": 9.4,
+        "Industrials": 7.57,
+        "Consumer Defensive": 5.03,
+        "Energy": 3.43,
+        "Utilities": 2.0,
+        "Real Estate": 1.85,
+        "Basic Materials": 1.51,
     },
     "R1GR.L": {
         "Technology": 52.17,
@@ -1022,7 +1295,7 @@ ETF_SECTOR_ALLOCATION = {
 
 
 # Quick ratio thresholds (warn, good) by sector — industry conventions, not hard rules.
-QUICK_RATIO_THRESHOLDS = {
+QUICK_RATIO_THRESHOLDS = {  # updated 2025-10-02, static heuristic
     "Technology": (1.5, 2.5),
     "Industrials": (0.8, 1.2),
     "Healthcare": (1.3, 1.8),

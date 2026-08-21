@@ -585,7 +585,7 @@ async def get_current_portfolio(
                 **trends,
                 "quote_type": info.get("quoteType", "Unknown"),
                 "passedScreeners": [],  # will be populated below
-                "screener_score": 0,  # will be populated below
+                "screener_score": None,  # will be populated below
                 "screener_score_max": None,  # will be populated below
                 "form13f_score": form13f.get(holding.instrument.id, {}).get("score"),
                 "form13f_holders": form13f.get(holding.instrument.id, {}).get("holders", []),

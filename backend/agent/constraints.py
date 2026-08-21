@@ -22,7 +22,14 @@ Safety invariants, enforced no matter what a strategy proposes:
 
 import math
 
-from backend.agent.types import AgentLimits, PortfolioState, TradeIntent, TradeOrder, trade_fee_rate
+from backend.agent.types import (
+    AgentLimits,
+    PortfolioState,
+    TradeIntent,
+    TradeOrder,
+    is_fund,
+    trade_fee_rate,
+)
 
 SELL_ACTIONS = ("exit", "trim")
 BUY_ACTIONS = ("buy", "add")
@@ -32,7 +39,9 @@ ETF_TAG = "etf"
 
 
 def _fee_rate(symbol: str, side: str, state: PortfolioState, limits: AgentLimits) -> float:
-    return trade_fee_rate(symbol, state.currencies.get(symbol), symbol in state.etf_symbols, side, limits)
+    return trade_fee_rate(
+        symbol, state.currencies.get(symbol), is_fund(symbol, state.etf_symbols), side, limits
+    )
 
 
 def _cluster_headroom_gbp(

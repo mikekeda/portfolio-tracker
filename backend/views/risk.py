@@ -4,7 +4,8 @@ risk-contribution diagnostics.
 
 Builds a GBP daily-returns matrix for current holdings from PricesDaily +
 CurrencyRateDaily, estimates a Ledoit-Wolf shrunk covariance, then returns:
-  * annualised portfolio volatility and effective number of bets
+  * annualised portfolio volatility, Meucci effective bets, and the
+    correlation-blind risk-concentration count alongside it
   * per-holding risk contribution vs value weight, HRP reference weight,
     and the volatility impact of adding NEW_MONEY_GBP to that position
   * the same volatility impact for every non-held monitored instrument
@@ -25,14 +26,30 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.agent.constraints import ETF_TAG
+from backend.schemas.instrument_thesis import InstrumentThesisSchema
 from backend.app import get_db_session
-from backend.utils.risk_math import correlation_clusters, hrp_weights, ledoit_wolf_cov, risk_contributions
+from backend.utils.risk_math import (
+    correlation_clusters,
+    effective_bets,
+    hrp_weights,
+    ledoit_wolf_cov,
+    risk_contributions,
+)
 from backend.views._shared import PRICE_COLUMN
-from config import SPY, TAG_CLUSTER_SOFT_CAPS, TAG_RISK_ALERT_PCT, TRADING_DAYS_PER_YEAR
+from config import (
+    MAX_TOLERABLE_ANNUAL_LOSS,
+    logger,
+    SPY,
+    TAG_CLUSTER_SOFT_CAPS,
+    TAG_RISK_ALERT_PCT,
+    TRADING_DAYS_PER_YEAR,
+)
+from data import ETF_CONSTITUENTS
 from models import CurrencyRateDaily, HoldingDaily, Instrument, PortfolioDaily, PricesDaily
 
 router = APIRouter()
@@ -57,8 +74,18 @@ EXTREME_DAILY_RETURN = 0.60
 # "move" on the same day; a real melt-up (ETL.PA Mar 2025) is one symbol on
 # its own dates. Same-day extremes across this many symbols mean bad inputs.
 SUSPECT_SAME_DAY_SYMBOLS = 3
+# The un-enumerated tail bucket in ETF_CONSTITUENTS, not a tradable symbol.
+OTHER_KEY = "Other"
+# Look-through depth is bounded by the estimator, not the data. Enumerating every
+# constituent gives 673 assets on 442 observations, where Ledoit-Wolf shrinks toward
+# constant correlation and reads vol 2.6pp low; this floor holds T/N near 2.4 and
+# leaves ~1.3% of the book unattributed. Raise it if the return window shortens.
+LOOKTHROUGH_MIN_EXPOSURE_GBP = 5.0
 # Positions with avg pairwise correlation above this move as one bet.
 GROUP_MIN_CORR = 0.5
+# Normal 5% expected shortfall as a multiple of sigma: phi(Phi^-1(0.05)) / 0.05.
+# Not fitted to daily tails — a 252-day sum is a CLT object (see the docstring).
+ES_5PCT_SIGMA_MULTIPLE = 2.0627
 
 _GBP_FACTORS = {"GBP": 1.0, "GBX": 0.01, "GBp": 0.01}
 
@@ -77,6 +104,7 @@ async def _load_inputs(session: AsyncSession) -> tuple[date, list, list, list, l
                 Instrument.currency,
                 Instrument.yahoo_symbol,
                 Instrument.tags,
+                Instrument.thesis,
                 HoldingDaily.quantity,
                 HoldingDaily.current_price,
             )
@@ -178,6 +206,19 @@ def _data_warnings(matrix: pd.DataFrame, filled: pd.DataFrame) -> dict[str, Any]
     return {"gap_lumped": gap_lumped[:20], "extreme_returns": extreme_returns[:20], "severity": severity}
 
 
+def _breakeven_excess_return(beta: float, ann_vol: float) -> float:
+    """Extra return an asset must earn over the portfolio to be worth adding.
+
+    A position improves compounded (geometric) growth when the return it adds
+    beats the variance drag it adds: d_mu > d(sigma^2)/2. In the limit of a small
+    addition that reduces to sigma^2 * (beta - 1), so the hurdle is a property of
+    the asset and does not move with the size of the cheque.
+
+    Negative means the asset may underperform the portfolio and still help.
+    """
+    return float(ann_vol**2 * (beta - 1.0))
+
+
 def _candidate_vol_deltas(
     returns: pd.DataFrame,
     matrix: pd.DataFrame,
@@ -186,8 +227,8 @@ def _candidate_vol_deltas(
     ann_vol: float,
     model_value: float,
     held: set[str],
-) -> dict[str, float]:
-    """Δvol (bp) of putting NEW_MONEY_GBP into each non-held monitored symbol.
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Δvol (bp) and breakeven excess return for each non-held monitored symbol.
 
     Closed form: the new position only adds a cov(candidate, portfolio) cross
     term and its own variance, so no covariance-matrix rebuild is needed.
@@ -197,7 +238,8 @@ def _candidate_vol_deltas(
     """
     port_returns = pd.Series(matrix.values @ weights, index=matrix.index)
     v, a = model_value, NEW_MONEY_GBP
-    out = {}
+    out: dict[str, float] = {}
+    breakeven: dict[str, float] = {}
     for sym in returns.columns:
         if sym in held:
             continue
@@ -211,7 +253,114 @@ def _candidate_vol_deltas(
         var_c = float(c.var())
         new_var = (v**2 * port_var + 2 * v * a * cov_cp + a**2 * var_c) / (v + a) ** 2
         out[sym] = round(float(np.sqrt(new_var * TRADING_DAYS_PER_YEAR) - ann_vol) * 1e4, 2)
-    return out
+        breakeven[sym] = round(_breakeven_excess_return(cov_cp / port_var, ann_vol), 4)
+    return out, breakeven
+
+
+def _thesis_risk_band(raw: Any, beta: float) -> dict[str, Any]:
+    """The investor's conviction and target weight band, restated in risk terms.
+
+    The bands in Instrument.thesis are authored as shares of *capital*, but a
+    position's share of *risk* is beta times its weight — so a name can sit
+    inside its band on money and far outside it on risk. Converting with the
+    same beta the hurdle uses makes the two comparable.
+
+    thesis_rules.py remains the authority that enforces the capital band; this
+    is a diagnostic view of it.
+    """
+    blank = {"conviction": None, "band_risk_min": None, "band_risk_max": None}
+    if not raw:
+        return blank
+    try:
+        thesis = InstrumentThesisSchema.model_validate(raw)
+    except ValidationError as e:
+        logger.info("Invalid thesis, omitted from risk bands: %s", e.errors())
+        return blank
+    return {
+        "conviction": thesis.conviction,
+        "band_risk_min": thesis.target_weight_min_pct / 100.0 * beta,
+        "band_risk_max": thesis.target_weight_max_pct / 100.0 * beta,
+    }
+
+
+def _look_through(
+    returns: pd.DataFrame,
+    info: dict[str, Any],
+    included: list[str],
+    values: np.ndarray,
+) -> dict[str, Any] | None:
+    """Risk attribution with each fund expanded into its published constituents.
+
+    Answers a different question from the line-item view: not "which ticker do I
+    trade" but "which company am I actually exposed to". A fund's enumerated
+    weight moves to the underlying names; its un-enumerated tail stays on the
+    fund's own return series.
+
+    Deliberately reports no effective-bets figure: enumerating an index tail adds
+    hundreds of sub-0.01% exposures that inflate an entropy measure without
+    representing decisions, so it would not be comparable to the line-item one.
+
+    That residual proxy carries whole-fund beta rather than tail beta, so it
+    slightly overstates correlation and prints a higher portfolio vol than the
+    line-item model. The reattribution is sound; the vol gap is an artifact and
+    must be labelled as one, never shown as the truer number.
+
+    Returns None when no held fund has constituent data.
+    """
+    exposures: dict[str, float] = {}
+    funds = []
+    for sym, value in zip(included, values):
+        spec = ETF_CONSTITUENTS.get(sym)
+        if spec is None:
+            exposures[sym] = exposures.get(sym, 0.0) + float(value)
+            continue
+        enumerated = 0.0
+        for name, pct in spec.items():
+            if name == OTHER_KEY:
+                continue  # the tail; falls into the residual below
+            if name not in returns.columns or returns[name].count() < MIN_RETURN_OBS:
+                continue  # no usable history: leave this slice in the residual too
+            slice_gbp = float(value) * pct / 100.0
+            if slice_gbp < LOOKTHROUGH_MIN_EXPOSURE_GBP:
+                continue  # immaterial, and each one costs a degree of freedom
+            exposures[name] = exposures.get(name, 0.0) + slice_gbp
+            enumerated += pct
+        exposures[sym] = exposures.get(sym, 0.0) + float(value) * (100.0 - enumerated) / 100.0
+        funds.append({"symbol": sym, "enumerated_pct": round(enumerated, 2)})
+    if not funds:
+        return None
+
+    symbols = sorted(exposures)
+    matrix = returns[symbols].dropna()
+    if matrix.shape[0] < MIN_RETURN_OBS:
+        return None
+
+    cov, _ = ledoit_wolf_cov(matrix.values)
+    w = np.array([exposures[s] for s in symbols])
+    w = w / w.sum()
+    rc, port_var = risk_contributions(cov, w)
+    ann_vol = float(np.sqrt(port_var * TRADING_DAYS_PER_YEAR))
+
+    held = {s for s in included if s not in ETF_CONSTITUENTS}
+    rows = sorted(
+        (
+            {
+                "symbol": s,
+                "weight": float(w[i]),
+                "risk_contribution": float(rc[i]),
+                "held_directly": s in held,
+            }
+            for i, s in enumerate(symbols)
+        ),
+        key=lambda r: r["risk_contribution"],
+        reverse=True,
+    )
+    return {
+        "funds": funds,
+        "annual_volatility": ann_vol,
+        "residual_risk_share": float(sum(rc[symbols.index(f["symbol"])] for f in funds)),
+        "exposures": rows,
+    }
 
 
 def build_risk_payload(
@@ -233,6 +382,7 @@ def build_risk_payload(
                 "name": h.name,
                 "currency": h.currency,
                 "tags": h.tags or [],
+                "thesis": h.thesis,
                 "quantity": h.quantity,
                 "current_price": h.current_price,
             }
@@ -316,7 +466,12 @@ def build_risk_payload(
                 "value_gbp": round(info[s]["value_gbp"], 2),
                 "weight": float(weights[i]),
                 "risk_contribution": float(rc[i]),
+                "beta_to_portfolio": float(rc[i] / weights[i]),
+                "breakeven_excess_return": round(
+                    _breakeven_excess_return(rc[i] / weights[i], ann_vol), 4
+                ),
                 "hrp_weight": float(hrp[i]),
+                **_thesis_risk_band(info[s]["thesis"], rc[i] / weights[i]),
                 "next_1k_vol_delta_bp": round(float(vol_deltas[i]), 2),
                 "tags": info[s]["tags"],
             }
@@ -324,6 +479,10 @@ def build_risk_payload(
         ),
         key=lambda h: h["risk_contribution"],
         reverse=True,
+    )
+
+    candidate_vol_deltas, candidate_breakeven = _candidate_vol_deltas(
+        returns, matrix, weights, port_var, ann_vol, model_value, set(info)
     )
 
     rc_by_symbol = dict(zip(included, rc))
@@ -378,7 +537,14 @@ def build_risk_payload(
             "annual_volatility": ann_vol,
             "benchmark_symbol": SPY,
             "benchmark_volatility": benchmark_vol,
-            "effective_bets": float(1.0 / (rc**2).sum()),
+            "effective_bets": effective_bets(cov, weights),
+            # Correlation-blind: how evenly risk spreads across line items,
+            # which is a different question from how many bets there are.
+            "risk_concentration_bets": float(1.0 / (rc**2).sum()),
+            # What volatility costs a compounder: g = mu - sigma^2/2.
+            "variance_drag": ann_vol**2 / 2.0,
+            "expected_shortfall_5pct": ES_5PCT_SIGMA_MULTIPLE * ann_vol,
+            "max_tolerable_annual_loss": MAX_TOLERABLE_ANNUAL_LOSS,
             "shrinkage": float(shrinkage),
             "new_money_gbp": NEW_MONEY_GBP,
         },
@@ -386,11 +552,11 @@ def build_risk_payload(
         # that shows cap state, so no page can drift from the agent's gate.
         "capped_tags": sorted(breached),
         "groups": {"correlated": groups, "independent_count": single_count, "min_corr": GROUP_MIN_CORR},
-        "candidates": _candidate_vol_deltas(
-            returns, matrix, weights, port_var, ann_vol, model_value, set(info)
-        ),
+        "candidates": candidate_vol_deltas,
+        "candidate_breakeven": candidate_breakeven,
         "holdings": holdings_payload,
         "clusters": clusters,
+        "look_through": _look_through(returns, info, included, values),
         "excluded": excluded,
         "warnings": _data_warnings(matrix, filled),
     }
@@ -412,6 +578,7 @@ async def _risk_adjusted_stats(session: AsyncSession) -> dict[str, Any]:
                 PortfolioDaily.sortino_ratio,
                 PortfolioDaily.jensens_alpha,
                 PortfolioDaily.beta,
+                PortfolioDaily.twrr,
             )
             .where(PortfolioDaily.sharpe_ratio.is_not(None))
             .order_by(PortfolioDaily.date.desc())
@@ -426,6 +593,9 @@ async def _risk_adjusted_stats(session: AsyncSession) -> dict[str, Any]:
         "sortino_ratio": row.sortino_ratio,
         "jensens_alpha": row.jensens_alpha,
         "beta": row.beta,
+        # Stored as a percent (18.04 = 18.04%, scripts/update_returns.py); the
+        # shortfall card does arithmetic with it, so normalise at the boundary.
+        "twrr": None if row.twrr is None else row.twrr / 100.0,
     }
 
 

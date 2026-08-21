@@ -19,7 +19,7 @@ import argparse
 from sqlalchemy import text
 
 from config import BENCHES, VIX, logger
-from data import QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED, WISESHEETS_NO_PE
+from data import ETF_CONSTITUENTS, QQQ, SP500, STOCKS_ALIASES, STOCKS_DELISTED, WISESHEETS_NO_PE
 from scripts.update_data import get_session
 
 # Findings shown per check before truncating — keeps logs readable when a
@@ -52,6 +52,24 @@ FX_INCEPTION_ROWS = 20   # series-start window where USD junk rows cluster
 # (name, description, fix hint, SQL) — every check is a plain read-only query
 # so it can be pasted into psql/pgAdmin unchanged when digging into a finding.
 CHECKS: list[tuple[str, str, str, str]] = [
+    (
+        "etf_constituent_prices",
+        "ETF look-through constituents with missing or stale prices",
+        "The /risk look-through silently drops a constituent it cannot price, which "
+        "shifts that weight into the fund's residual and understates the name's true "
+        "exposure. Constituents stay priced because they sit in SP500/QQQ; a finding "
+        "means one left an index (re-sync ETF_CONSTITUENTS from the provider), "
+        "or its ticker was renamed — add it to STOCKS_ALIASES.",
+        f"""
+        WITH wanted AS (SELECT unnest(CAST(:etf_constituents AS text[])) AS symbol)
+        SELECT w.symbol, count(p.date) AS obs, max(p.date) AS last_price
+        FROM wanted w LEFT JOIN prices_daily p ON p.symbol = w.symbol
+        GROUP BY w.symbol
+        HAVING count(p.date) = 0
+            OR max(p.date) < CURRENT_DATE - {STALE_PRICE_DAYS}
+        ORDER BY count(p.date)
+        """,
+    ),
     (
         "junk_prices",
         "corrupt price rows (<= 0, NaN, or adj_close above close)",
@@ -543,6 +561,10 @@ def run_check(session, name: str, description: str, fix: str, sql: str) -> int:
         # points at the pre-rename ticker.
         params["alias_old"] = list(STOCKS_ALIASES.keys())
         params["alias_new"] = list(STOCKS_ALIASES.values())
+    if ":etf_constituents" in sql:
+        params["etf_constituents"] = sorted(
+            {t for weights in ETF_CONSTITUENTS.values() for t in weights if t != "Other"}
+        )
     if ":stale_13f_days" in sql:
         params["stale_13f_days"] = STALE_13F_DAYS
     rows = session.execute(text(sql), params).all()

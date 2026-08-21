@@ -21,7 +21,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from backend.agent.types import AgentLimits, PortfolioState, TradeIntent
+from backend.agent.types import AgentLimits, PortfolioState, TradeIntent, is_fund
 
 TIER_A_WEIGHTS = {
     "mom_12_1": 2.0,
@@ -145,7 +145,7 @@ class RulesStrategy:
                         rationale["trigger"] = "top quintile, underweight vs HRP target"
                         intents.append(TradeIntent(sym, "add", target, score=float(comp[sym]), rationale=rationale))
 
-        buys = self._new_buys(features, comp, pctl, set(held))
+        buys = self._new_buys(features, comp, pctl, set(held), state.etf_symbols)
         intents.extend(buys)
         return intents
 
@@ -157,10 +157,14 @@ class RulesStrategy:
             return True
         return bool(roic >= self.MIN_QUALITY_ROIC) or bool(screener >= self.MIN_QUALITY_SCREENER)
 
-    def _new_buys(self, features, comp, pctl, held: set) -> list[TradeIntent]:
+    def _new_buys(self, features, comp, pctl, held: set, etf_symbols=frozenset()) -> list[TradeIntent]:
         candidates = []
         for sym in features.index:
             if sym in held or np.isnan(comp.get(sym, np.nan)):
+                continue
+            # _quality_ok passes funds open (no fundamentals to object with), so
+            # momentum alone could open one. That is an allocation decision.
+            if is_fund(sym, etf_symbols):
                 continue
             row = features.loc[sym]
             if pctl[sym] < self.BUY_PCTL or not bool(row.get("dist_sma200", np.nan) > 0):
@@ -188,6 +192,8 @@ class RulesStrategy:
         """Build toward an equal-weight book of the top-ranked quality names."""
         ranked = []
         for sym in comp.dropna().sort_values(ascending=False).index:
+            if is_fund(sym, state.etf_symbols):
+                continue
             row = features.loc[sym]
             if bool(row.get("dist_sma200", np.nan) > 0) and self._quality_ok(row):
                 ranked.append(sym)

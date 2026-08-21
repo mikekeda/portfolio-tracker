@@ -44,7 +44,7 @@ from sqlalchemy import Date, cast, func, or_, select
 from sqlalchemy.sql import text as sql_text
 
 from config import logger
-from data import STOCKS_DELISTED
+from data import ETC_SYMBOLS, STOCKS_DELISTED
 from models import EarningsReport, HoldingDaily, Instrument, InstrumentYahoo
 from scripts._earnings_common import (
     DATA_DIR,
@@ -93,10 +93,10 @@ OUTCOME_NOT_LISTED = "not-listed"
 # ETCs and GDRs are sometimes tagged EQUITY by Yahoo even though they don't
 # publish UK RNS earnings. Verified empirically via shortName lookup —
 # extend as new ones appear in the holdings.
-NON_EARNINGS_LISTINGS = frozenset({
+# Union, not replacement: the ETCs come from the shared list, the other two are
+# here for unrelated reasons.
+NON_EARNINGS_LISTINGS = ETC_SYMBOLS | frozenset({
     "SMSN.L",  # Samsung Electronics GDR (Korean issuer, depository receipt)
-    "GLDW.L",  # WisdomTree Physical Gold ETC
-    "SGLN.L",  # iShares Physical Gold ETC
     "PHNX.L",  # Phoenix Group Holdings — TODO: real UK earnings issuer but
                # Investegate has no /company/PHNX page (verified 2026-04-26).
                # Remove from this set once an alt source is wired up.

@@ -7,13 +7,14 @@ Pure stdlib — runnable without the app's dependencies:
 """
 
 import sys
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.agent.constraints import apply_constraints
-from backend.agent.types import AgentLimits, PortfolioState, TradeIntent
+from backend.agent.types import AgentLimits, PortfolioState, TradeIntent, is_fund
 
 LIMITS = AgentLimits(
     max_daily_turnover=0.05,
@@ -42,7 +43,24 @@ def make_state(**overrides) -> PortfolioState:
     return PortfolioState(**defaults)
 
 
-PRICES = {"NVDA": 120.0, "GOOGL": 150.0, "ASML": 700.0, "RKLB": 25.0, "VUAG.L": 65.0, "MU": 90.0, "AMD": 110.0}
+PRICES = {
+    "NVDA": 120.0, "GOOGL": 150.0, "ASML": 700.0, "RKLB": 25.0,
+    "VUAG.L": 65.0, "MU": 90.0, "AMD": 110.0, "SGLN.L": 50.0,
+}
+
+
+def make_state_with_etc(**overrides):
+    """Shared fixture plus a 4% gold ETC, for the fee/cap split cases."""
+    base = make_state()
+    defaults = dict(
+        cash_gbp=20_000.0,
+        weights={**base.weights, "SGLN.L": 0.04},
+        quantities={**base.quantities, "SGLN.L": 80},
+        currencies={**base.currencies, "SGLN.L": "GBP"},
+        tags={**base.tags, "SGLN.L": ["commodity"]},
+    )
+    defaults.update(overrides)
+    return make_state(**defaults)
 
 
 def by_symbol(orders):
@@ -285,6 +303,44 @@ def test_deterministic():
     first = apply_constraints(intents, state, PRICES, LIMITS)
     second = apply_constraints(list(reversed(intents)), make_state(), PRICES, LIMITS)
     assert first == second
+
+
+def test_etc_is_exempt_from_stamp_duty():
+    """SGLN.L is a fund for fee purposes even though Yahoo calls it EQUITY."""
+    assert is_fund("SGLN.L", frozenset())
+    assert is_fund("GLDW.L", frozenset())
+    assert not is_fund("BA.L", frozenset())
+    # GBP fund buy pays neither SDRT nor FX fee, so the order is unshrunk.
+    state = make_state_with_etc()
+    limits = replace(LIMITS, cluster_caps={"ai": 45, "space": 15, "commodity": 20})
+    orders = by_symbol(apply_constraints(
+        [TradeIntent("SGLN.L", "add", 0.06, score=2.0)], state, PRICES, limits
+    ))
+    assert approx(orders["SGLN.L"].fee_gbp, 0.0), orders["SGLN.L"].fee_gbp
+
+
+def test_etc_still_counts_toward_its_thematic_cap():
+    """The fee exemption must not leak into the cap path — an ETC is one
+    commodity, not a diversified basket."""
+    state = make_state_with_etc()
+    limits = replace(LIMITS, cluster_caps={"ai": 45, "space": 15, "commodity": 5})
+    orders = by_symbol(apply_constraints(
+        [TradeIntent("SGLN.L", "add", 0.10, score=2.0)], state, PRICES, limits
+    ))
+    order = orders["SGLN.L"]
+    # 4% held against a 5% cap leaves ~1% (£1,000) of headroom, not the £6,000 asked.
+    assert order.value_gbp <= 1_000.0 + 1e-6, order.value_gbp
+    assert any("commodity" in a for a in order.adjustments), order.adjustments
+
+
+def test_etf_remains_exempt_from_thematic_caps():
+    """Regression guard: the split must not change ETF behaviour."""
+    state = make_state(cash_gbp=20_000.0)
+    limits = replace(LIMITS, cluster_caps={"ai": 45, "space": 15, "etf": 80})
+    orders = by_symbol(apply_constraints(
+        [TradeIntent("VUAG.L", "add", 0.12, score=2.0)], state, PRICES, limits
+    ))
+    assert orders["VUAG.L"].value_gbp > 0
 
 
 if __name__ == "__main__":

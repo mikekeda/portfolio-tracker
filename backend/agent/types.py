@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal, Optional
 
+from data import ETC_SYMBOLS
+
 Action = Literal["buy", "add", "trim", "exit"]
 
 # Currencies already denominated in sterling — no T212 FX fee applies.
@@ -98,6 +100,19 @@ class AgentLimits:
             stamp_duty=config.UK_STAMP_DUTY,
             french_ftt=config.FRENCH_FTT,
         )
+
+
+def is_fund(symbol: str, etf_symbols: frozenset[str]) -> bool:
+    """Whether `symbol` is a fund rather than an operating company.
+
+    Wider than `etf_symbols` (quoteType == 'ETF'): physically-backed ETCs belong
+    here too, but Yahoo reports them as EQUITY. Governs fee exemption, screener
+    blanking and new-buy eligibility.
+
+    Deliberately NOT the thematic-cap test — that one stays on `etf_symbols`,
+    since an ETC is a single-commodity holding, not a diversified basket.
+    """
+    return symbol in etf_symbols or symbol in ETC_SYMBOLS
 
 
 def trade_fee_rate(symbol: str, currency: str | None, is_etf: bool, side: str, limits: AgentLimits) -> float:

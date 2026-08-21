@@ -1,6 +1,7 @@
 """
 Pure portfolio-risk math: Ledoit-Wolf shrunk covariance, Hierarchical Risk
-Parity (HRP) weights, and risk-contribution decomposition.
+Parity (HRP) weights, risk-contribution decomposition, and the Meucci
+effective number of bets.
 
 Operates on plain numpy arrays so it can be tested standalone against any
 returns matrix; data loading and payload assembly live in backend/views/risk.py.
@@ -121,3 +122,26 @@ def risk_contributions(cov: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray
     port_var = float(weights @ cov @ weights)
     marginal = cov @ weights
     return weights * marginal / port_var, port_var
+
+
+def effective_bets(cov: np.ndarray, weights: np.ndarray) -> float:
+    """Meucci (2010) effective number of independent bets.
+
+    Diagonalises the covariance into uncorrelated principal portfolios and
+    returns exp(entropy) of their variance shares. Unlike the inverse Herfindahl
+    of per-asset risk contributions, this is correlation-aware: perfectly
+    correlated positions collapse to a single bet however evenly weighted.
+
+    Ranges from 1 (one bet) to N (N equal, independent bets).
+    """
+    lam, vecs = np.linalg.eigh(cov)
+    # eigh can return small negatives for a near-singular matrix; they carry no
+    # variance and would poison the log below.
+    lam = np.clip(lam, 0.0, None)
+    contrib = (vecs.T @ weights) ** 2 * lam
+    total = contrib.sum()
+    if total <= 0:
+        return 0.0
+    p = contrib / total
+    p = p[p > 1e-15]
+    return float(np.exp(-(p * np.log(p)).sum()))

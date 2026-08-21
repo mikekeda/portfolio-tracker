@@ -8,6 +8,7 @@ from itertools import combinations
 
 from backend.screener_config import FieldRef, get_screener_config
 from config import logger
+from data import ETC_SYMBOLS
 
 # Expected field names in portfolio data (for validation)
 EXPECTED_FIELDS = {
@@ -54,7 +55,14 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
     screeners_map = screener_config.screeners
 
     failures = 0
+    unscoreable = 0
     for holding_data in portfolio_data:
+        # Funds fail every gate, summing to a 0 indistinguishable from a scored
+        # equity that passed nothing. Branch on kind, never on score == 0.
+        if holding_data.get("quote_type") == "ETF" or holding_data.get("yahoo_symbol") in ETC_SYMBOLS:
+            _blank_result(holding_data)
+            unscoreable += 1
+            continue
         # Per holding, not per batch: one malformed field must not zero the
         # scores of every other stock and then get persisted by update_features.
         try:
@@ -72,10 +80,12 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
 
     total_matches = sum(len(h.get("passedScreeners", [])) for h in portfolio_data)
     logger.debug(
-        "Screener evaluation complete: %s total matches across %s holdings (%s failed)",
+        "Screener evaluation complete: %s total matches across %s holdings "
+        "(%s failed, %s not scoreable)",
         total_matches,
         len(portfolio_data),
         failures,
+        unscoreable,
     )
 
 

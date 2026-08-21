@@ -172,6 +172,10 @@ AGENT_MAX_DAILY_TURNOVER = 0.05  # per side (sells and buys each), fraction of p
 AGENT_MIN_HOLDINGS = 5
 AGENT_MAX_POSITION_WEIGHT = 0.16  # NVDA is ~15% today; cap must not force an immediate trim
 AGENT_MIN_TRADE_GBP = 150.0
+# Maximum tolerable 12-month loss (IPS, STRATEGY.md §1.3) — the policy's only
+# binding risk parameter. The Risk page tests expected shortfall against it.
+MAX_TOLERABLE_ANNUAL_LOSS = 0.50
+
 # Days per year constants for annualisation
 DAYS_PER_YEAR = 365.25  # Gregorian calendar average; used for TWRR/MWRR/alpha annualisation
 TRADING_DAYS_PER_YEAR = 252  # US/UK equity market trading days; used for volatility scaling
