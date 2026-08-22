@@ -263,6 +263,10 @@ class InstrumentYahoo(Base):
     quarterly_income_stmt: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
     # Analyst estimate revisions and forward estimates.
     estimates: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=text("'{}'::jsonb"))
+    # Fund-level fundamentals aggregated from etf_holdings constituents, for
+    # funds only. Display cache with no history — features_daily stays the
+    # point-in-time store and must never carry these.
+    derived_metrics: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
 
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

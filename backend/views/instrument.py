@@ -22,6 +22,7 @@ from backend.utils.form13f import (
 from backend.utils.pe_history import basis_matches, harmonic_mean_pe, pe_series
 from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.roic import get_roic
+from backend.views._etf_overlay import apply_derived_to_instrument, fund_derived_metrics
 from backend.views._shared import get_rates
 from config import BENCHES, PRICE_FIELD, TIMEZONE
 from models import (
@@ -607,7 +608,7 @@ async def get_instrument(
             .limit(1)
         )
     ).first()
-    return {
+    detail = {
         "instrument": {
             "id": instrument.id,
             "symbol": instrument.yahoo_symbol,
@@ -660,3 +661,11 @@ async def get_instrument(
         "insider_sell_count_90d": insider_row[1] if insider_row else None,
         "insider_net_value_90d": insider_row[2] if insider_row else None,
     }
+
+    # Funds have no equity fundamentals of their own; the Holdings Score column
+    # shows the constituent-weighted composite, and the tooltip here promises the
+    # same formula, so the same overlay has to reach this payload.
+    derived = (await fund_derived_metrics(session, [instrument.yahoo_symbol])).get(instrument.yahoo_symbol)
+    if derived:
+        apply_derived_to_instrument(detail, derived)
+    return detail

@@ -1520,3 +1520,23 @@
 .holdings-table .composite-score.poor      { color: #dc3545; }
 .holdings-table .composite-score.negative  { color: #842029; font-style: italic; }
 
+
+/* Fund rows whose fundamentals are aggregated from their constituents rather
+   than reported for the fund itself. */
+.holdings-table tr.look-through .pe,
+.holdings-table tr.look-through .ps,
+.holdings-table tr.look-through .roic,
+.holdings-table tr.look-through .screener-score,
+.holdings-table tr.look-through .composite-score,
+.holdings-table tr.look-through .recommendation,
+.holdings-table tr.look-through .quick-ratio,
+.holdings-table tr.look-through .debt-equity {
+  font-style: italic;
+}
+
+/* The ETF badge doubles as the look-through affordance: hovering it explains
+   how the row's fundamentals were derived. */
+.etf-badge.look-through {
+  cursor: help;
+  border-bottom: 1px dotted currentColor;
+}

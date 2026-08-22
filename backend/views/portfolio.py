@@ -38,6 +38,7 @@ from backend.utils.statement_trends import (
 from backend.utils.screener import calculate_screener_results
 from backend.utils.thesis_rules import attach_thesis_rule_eval
 from backend.utils.technical import calculate_technical_indicators_for_symbols
+from backend.views._etf_overlay import overlay_etf_derived
 from backend.views._shared import (
     PRICE_COLUMN,
     calculate_historical_trends,
@@ -317,11 +318,13 @@ async def _get_position_reviews(session: AsyncSession, inst_ids: list[int]) -> d
     }
 
 
-@router.get("/api/portfolio/current")
-async def get_current_portfolio(
-    session: AsyncSession = Depends(get_db_session), show_all: bool = False
-) -> dict[str, Any]:
-    """Get current portfolio holdings with detailed information. show_all=true: all monitored instruments."""
+async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict[str, Any]:
+    """Enriched holdings, with no ETF look-through overlay. show_all=true: all monitored instruments.
+
+    The scripts that persist holdings (update_features, run_position_review)
+    call this rather than the route: fund rows must reach `features_daily`
+    unscored, or the agent's cross-sectional z-scores shift.
+    """
     # Get the latest snapshot date
     result = await session.execute(select(func.max(HoldingDaily.date)))
     latest_date = result.scalar()
@@ -634,6 +637,16 @@ async def get_current_portfolio(
         "last_updated": last_updated,
         "rule_recommendations": rule_recommendations,
     }
+
+
+@router.get("/api/portfolio/current")
+async def get_current_portfolio(
+    session: AsyncSession = Depends(get_db_session), show_all: bool = False
+) -> dict[str, Any]:
+    """Get current portfolio holdings with detailed information. show_all=true: all monitored instruments."""
+    portfolio = await build_portfolio(session, show_all)
+    await overlay_etf_derived(session, portfolio["holdings"])
+    return portfolio
 
 
 @router.get("/api/portfolio/summary")

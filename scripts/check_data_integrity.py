@@ -41,6 +41,11 @@ STALE_13F_DAYS = 50
 # The refresh runs weekly; a gap past this means it stopped, whether or not
 # the index itself moved (an unchanged fetch still stamps updated_at).
 STALE_ETF_HOLDING_DAYS = 30
+# Derived metrics are rewritten by every update_features run, so any gap at all
+# means the nightly job has been failing past its last few attempts.
+STALE_DERIVED_METRICS_DAYS = 3
+# Mirrors MIN_COVERAGE in backend/utils/etf_aggregates.py, as a percentage.
+MIN_LOOKTHROUGH_COVERAGE_PCT = 80
 PORTFOLIO_DIFF_PCT = 1.0  # T212 total vs holdings sum; small FX drift is normal
 # Same bounds as the split detector: an unadjusted 2:1 split shows as ~0.5x.
 MOVE_UPPER, MOVE_LOWER = 1.8, 0.55
@@ -134,6 +139,47 @@ CHECKS: list[tuple[str, str, str, str]] = [
            OR checked < CURRENT_DATE - {STALE_ETF_HOLDING_DAYS}
            OR total_pct < 95.0
         ORDER BY yahoo_symbol
+        """,
+    ),
+    (
+        "etf_derived_metrics",
+        "sourced ETFs whose look-through fundamentals are missing or stale",
+        "update_features.py aggregates each fund's constituents into "
+        "instruments_yahoo.derived_metrics, after the FeaturesDaily upsert. missing means a "
+        "fund with enough resolved weight to qualify has no payload, so that job did not "
+        "reach the end; stale means it stopped running. A fund below the coverage gate is "
+        "NOT reported: R2SC.L resolves at ~7% of fund weight and is withheld on purpose, so "
+        "flagging it would fail this check every night for working as designed.",
+        f"""
+        WITH latest AS (
+            SELECT etf_instrument_id, max(date) AS date
+            FROM etf_holdings GROUP BY etf_instrument_id
+        ),
+        resolved AS (
+            SELECT e.etf_instrument_id,
+                   sum(e.weight_pct) FILTER (WHERE e.instrument_id IS NOT NULL)
+                       / NULLIF(sum(e.weight_pct), 0) * 100 AS resolved_pct
+            FROM etf_holdings e
+            JOIN latest l ON l.etf_instrument_id = e.etf_instrument_id AND l.date = e.date
+            GROUP BY e.etf_instrument_id
+        )
+        SELECT i.yahoo_symbol,
+               (y.derived_metrics->>'computed_at')::date AS computed_at,
+               (y.derived_metrics->>'n_resolved')::int AS n_resolved,
+               round(r.resolved_pct::numeric, 1) AS resolved_pct,
+               round((y.derived_metrics->'coverage'->>'pe_ratio')::numeric, 1) AS pe_coverage_pct,
+               CASE WHEN y.derived_metrics IS NOT NULL THEN 'stale' ELSE 'missing' END AS problem
+        FROM instruments i
+        JOIN instruments_yahoo y ON y.instrument_id = i.id
+        LEFT JOIN resolved r ON r.etf_instrument_id = i.id
+        WHERE i.yahoo_symbol = ANY(:sourced_etfs)
+          AND (
+                (y.derived_metrics IS NOT NULL
+                 AND (y.derived_metrics->>'computed_at')::date < CURRENT_DATE - {STALE_DERIVED_METRICS_DAYS})
+             OR (y.derived_metrics IS NULL
+                 AND coalesce(r.resolved_pct, 0) >= {MIN_LOOKTHROUGH_COVERAGE_PCT})
+              )
+        ORDER BY i.yahoo_symbol
         """,
     ),
     (

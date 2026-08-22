@@ -299,10 +299,32 @@ function formatCSVValue(value, key) {
     : s;
 }
 
+// Margins and growth are weighted by revenue, which is the exact
+// sum(numerator)/sum(denominator) form. ROIC, ROE/ROA, D/E and the quick ratio
+// have denominators we cannot reconstruct, so they stay weighted means.
+const APPROXIMATE_LABEL = 'Margins are revenue-weighted, so they are exact. ROIC, ROE/ROA, D/E and quick ratio ' +
+  'are weighted means of a ratio and only approximate the exact sum-over-sum figure.';
+
+/** Tooltip for the look-through marker on a fund row. */
+function lookThroughTooltip(row) {
+  const pe = row.look_through_coverage.pe_ratio;
+  return [
+    `Fundamentals aggregated from ${row.look_through_n} constituents` +
+      `${row.look_through_as_of ? ` (holdings as of ${row.look_through_as_of})` : ''}.`,
+    'Price multiples are harmonic means — the arithmetic mean overstates them by 37–80%.',
+    APPROXIMATE_LABEL,
+    pe != null ? `Coverage: ${pe}% of fund weight has a P/E. Metrics below 80% are left blank.` : '',
+  ].filter(Boolean).join('\n\n');
+}
+
 // This component will only re-render if its own props change
 const HoldingRow = React.memo(({ row, isSelected }) => {
+  // Funds have no fundamentals of their own, so every one on the row is a
+  // constituent-weighted aggregate — mark the row, not each of fifteen cells.
+  const className = [isSelected && 'selected-row', row.original.look_through && 'look-through']
+    .filter(Boolean).join(' ') || undefined;
   return (
-    <tr className={isSelected ? 'selected-row' : undefined}>
+    <tr className={className}>
       {row.getVisibleCells().map((cell) => (
         <td
           key={cell.id}
@@ -511,12 +533,18 @@ const Holdings = () => {
         header: 'Symbol',
         cell: (info) => {
           const symbol = info.getValue() || info.row.original.t212_code;
-          const isEtf = info.row.original.quote_type === 'ETF';
+          const row = info.row.original;
+          const isEtf = row.quote_type === 'ETF';
           return (
             <span className="symbol-cell">
               <Link className="symbol" to={`/stock/${encodeURIComponent(symbol)}`}>{symbol}</Link>
-              <ThesisRuleSignal eval_={info.row.original.thesis_rule_eval} />
-              {isEtf && <span className="etf-badge">ETF</span>}
+              <ThesisRuleSignal eval_={row.thesis_rule_eval} />
+              {isEtf && (
+                <span
+                  className={`etf-badge${row.look_through ? ' look-through' : ''}`}
+                  title={row.look_through ? lookThroughTooltip(row) : undefined}
+                >ETF</span>
+              )}
             </span>
           );
         },
@@ -1187,9 +1215,16 @@ const Holdings = () => {
           else if (ratio >= 0.15) className = 'poor';
           else className = 'very-poor';
 
+          // A fund's stored pair encodes the constituent-weighted ratio; it
+          // passed no gates, so printing points would invent 18 of them.
           return (
-            <span className={`screener-score ${className}`}>
-              {value}
+            <span
+              className={`screener-score ${className}`}
+              title={info.row.original.look_through
+                ? `${ratio.toFixed(2)} of max — constituent-weighted average, not points passed`
+                : undefined}
+            >
+              {info.row.original.look_through ? ratio.toFixed(2) : value}
             </span>
           );
         },

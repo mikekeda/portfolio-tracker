@@ -2,6 +2,7 @@ import {
   SCREENER_NORMALIZER,
   compositeTooltip,
   computeComposite,
+  form13fScore,
   earningsAgeDecay,
   earningsReportAgeMonths,
   effectiveSignalDate,
@@ -20,6 +21,20 @@ const NVDA = {
   earnings_announcement_date: new Date().toISOString(),
   recommendation_mean: 1.3,
   form13f_score: 1.2,
+};
+
+// VUAG.L as the writer stores it: the screener pair is a transport encoding of
+// the constituent-weighted ratio 0.303, not points the fund earned.
+const VUAG = {
+  quote_type: 'ETF',
+  sector: null,
+  look_through: true,
+  look_through_n: 489,
+  look_through_as_of: '2026-08-15',
+  screener_score: 0.303 * SCREENER_NORMALIZER,
+  screener_score_max: SCREENER_NORMALIZER,
+  recommendation_mean: 2.1,
+  look_through_form13f: 0.8,
 };
 
 const monthsAgo = (n) => new Date(Date.now() - n * 30.44 * 864e5).toISOString();
@@ -165,6 +180,55 @@ describe('exclusions', () => {
     expect(computeComposite(missingSector)).toBeNull();
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe('ETF look-through', () => {
+  test('a fund with look-through metrics scores', () => {
+    expect(computeComposite(VUAG)).not.toBeNull();
+  });
+
+  test('the same fund without the flag is still blank', () => {
+    // The flag, not the presence of a score, is what admits a fund — gold ETCs
+    // and funds below the coverage gate never get one.
+    const { look_through, ...noFlag } = VUAG;
+    expect(computeComposite(noFlag)).toBeNull();
+  });
+
+  test('gold ETCs stay null even though they are quoteType EQUITY', () => {
+    expect(computeComposite({ quote_type: 'EQUITY', sector: null, screener_score: null })).toBeNull();
+    expect(computeComposite({ ...VUAG, look_through: undefined, quote_type: 'EQUITY' })).toBeNull();
+  });
+
+  test('the 13F leg comes from look_through_form13f, never form13f_score', () => {
+    expect(form13fScore(VUAG)).toBe(0.8);
+    // A stray form13f_score on a fund row must not be picked up: it would mean
+    // "managers hold this fund" rather than "managers hold its constituents".
+    expect(form13fScore({ ...VUAG, form13f_score: -1.5 })).toBe(0.8);
+    expect(form13fScore({ quote_type: 'EQUITY', sector: 'Technology', form13f_score: 1.2 })).toBe(1.2);
+  });
+
+  test('the 13F leg counts toward the reweighting', () => {
+    // Without it the fund silently reweights to 83% screener / 17% analyst.
+    const { look_through_form13f, ...noF13f } = VUAG;
+    expect(compositeTooltip(5, VUAG)).toContain('13F: score 0.8');
+    expect(compositeTooltip(5, VUAG)).toContain('(eff. 20%)');
+    expect(compositeTooltip(5, noF13f)).toContain('13F: no data');
+    expect(computeComposite(VUAG)).not.toBe(computeComposite(noF13f));
+  });
+
+  test('the tooltip reads "of max", never points the fund never earned', () => {
+    const tip = compositeTooltip(4.4, VUAG);
+    expect(tip).toContain('Screener: 0.30 of max');
+    expect(tip).not.toContain('pts');
+    expect(tip).toContain('489 constituents');
+  });
+
+  test('funds score on three legs — earnings is never aggregated', () => {
+    const tip = compositeTooltip(4.4, VUAG);
+    expect(tip).toContain('Signal: no earnings report analysed yet');
+    // 50/10/15 of a 75 present total.
+    expect(tip).toContain('Screener: 0.30 of max  (eff. 67%)');
   });
 });
 

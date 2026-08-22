@@ -22,7 +22,7 @@ from backend.utils.position_review import (
     generate_assessment,
     hash_context,
 )
-from backend.views.portfolio import get_current_portfolio
+from backend.views.portfolio import build_portfolio
 from config import logger
 from models import Instrument, MarketMetricsDaily, PositionReview
 
@@ -30,7 +30,7 @@ from models import Instrument, MarketMetricsDaily, PositionReview
 async def run_position_reviews() -> None:
     """Generate position reviews for held instruments; skip unchanged inputs."""
     async with get_session() as session:
-        portfolio = await get_current_portfolio(session=session, show_all=False)
+        portfolio = await build_portfolio(session, show_all=False)
         holdings = [h for h in portfolio["holdings"] if h["quantity"] > 0]
         if not holdings:
             logger.info("Position-review: no held instruments to assess")

@@ -1053,16 +1053,30 @@ const Stock = () => {
     earnings_report_date: assessmentReport?.date ?? null,
     recommendation_mean: f.recommendationMean,
     form13f_score: data.form13f_score,
+    // Funds: the screener pair and 13F above are aggregated from constituents,
+    // and the flag is what admits them past the ETF guard.
+    look_through: data.look_through,
+    look_through_form13f: data.look_through_form13f,
+    look_through_n: data.look_through_n,
+    look_through_as_of: data.look_through_as_of,
   };
   const compositeScore = computeComposite(compositeInput);
 
   const passedScreeners = data.passed_screeners || [];
-  const screenerTooltip = [
-    `Screener score (nightly snapshot${data.screener_as_of ? ` · ${data.screener_as_of}` : ''})`,
-    passedScreeners.length > 0
-      ? `Passed:\n${passedScreeners.map(id => `✓ ${id.replace(/_/g, ' ')}`).join('\n')}`
-      : 'No screeners passed',
-  ].join('\n');
+  // A fund passes no gates of its own: "No screeners passed" would read as a
+  // verdict on the fund rather than as the absence of an equity screening.
+  const screenerTooltip = data.look_through
+    ? [
+        `Screener: constituent-weighted average of ${data.look_through_n} holdings` +
+          `${data.look_through_as_of ? ` (as of ${data.look_through_as_of})` : ''}`,
+        'Shown as a fraction of the maximum — the fund itself passes no equity screeners.',
+      ].join('\n')
+    : [
+        `Screener score (nightly snapshot${data.screener_as_of ? ` · ${data.screener_as_of}` : ''})`,
+        passedScreeners.length > 0
+          ? `Passed:\n${passedScreeners.map(id => `✓ ${id.replace(/_/g, ' ')}`).join('\n')}`
+          : 'No screeners passed',
+      ].join('\n');
 
   const kpiTooltips = {
     'Market Cap': 'Total market value of all outstanding shares',
@@ -1086,13 +1100,18 @@ const Stock = () => {
       value: compositeScore.toFixed(1),
       className: compositeScore >= 7 ? 'positive' : compositeScore < 3 ? 'negative' : '',
       // Same formula, but the screener input here is the nightly snapshot while
-      // Holdings recomputes live — say so, or a day's lag reads as a bug.
+      // Holdings recomputes live — say so, or a day's lag reads as a bug. Funds
+      // are the exception: both pages read the same stored look-through payload.
       tooltip: `${compositeTooltip(compositeScore, compositeInput)}\nSame formula as the Holdings Score column`
-        + `\nScreener from the ${data.screener_as_of || 'nightly'} snapshot, so this can lag Holdings by a day`,
+        + (data.look_through
+            ? '\nBoth pages read the same stored look-through figures, so they cannot diverge'
+            : `\nScreener from the ${data.screener_as_of || 'nightly'} snapshot, so this can lag Holdings by a day`),
     }] : []),
     ...(data.screener_score != null ? [{
       label: 'Screener',
-      value: Math.round(data.screener_score),
+      value: data.look_through
+        ? screenerRatio(data.screener_score, data.screener_score_max).toFixed(2)
+        : Math.round(data.screener_score),
       className: screenerRatio(data.screener_score, data.screener_score_max) >= 0.6 ? 'positive'
         : screenerRatio(data.screener_score, data.screener_score_max) < 0.2 ? 'negative' : '',
       tooltip: screenerTooltip,

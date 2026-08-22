@@ -64,6 +64,19 @@ export function earningsAgeDecay(monthsOld) {
 }
 
 /**
+ * 13F score feeding the composite.
+ *
+ * A fund's aggregate arrives on its own key: writing it to `form13f_score` would
+ * fill the 13F column, asserting managers hold the *fund* when what was measured
+ * is that they hold its constituents.
+ *
+ * @returns {number|null}
+ */
+export function form13fScore(h) {
+  return h.look_through ? (h.look_through_form13f ?? null) : (h.form13f_score ?? null);
+}
+
+/**
  * Composite score (–10 … 10):
  *   Screener quality score    50%  — screener_score / screener_score_max, which
  *                                    the backend scales down for sectors excluded
@@ -73,7 +86,10 @@ export function earningsAgeDecay(monthsOld) {
  *   Analyst recommendation    10%  — recommendation_mean (1=strong buy … 5=strong sell)
  *   Institutional 13F score   15%
  *
- * ETFs always return null (they can't pass equity screeners, have no signal).
+ * Funds return null unless the backend attached look-through metrics, in which
+ * case the screener and 13F legs come from their constituents (see
+ * backend/views/_etf_overlay.py). Earnings is never aggregated, so a fund scores
+ * on three legs at most.
  * Missing components are re-weighted proportionally so the formula stays fair
  * (e.g. non-US stocks without 13F data, stocks without an analysed report).
  * Output is capped at 10; there is no lower cap — losers can go negative.
@@ -87,7 +103,9 @@ export function computeComposite(h) {
   }
   // ETFs have no equity screener data or earnings signal — show blank. Some
   // trackers (SGLN.L) are quoteType EQUITY, so a null sector disqualifies too.
-  if (h.quote_type === 'ETF' || h.sector === null) return null;
+  // Funds carrying look-through metrics escape ahead of it; gold ETCs and funds
+  // below the coverage gate never get the flag, so the guard still catches them.
+  if (!h.look_through && (h.quote_type === 'ETF' || h.sector === null)) return null;
 
   // Only the upper bound is clamped: scores above the sector max are possible but
   // shouldn't outweigh their 50%, while red-flag stocks must stay negative.
@@ -121,8 +139,9 @@ export function computeComposite(h) {
     : null;
 
   // form13f_score is roughly –2 … +2; normalise to [0, 1]
-  const f13fRaw = h.form13f_score != null
-    ? Math.max(0, Math.min(1, (h.form13f_score + 2) / 4))
+  const f13f = form13fScore(h);
+  const f13fRaw = f13f != null
+    ? Math.max(0, Math.min(1, (f13f + 2) / 4))
     : null;
 
   const components = [
@@ -152,7 +171,8 @@ export function compositeTooltip(score, h) {
   const hasRec      = h.recommendation_mean != null &&
                       h.recommendation_mean >= 1 &&
                       h.recommendation_mean <= 5;
-  const hasF13f     = h.form13f_score != null;
+  const f13f        = form13fScore(h);
+  const hasF13f     = f13f != null;
   const presentTotal =
     (hasScreener ? 50 : 0) +
     (hasSignal   ? 25 : 0) +
@@ -161,10 +181,14 @@ export function compositeTooltip(score, h) {
   const eff = (base) =>
     presentTotal > 0 ? Math.round(base / presentTotal * 100) : 0;
 
+  // A fund's stored pair is a transport encoding of the constituent-weighted
+  // ratio, not points it earned — say "of max" rather than "n / 60 pts".
   const screenerMax = Math.round(h.screener_score_max ?? SCREENER_NORMALIZER);
-  const screenerLine = hasScreener
-    ? `Screener: ${h.screener_score} / ${screenerMax} pts  (eff. ${eff(50)}%)`
-    : 'Screener: no data';
+  const screenerLine = !hasScreener
+    ? 'Screener: no data'
+    : h.look_through
+      ? `Screener: ${screenerRatio(h.screener_score, h.screener_score_max).toFixed(2)} of max  (eff. ${eff(50)}%)`
+      : `Screener: ${h.screener_score} / ${screenerMax} pts  (eff. ${eff(50)}%)`;
   // Partially-decayed signals (12–24 months) still count, so they take the first
   // branch — surface the age there or the tooltip implies undecayed full weight.
   const signalLine = hasSignal
@@ -177,8 +201,16 @@ export function compositeTooltip(score, h) {
     ? `Analyst rec: ${h.recommendation_mean?.toFixed(1)}/5  (eff. ${eff(10)}%)`
     : 'Analyst rec: no data';
   const f13fLine = hasF13f
-    ? `13F: score ${h.form13f_score?.toFixed(1)}  (eff. ${eff(15)}%)`
+    ? `13F: score ${f13f.toFixed(1)}  (eff. ${eff(15)}%)`
     : '13F: no data (non-US or not filed)';
 
-  return `Score: ${score.toFixed(1)} / 10\n${screenerLine}\n${signalLine}\n${recLine}\n${f13fLine}`;
+  const lines = [screenerLine, signalLine, recLine, f13fLine];
+  if (h.look_through) {
+    // Earnings is never aggregated, so the reweighting is large and invisible.
+    lines.push(
+      `Look-through: weighted average of ${h.look_through_n} constituents` +
+      `${h.look_through_as_of ? `, ${h.look_through_as_of}` : ''} — no earnings signal for funds`
+    );
+  }
+  return `Score: ${score.toFixed(1)} / 10\n${lines.join('\n')}`;
 }

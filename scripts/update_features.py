@@ -14,13 +14,16 @@ import asyncio
 import math
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app import get_session
-from backend.views.portfolio import get_current_portfolio
+from backend.utils.etf_aggregates import METRIC_AGGREGATION, aggregate_fund
+from backend.views._etf_overlay import SCREENER_RATIO
+from backend.views.portfolio import build_portfolio
 from config import TIMEZONE, logger
-from models import FeaturesDaily, Instrument
+from models import EtfHolding, FeaturesDaily, Instrument, InstrumentYahoo
 
 
 # PostgreSQL's wire protocol caps a statement at 32767 bind parameters.
@@ -85,10 +88,100 @@ def _row_from_holding(h: dict, instrument_id: int) -> dict:
     }
 
 
+def _constituent_metrics(holding: dict) -> dict:
+    """One constituent's metrics, with the screener expressed as a ratio of its max.
+
+    A separate view rather than extra keys on the holding dict: these rows are on
+    their way into features_daily, and the ratio is not one of its columns.
+    """
+    metrics = {metric: holding.get(metric) for metric in METRIC_AGGREGATION if metric != SCREENER_RATIO}
+
+    score, maximum = holding.get("screener_score"), holding.get("screener_score_max")
+    if score is not None and maximum:
+        metrics[SCREENER_RATIO] = score / maximum
+    return metrics
+
+
+async def _update_etf_derived_metrics(
+    session: AsyncSession, holdings: list[dict], id_by_symbol: dict[str, int]
+) -> None:
+    """Aggregate each fund's constituents into fund-level metrics and store them.
+
+    Runs on the un-overlaid universe, after the FeaturesDaily upsert, so the
+    inputs are the same constituent figures the Holdings page shows.
+    """
+    metrics_by_instrument = {
+        instrument_id: _constituent_metrics(h)
+        for h in holdings
+        if (instrument_id := id_by_symbol.get(h["yahoo_symbol"])) is not None
+    }
+
+    latest = (
+        select(EtfHolding.etf_instrument_id, func.max(EtfHolding.date).label("date"))
+        .group_by(EtfHolding.etf_instrument_id)
+        .subquery()
+    )
+    rows = (
+        await session.execute(
+            select(
+                EtfHolding.etf_instrument_id,
+                EtfHolding.instrument_id,
+                EtfHolding.weight_pct,
+                EtfHolding.date,
+            ).join(
+                latest,
+                (latest.c.etf_instrument_id == EtfHolding.etf_instrument_id) & (latest.c.date == EtfHolding.date),
+            )
+        )
+    ).all()
+
+    # Unresolved constituents count toward the fund's published weight: coverage
+    # must describe the fund, not the sample we happen to track.
+    published: dict[int, float] = {}
+    constituents: dict[int, list[tuple[float, dict]]] = {}
+    snapshot_date: dict[int, str] = {}
+    for fund_id, instrument_id, weight_pct, snapshot in rows:
+        published[fund_id] = published.get(fund_id, 0.0) + weight_pct
+        snapshot_date[fund_id] = snapshot.isoformat()
+        metrics = metrics_by_instrument.get(instrument_id) if instrument_id else None
+        if metrics is not None:
+            constituents.setdefault(fund_id, []).append((weight_pct, metrics))
+
+    written = 0
+    for fund_id, total_weight in published.items():
+        values, coverage = aggregate_fund(constituents.get(fund_id, []), total_weight)
+        payload = (
+            {
+                "metrics": values,
+                "coverage": coverage,
+                "n_resolved": len(constituents.get(fund_id, [])),
+                "as_of": snapshot_date[fund_id],
+                "computed_at": datetime.now(TIMEZONE).date().isoformat(),
+            }
+            if values
+            else None
+        )
+        if payload:
+            written += 1
+        # NULL rather than an empty payload when nothing clears the gate: the
+        # overlay treats presence as "this fund has look-through metrics".
+        await session.execute(
+            update(InstrumentYahoo).where(InstrumentYahoo.instrument_id == fund_id).values(derived_metrics=payload)
+        )
+
+    await session.commit()
+    logger.info(
+        "Features: derived metrics for %d/%d funds (%d below the coverage gate)",
+        written,
+        len(published),
+        len(published) - written,
+    )
+
+
 async def update_features() -> None:
     """Upsert today's FeaturesDaily row for every monitored instrument."""
     async with get_session() as session:
-        portfolio = await get_current_portfolio(session=session, show_all=True)
+        portfolio = await build_portfolio(session, show_all=True)
         holdings = portfolio["holdings"]
 
         id_rows = await session.execute(
@@ -133,6 +226,8 @@ async def update_features() -> None:
             with_roic,
             skipped,
         )
+
+        await _update_etf_derived_metrics(session, holdings, id_by_symbol)
 
 
 def main() -> None:
