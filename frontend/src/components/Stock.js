@@ -506,14 +506,14 @@ SymbolSwitcher.propTypes = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Collapsed by default: 489 rows for VUAG, 1,485 for R2SC.
+// The full list shows by default, capped in height; this is the collapsed size.
 const ETF_HOLDINGS_COLLAPSED = 25;
 
 const Stock = () => {
   const { symbol } = useParams();
   const { hideAmounts } = useHideAmounts();
   const [data, setData] = useState(null);
-  const [etfHoldingsOpen, setEtfHoldingsOpen] = useState(false);
+  const [etfHoldingsOpen, setEtfHoldingsOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [chartLoading, setChartLoading] = useState(false);
@@ -1701,7 +1701,7 @@ const Stock = () => {
                     ? `Derived metrics above are weighted over the ${h.resolved_pct.toFixed(1)}% matched to tracked instruments.`
                     : `${h.resolved_pct.toFixed(1)}% is matched to tracked instruments.`}
               </p>
-              <div className={`form13f-list${etfHoldingsOpen ? ' etf-holdings-scroll' : ''}`}>
+              <div className="form13f-list etf-holdings-scroll">
                 {list.map((c) => (
                   <div className="form13f-row" key={c.key}>
                     <span className="etf-holdings-ticker">
@@ -1715,7 +1715,7 @@ const Stock = () => {
                   </div>
                 ))}
               </div>
-              {(hidden > 0 || etfHoldingsOpen) && (
+              {h.count > ETF_HOLDINGS_COLLAPSED && (
                 <button type="button" className="etf-holdings-toggle" onClick={() => setEtfHoldingsOpen(!etfHoldingsOpen)}>
                   {etfHoldingsOpen
                     ? `Show top ${ETF_HOLDINGS_COLLAPSED}`
