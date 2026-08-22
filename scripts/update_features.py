@@ -14,7 +14,7 @@ import asyncio
 import math
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, null, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -163,10 +163,12 @@ async def _update_etf_derived_metrics(
         )
         if payload:
             written += 1
-        # NULL rather than an empty payload when nothing clears the gate: the
-        # overlay treats presence as "this fund has look-through metrics".
+        # sqlalchemy null(), not None: None on a JSONB column stores 'null'::jsonb,
+        # which is not SQL NULL and slips past every IS NULL check downstream.
         await session.execute(
-            update(InstrumentYahoo).where(InstrumentYahoo.instrument_id == fund_id).values(derived_metrics=payload)
+            update(InstrumentYahoo)
+            .where(InstrumentYahoo.instrument_id == fund_id)
+            .values(derived_metrics=payload if payload else null())
         )
 
     await session.commit()

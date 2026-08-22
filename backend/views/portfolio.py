@@ -506,7 +506,8 @@ async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict
                 # Yahoo's own priceToSalesTrailing12Months carries the currency
                 # mismatch, so recompute it rather than reading the field.
                 "ps_ratio": market_cap / revenue_quote if (market_cap and revenue_quote) else None,
-                "beta": info.get("beta"),
+                # Funds report beta3Year instead of beta; same quantity, shorter window.
+                "beta": info.get("beta") if info.get("beta") is not None else info.get("beta3Year"),
                 "date": holding.date.isoformat() if hasattr(holding.date, "isoformat") else str(holding.date),
                 "market_value": market_value_gbp,  # Now in GBP
                 "profit": profit,  # Total profit (same as terminal - ppl already includes FX)

@@ -222,7 +222,8 @@ async def get_instrument(
         "peRatio": yd.get("trailingPE"),
         "forwardPE": yd.get("forwardPE"),
         "pegRatio": yd.get("trailingPegRatio"),
-        "beta": yd.get("beta"),
+        # Funds report beta3Year instead of beta; same quantity, 3y rather than 5y window.
+        "beta": yd.get("beta") if yd.get("beta") is not None else yd.get("beta3Year"),
         "dividendYield": yd.get("dividendYield"),
         "totalDebt": yd.get("totalDebt"),
         "totalCash": yd.get("totalCash"),

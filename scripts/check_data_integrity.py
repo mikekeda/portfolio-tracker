@@ -168,15 +168,15 @@ CHECKS: list[tuple[str, str, str, str]] = [
                (y.derived_metrics->>'n_resolved')::int AS n_resolved,
                round(r.resolved_pct::numeric, 1) AS resolved_pct,
                round((y.derived_metrics->'coverage'->>'pe_ratio')::numeric, 1) AS pe_coverage_pct,
-               CASE WHEN y.derived_metrics IS NOT NULL THEN 'stale' ELSE 'missing' END AS problem
+               CASE WHEN jsonb_typeof(y.derived_metrics) = 'object' THEN 'stale' ELSE 'missing' END AS problem
         FROM instruments i
         JOIN instruments_yahoo y ON y.instrument_id = i.id
         LEFT JOIN resolved r ON r.etf_instrument_id = i.id
         WHERE i.yahoo_symbol = ANY(:sourced_etfs)
           AND (
-                (y.derived_metrics IS NOT NULL
+                (jsonb_typeof(y.derived_metrics) = 'object'
                  AND (y.derived_metrics->>'computed_at')::date < CURRENT_DATE - {STALE_DERIVED_METRICS_DAYS})
-             OR (y.derived_metrics IS NULL
+             OR (jsonb_typeof(y.derived_metrics) IS DISTINCT FROM 'object'
                  AND coalesce(r.resolved_pct, 0) >= {MIN_LOOKTHROUGH_COVERAGE_PCT})
               )
         ORDER BY i.yahoo_symbol

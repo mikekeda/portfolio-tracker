@@ -1539,6 +1539,12 @@
   font-style: italic;
 }
 
+/* Yahoo reports a real P/E for four of the funds, so that cell is theirs, not
+   a constituent aggregate — the overlay names what it actually supplied. */
+.holdings-table tr.look-through .fund-own {
+  font-style: normal;
+}
+
 /* The ETF badge doubles as the look-through affordance: hovering it explains
    how the row's fundamentals were derived. */
 .etf-badge.look-through {

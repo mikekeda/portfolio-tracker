@@ -305,12 +305,18 @@ function formatCSVValue(value, key) {
 const APPROXIMATE_LABEL = 'Margins and growth are revenue-weighted, so they are exact. ROIC, ROE/ROA, D/E and ' +
   'quick ratio are weighted means of a ratio and only approximate the exact sum-over-sum figure.';
 
+/** '' when the overlay supplied this metric, so only derived cells read as derived. */
+function fundOwn(row, metric) {
+  return row.look_through_fields?.includes(metric) ? '' : ' fund-own';
+}
+
 /** Tooltip for the look-through marker on a fund row. */
 function lookThroughTooltip(row) {
   const pe = row.look_through_coverage.pe_ratio;
   return [
-    `Fundamentals aggregated from ${row.look_through_n} constituents` +
-      `${row.look_through_as_of ? ` (holdings as of ${row.look_through_as_of})` : ''}.`,
+    `Italic values are aggregated from ${row.look_through_n} constituents` +
+      `${row.look_through_as_of ? ` (holdings as of ${row.look_through_as_of})` : ''};` +
+      ' upright ones are reported by the fund itself.',
     'Price multiples are harmonic means — the arithmetic mean overstates them by 37–80%.',
     APPROXIMATE_LABEL,
     pe != null ? `Coverage: ${pe}% of fund weight has a P/E. Metrics below 80% are left blank.` : '',
@@ -751,7 +757,11 @@ const Holdings = () => {
             else if (value > avgPe) className = 'negative';
           }
           const title = avgPe !== null && avgPe !== undefined ? `Avg PE: ${Math.round(avgPe)}` : undefined;
-          return <span className={`pe ${className}`} title={title}>{Math.round(value)}</span>;
+          return (
+            <span className={`pe ${className}${fundOwn(info.row.original, 'pe_ratio')}`} title={title}>
+              {Math.round(value)}
+            </span>
+          );
         },
         enableSorting: true,
         enableGlobalFilter: false,

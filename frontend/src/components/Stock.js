@@ -953,8 +953,10 @@ const Stock = () => {
   const fcfYield = (f.freeCashflow && f.marketCap && f.marketCap > 0)
     ? (f.freeCashflow / f.marketCap) * 100 : null;
 
-  const netDebt = (f.totalDebt !== undefined && f.totalCash !== undefined)
-    ? (f.totalDebt || 0) - (f.totalCash || 0) : null;
+  // The backend always sets both keys, so a missing figure is null, never
+  // undefined — `!== undefined` passed and rendered a fabricated net debt of 0.
+  const netDebt = (f.totalDebt != null && f.totalCash != null)
+    ? f.totalDebt - f.totalCash : null;
 
   const sector = i.sector || '';
   const pbThresholds = getPbThresholds(sector);
@@ -1141,7 +1143,8 @@ const Stock = () => {
         : '',
       tooltip: kpiTooltips['PEG'],
     },
-    { label: 'Dividend', value: f.dividendYield ? `${f.dividendYield.toFixed(2)}%` : '-', tooltip: kpiTooltips['Dividend'] },
+    // 0% is a real yield (XNAS.L distributes nothing) — truthiness hid it as unknown.
+    { label: 'Dividend', value: f.dividendYield != null ? `${f.dividendYield.toFixed(2)}%` : '-', tooltip: kpiTooltips['Dividend'] },
     {
       label: 'Beta',
       value: f.beta ?? '-',
