@@ -1416,6 +1416,7 @@ const Stock = () => {
   const sections = [
     { id: 'sec-valuation', label: 'Valuation' },
     { id: 'sec-quality', label: 'Quality' },
+    ...(data.etf_holdings ? [{ id: 'sec-holdings', label: 'Holdings' }] : []),
     { id: 'sec-13f', label: '13F' },
     ...((thesisSummary || data.thesis_rule_eval) ? [{ id: 'sec-thesis', label: 'Thesis' }] : []),
     ...(data.agent_suggestion ? [{ id: 'sec-agent', label: 'Agent' }] : []),
@@ -1675,6 +1676,48 @@ const Stock = () => {
             </ResponsiveContainer>
           </div>
         )}
+        {data.etf_holdings && (() => {
+          const h = data.etf_holdings;
+          const shown = h.top.reduce((sum, c) => sum + c.weight_pct, 0);
+          const rest = h.count - h.top.length;
+          return (
+            <div className="panel" id="sec-holdings">
+              <h3>
+                Holdings ({h.count})
+                <span className="form13f-as-of"> — as of {formatDateShort(h.as_of)}</span>
+              </h3>
+              <p className="etf-holdings-summary">
+                {h.held_pct > 0 && (
+                  <><strong>{h.held_pct.toFixed(1)}%</strong> of this fund is in names you already hold directly.{' '}</>
+                )}
+                {h.resolved_pct < h.coverage_gate_pct
+                  ? `Only ${h.resolved_pct.toFixed(1)}% is matched to tracked instruments — below the ${h.coverage_gate_pct}% needed to derive fund metrics, which is why they are blank.`
+                  : data.look_through
+                    ? `Derived metrics above are weighted over the ${h.resolved_pct.toFixed(1)}% matched to tracked instruments.`
+                    : `${h.resolved_pct.toFixed(1)}% is matched to tracked instruments.`}
+              </p>
+              <div className="form13f-list">
+                {h.top.map((c) => (
+                  <div className="form13f-row" key={c.key}>
+                    <span className="form13f-name">
+                      {c.symbol
+                        ? <Link to={`/stock/${encodeURIComponent(c.symbol)}`} className="form13f-link">{c.name}</Link>
+                        : c.name}
+                      {c.held && <span className="etf-holdings-held" title="You hold this directly too">held</span>}
+                    </span>
+                    <span className="form13f-value">{c.weight_pct.toFixed(2)}%</span>
+                  </div>
+                ))}
+              </div>
+              {rest > 0 && (
+                <p className="etf-holdings-rest">
+                  {rest.toLocaleString()} more · {(h.total_pct - shown).toFixed(1)}% of the fund
+                </p>
+              )}
+            </div>
+          );
+        })()}
+
         <div className="panel" id="sec-13f">
           <h3>
             Institutional Holders (13F)

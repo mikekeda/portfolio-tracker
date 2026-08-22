@@ -1642,3 +1642,28 @@
   background: #212529;
   color: #fff;
 }
+
+.etf-holdings-summary {
+  margin: 0 0 12px;
+  color: #495057;
+}
+
+/* Constituents you also hold directly. Deliberately not the 13F buy/sell
+   palette, which means "a manager increased the position" further down. */
+.etf-holdings-held {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #e7e9ec;
+  color: #495057;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.etf-holdings-rest {
+  margin: 12px 0 0;
+  color: #868e96;
+  font-size: 0.85rem;
+}

@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 from backend.agent.rules_strategy import RulesStrategy
 from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
+from backend.utils.etf_aggregates import MIN_COVERAGE
 from backend.utils.form13f import (
     Form13FFilingRow,
     _build_sec_13f_url,
@@ -26,6 +27,7 @@ from backend.views._etf_overlay import apply_derived_to_instrument, fund_derived
 from backend.views._shared import get_rates
 from config import BENCHES, PRICE_FIELD, TIMEZONE
 from models import (
+    EtfHolding,
     FeaturesDaily,
     Form13FFiling,
     Form13FHolding,
@@ -42,6 +44,75 @@ from models import (
 )
 
 router = APIRouter()
+
+# Enough to show what drives the fund without turning the page into a table;
+# the rest is rolled up with the unresolved share.
+ETF_HOLDINGS_SHOWN = 25
+
+
+async def _build_etf_holdings(instrument, session: AsyncSession) -> dict | None:
+    """The fund's published constituents, or None when it has no snapshot.
+
+    Carries the unresolved share explicitly: for a fund we barely track it is the
+    honest explanation of why every derived figure on the page is blank.
+    """
+    latest = (
+        await session.execute(
+            select(func.max(EtfHolding.date)).where(EtfHolding.etf_instrument_id == instrument.id)
+        )
+    ).scalar()
+    if latest is None:
+        return None
+
+    rows = (
+        await session.execute(
+            select(
+                EtfHolding.source_key,
+                EtfHolding.name,
+                EtfHolding.weight_pct,
+                Instrument.yahoo_symbol,
+                Instrument.id.label("instrument_id"),
+            )
+            .outerjoin(Instrument, Instrument.id == EtfHolding.instrument_id)
+            .where(EtfHolding.etf_instrument_id == instrument.id, EtfHolding.date == latest)
+            .order_by(EtfHolding.weight_pct.desc())
+        )
+    ).all()
+    if not rows:
+        return None
+
+    held_date = (await session.execute(select(func.max(HoldingDaily.date)))).scalar()
+    held_ids = set(
+        (
+            await session.execute(
+                select(HoldingDaily.instrument_id).where(
+                    HoldingDaily.date == held_date, HoldingDaily.quantity > 0
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    return {
+        "as_of": latest.isoformat(),
+        "count": len(rows),
+        "total_pct": round(sum(r.weight_pct for r in rows), 2),
+        "resolved_pct": round(sum(r.weight_pct for r in rows if r.instrument_id is not None), 2),
+        "held_pct": round(sum(r.weight_pct for r in rows if r.instrument_id in held_ids), 2),
+        # Sent rather than mirrored in the frontend, so the gate cannot drift.
+        "coverage_gate_pct": round(MIN_COVERAGE * 100),
+        "top": [
+            {
+                "key": r.source_key,
+                "name": r.name,
+                "symbol": r.yahoo_symbol,
+                "weight_pct": round(r.weight_pct, 2),
+                "held": r.instrument_id in held_ids,
+            }
+            for r in rows[:ETF_HOLDINGS_SHOWN]
+        ],
+    }
 
 
 async def _build_earnings_reports(instrument, yh, session: AsyncSession) -> list[dict]:
@@ -630,6 +701,7 @@ async def get_instrument(
         "recommendations": (yh.recommendations or {}) if yh else {},
         "news": yh.news if yh else [],
         "earnings_reports": await _build_earnings_reports(instrument, yh, session),
+        "etf_holdings": await _build_etf_holdings(instrument, session),
         "form13f_holdings": form13f_holdings,
         "form13f_as_of": form13f_as_of,
         "form13f_score": form13f_score,
