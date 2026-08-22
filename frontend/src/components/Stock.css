@@ -1662,8 +1662,36 @@
   letter-spacing: 0.04em;
 }
 
-.etf-holdings-rest {
-  margin: 12px 0 0;
-  color: #868e96;
+
+.etf-holdings-ticker {
+  min-width: 62px;
+  font-weight: 600;
+  font-family: 'Courier New', monospace;
+}
+
+.etf-holdings-untracked {
+  color: #ced4da;
+  cursor: help;
+}
+
+/* Expanded lists run to 1,485 rows, so cap the panel rather than the page. */
+.etf-holdings-scroll {
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.etf-holdings-toggle {
+  margin-top: 12px;
+  padding: 6px 12px;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  background: #fff;
+  color: #495057;
   font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.etf-holdings-toggle:hover {
+  background: #f1f3f5;
 }

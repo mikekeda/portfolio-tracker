@@ -45,10 +45,6 @@ from models import (
 
 router = APIRouter()
 
-# Enough to show what drives the fund without turning the page into a table;
-# the rest is rolled up with the unresolved share.
-ETF_HOLDINGS_SHOWN = 25
-
 
 async def _build_etf_holdings(instrument, session: AsyncSession) -> dict | None:
     """The fund's published constituents, or None when it has no snapshot.
@@ -71,6 +67,7 @@ async def _build_etf_holdings(instrument, session: AsyncSession) -> dict | None:
                 EtfHolding.name,
                 EtfHolding.weight_pct,
                 Instrument.yahoo_symbol,
+                Instrument.name.label("instrument_name"),
                 Instrument.id.label("instrument_id"),
             )
             .outerjoin(Instrument, Instrument.id == EtfHolding.instrument_id)
@@ -102,15 +99,17 @@ async def _build_etf_holdings(instrument, session: AsyncSession) -> dict | None:
         "held_pct": round(sum(r.weight_pct for r in rows if r.instrument_id in held_ids), 2),
         # Sent rather than mirrored in the frontend, so the gate cannot drift.
         "coverage_gate_pct": round(MIN_COVERAGE * 100),
-        "top": [
+        "constituents": [
             {
                 "key": r.source_key,
-                "name": r.name,
+                # The SP500-derived source keys on ticker and publishes no names,
+                # so VUAG's 489 rows carry only ours.
+                "name": r.name or r.instrument_name,
                 "symbol": r.yahoo_symbol,
                 "weight_pct": round(r.weight_pct, 2),
                 "held": r.instrument_id in held_ids,
             }
-            for r in rows[:ETF_HOLDINGS_SHOWN]
+            for r in rows
         ],
     }
 
@@ -735,9 +734,8 @@ async def get_instrument(
         "insider_net_value_90d": insider_row[2] if insider_row else None,
     }
 
-    # Funds have no equity fundamentals of their own; the Holdings Score column
-    # shows the constituent-weighted composite, and the tooltip here promises the
-    # same formula, so the same overlay has to reach this payload.
+    # The Score tooltip here promises the same formula as the Holdings column,
+    # so the same overlay has to reach this payload.
     derived = (await fund_derived_metrics(session, [instrument.yahoo_symbol])).get(instrument.yahoo_symbol)
     if derived:
         apply_derived_to_instrument(detail, derived)

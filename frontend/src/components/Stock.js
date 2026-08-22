@@ -506,10 +506,14 @@ SymbolSwitcher.propTypes = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Collapsed by default: 489 rows for VUAG, 1,485 for R2SC.
+const ETF_HOLDINGS_COLLAPSED = 25;
+
 const Stock = () => {
   const { symbol } = useParams();
   const { hideAmounts } = useHideAmounts();
   const [data, setData] = useState(null);
+  const [etfHoldingsOpen, setEtfHoldingsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [chartLoading, setChartLoading] = useState(false);
@@ -1678,8 +1682,9 @@ const Stock = () => {
         )}
         {data.etf_holdings && (() => {
           const h = data.etf_holdings;
-          const shown = h.top.reduce((sum, c) => sum + c.weight_pct, 0);
-          const rest = h.count - h.top.length;
+          const list = etfHoldingsOpen ? h.constituents : h.constituents.slice(0, ETF_HOLDINGS_COLLAPSED);
+          const hidden = h.count - list.length;
+          const hiddenPct = h.total_pct - list.reduce((sum, c) => sum + c.weight_pct, 0);
           return (
             <div className="panel" id="sec-holdings">
               <h3>
@@ -1696,23 +1701,26 @@ const Stock = () => {
                     ? `Derived metrics above are weighted over the ${h.resolved_pct.toFixed(1)}% matched to tracked instruments.`
                     : `${h.resolved_pct.toFixed(1)}% is matched to tracked instruments.`}
               </p>
-              <div className="form13f-list">
-                {h.top.map((c) => (
+              <div className={`form13f-list${etfHoldingsOpen ? ' etf-holdings-scroll' : ''}`}>
+                {list.map((c) => (
                   <div className="form13f-row" key={c.key}>
-                    <span className="form13f-name">
+                    <span className="etf-holdings-ticker">
                       {c.symbol
-                        ? <Link to={`/stock/${encodeURIComponent(c.symbol)}`} className="form13f-link">{c.name}</Link>
-                        : c.name}
-                      {c.held && <span className="etf-holdings-held" title="You hold this directly too">held</span>}
+                        ? <Link to={`/stock/${encodeURIComponent(c.symbol)}`} className="form13f-link">{c.symbol}</Link>
+                        : <span className="etf-holdings-untracked" title="Not a tracked instrument">—</span>}
                     </span>
+                    <span className="form13f-name">{c.name}</span>
+                    {c.held && <span className="etf-holdings-held" title="You hold this directly too">held</span>}
                     <span className="form13f-value">{c.weight_pct.toFixed(2)}%</span>
                   </div>
                 ))}
               </div>
-              {rest > 0 && (
-                <p className="etf-holdings-rest">
-                  {rest.toLocaleString()} more · {(h.total_pct - shown).toFixed(1)}% of the fund
-                </p>
+              {(hidden > 0 || etfHoldingsOpen) && (
+                <button type="button" className="etf-holdings-toggle" onClick={() => setEtfHoldingsOpen(!etfHoldingsOpen)}>
+                  {etfHoldingsOpen
+                    ? `Show top ${ETF_HOLDINGS_COLLAPSED}`
+                    : `Show all ${h.count.toLocaleString()} · ${hidden.toLocaleString()} more, ${hiddenPct.toFixed(1)}% of the fund`}
+                </button>
               )}
             </div>
           );
