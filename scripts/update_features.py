@@ -12,7 +12,7 @@ and upserts one FeaturesDaily row per instrument. Run nightly from project root:
 
 import asyncio
 import math
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, null, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -23,11 +23,21 @@ from backend.utils.etf_aggregates import METRIC_AGGREGATION, aggregate_fund
 from backend.views._etf_overlay import SCREENER_RATIO
 from backend.views.portfolio import build_portfolio
 from config import TIMEZONE, logger
-from models import EtfHolding, FeaturesDaily, Instrument, InstrumentYahoo
+from models import EtfHolding, FeaturesDaily, Instrument, InstrumentYahoo, TransactionAction, TransactionHistory
 
 
 # PostgreSQL's wire protocol caps a statement at 32767 bind parameters.
 MAX_BIND_PARAMS = 32767
+
+# Both distributing funds held here pay ~1.8x a year, so a full year with no
+# payout identifies an accumulating fund. Shorter, and a recent buy looks like one.
+MIN_DISTRIBUTION_WINDOW_DAYS = 365
+
+DISTRIBUTION_ACTIONS = (
+    TransactionAction.DIVIDEND,
+    TransactionAction.DIVIDEND_PROPERTY,
+    TransactionAction.DIVIDEND_TAX_EXEMPT,
+)
 
 
 def _num(value) -> float | None:
@@ -102,6 +112,38 @@ def _constituent_metrics(holding: dict) -> dict:
     return metrics
 
 
+async def _accumulating_funds(session: AsyncSession, fund_ids: list[int]) -> set[int]:
+    """Funds held long enough to have paid a distribution, that never have.
+
+    Yahoo reports dividendYield for some accumulating ETFs (XNAS.L: 0.0) and
+    omits it for others (VUAG.L, R1GR.L), so the tile reads 0.00% for one and
+    blank for the next. Payout history settles it from data we already hold.
+
+    Only reaches funds that clear the coverage gate, since it travels on the
+    look-through payload: R2SC.L is accumulating but stays blank.
+    """
+    if not fund_ids:
+        return set()
+
+    rows = (
+        await session.execute(
+            select(
+                Instrument.id,
+                func.min(TransactionHistory.timestamp).label("first_txn"),
+                func.count(TransactionHistory.id)
+                .filter(TransactionHistory.action.in_(DISTRIBUTION_ACTIONS))
+                .label("distributions"),
+            )
+            .join(TransactionHistory, TransactionHistory.isin == Instrument.isin)
+            .where(Instrument.id.in_(fund_ids))
+            .group_by(Instrument.id)
+        )
+    ).all()
+
+    cutoff = datetime.now(TIMEZONE).replace(tzinfo=None) - timedelta(days=MIN_DISTRIBUTION_WINDOW_DAYS)
+    return {fund_id for fund_id, first_txn, distributions in rows if not distributions and first_txn <= cutoff}
+
+
 async def _update_etf_derived_metrics(
     session: AsyncSession, holdings: list[dict], id_by_symbol: dict[str, int]
 ) -> None:
@@ -147,6 +189,8 @@ async def _update_etf_derived_metrics(
         if metrics is not None:
             constituents.setdefault(fund_id, []).append((weight_pct, metrics))
 
+    accumulating = await _accumulating_funds(session, list(published))
+
     written = 0
     for fund_id, total_weight in published.items():
         values, coverage = aggregate_fund(constituents.get(fund_id, []), total_weight)
@@ -157,6 +201,9 @@ async def _update_etf_derived_metrics(
                 "n_resolved": len(constituents.get(fund_id, [])),
                 "as_of": snapshot_date[fund_id],
                 "computed_at": datetime.now(TIMEZONE).date().isoformat(),
+                # Outside "metrics": established from payout history, not from
+                # constituents. None means unknown, not zero.
+                "distribution_yield": 0.0 if fund_id in accumulating else None,
             }
             if values
             else None

@@ -35,6 +35,7 @@ PAYLOAD = {
     "coverage": {"pe_ratio": 92.5},
     "n_resolved": 98,
     "as_of": "2026-08-21",
+    "distribution_yield": 0.0,
 }
 
 
@@ -103,13 +104,40 @@ def test_peg_and_fcf_yield_reach_the_stock_page():
     assert detail["fundamentals"]["fcfYield"] == 1.61
 
 
-def test_every_mapped_field_keeps_the_fund_reported_value():
-    # The precedence rule has to hold for the whole mapping, not just P/E.
-    reported = {"fundamentals": {field: 99.0 for field in FUNDAMENTALS_FIELDS.values()}}
+def test_an_accumulating_fund_shows_a_zero_yield_not_a_blank():
+    # 0.0 is a fact — the fund distributes nothing — and must survive the
+    # is-not-None guard that a truthiness check would drop.
+    detail = {"fundamentals": {"dividendYield": None}}
+    apply_derived_to_instrument(detail, PAYLOAD)
+
+    assert detail["fundamentals"]["dividendYield"] == 0.0
+    assert "distribution_yield" in detail["look_through_fields"]
+
+
+def test_an_unknown_payout_history_stays_blank():
+    # None means "we cannot tell", which must not render as 0%.
+    detail = {"fundamentals": {"dividendYield": None}}
+    apply_derived_to_instrument(detail, {**PAYLOAD, "distribution_yield": None})
+
+    assert detail["fundamentals"]["dividendYield"] is None
+
+
+def test_a_reported_yield_outranks_the_inferred_one():
+    detail = {"fundamentals": {"dividendYield": 3.19}}
+    apply_derived_to_instrument(detail, PAYLOAD)
+
+    assert detail["fundamentals"]["dividendYield"] == 3.19
+
+
+def test_every_writable_field_keeps_the_fund_reported_value():
+    # Must hold for every field the overlay can write, not just P/E. dividendYield
+    # is written outside FUNDAMENTALS_FIELDS — it comes from payout history.
+    writable = set(FUNDAMENTALS_FIELDS.values()) | {"dividendYield"}
+    reported = {"fundamentals": {field: 99.0 for field in writable}}
     apply_derived_to_instrument(reported, PAYLOAD)
 
     assert all(v == 99.0 for v in reported["fundamentals"].values())
-    assert reported["look_through_fields"] == ["screener_ratio"]
+    assert reported["look_through_fields"] == ["screener_ratio"], "nothing else should have been filled"
 
 
 def test_the_two_pages_agree_on_an_identical_fund():

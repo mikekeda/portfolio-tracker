@@ -130,6 +130,13 @@ def apply_derived_to_instrument(detail: dict, payload: dict[str, Any]) -> None:
         fundamentals[field] = round(value, REC_MEAN_DP) if metric == "recommendation_mean" else value
         filled.append(metric)
 
+    # Sits outside `metrics`: a fact about the fund's payouts, not a constituent
+    # aggregate. Yahoo omits it for VUAG.L and R1GR.L, which report 0% in truth.
+    distribution_yield = payload.get("distribution_yield")
+    if distribution_yield is not None and fundamentals.get("dividendYield") is None:
+        fundamentals["dividendYield"] = distribution_yield
+        filled.append("distribution_yield")
+
     detail.update(_provenance(payload, metrics, filled))
 
 
