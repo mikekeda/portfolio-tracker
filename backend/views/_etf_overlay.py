@@ -26,6 +26,15 @@ from models import Instrument, InstrumentYahoo
 # hold the *fund*. Its own key keeps it feeding the composite and nothing else.
 LOOK_THROUGH_ONLY = {"form13f_score": "look_through_form13f"}
 
+# metric -> Stock `fundamentals` field, for metrics whose units already match.
+# Yahoo's fractions vs our percents need conversion and are not in here yet.
+FUNDAMENTALS_FIELDS = {
+    "recommendation_mean": "recommendationMean",
+    "pe_ratio": "peRatio",
+    "peg_ratio": "pegRatio",
+    "free_cashflow_yield": "fcfYield",  # not a Yahoo field — Stock computes its own
+}
+
 # Reconstructed rather than stored as a ratio because computeComposite divides
 # score by max. A transport encoding, not a claim that the fund passed gates.
 SCREENER_RATIO = "screener_ratio"
@@ -101,9 +110,9 @@ def apply_derived_metrics(holding: dict, payload: dict[str, Any]) -> None:
 def apply_derived_to_instrument(detail: dict, payload: dict[str, Any]) -> None:
     """Write one fund's look-through metrics onto the Stock page payload, in place.
 
-    The composite legs, plus P/E where the fund reports none. The rest of the
-    fundamentals tiles read Yahoo's own field names and units, so they stay blank
-    for funds until that mapping exists.
+    Same gap-filling precedence as the Holdings row, over FUNDAMENTALS_FIELDS —
+    so the two pages cannot show different numbers for the same fund. Tiles
+    outside that mapping stay blank for funds until their units are handled.
     """
     metrics = payload.get("metrics") or {}
     filled = []
@@ -114,16 +123,12 @@ def apply_derived_to_instrument(detail: dict, payload: dict[str, Any]) -> None:
         filled.append(SCREENER_RATIO)
 
     fundamentals = detail["fundamentals"]
-    rec_mean = metrics.get("recommendation_mean")
-    if rec_mean is not None and fundamentals.get("recommendationMean") is None:
-        fundamentals["recommendationMean"] = round(rec_mean, REC_MEAN_DP)
-        filled.append("recommendation_mean")
-
-    # Same precedence as the Holdings row. In practice this fills VUAG.L alone:
-    # four funds report their own P/E, and R2SC.L has no payload to fall back to.
-    if metrics.get("pe_ratio") is not None and fundamentals.get("peRatio") is None:
-        fundamentals["peRatio"] = metrics["pe_ratio"]
-        filled.append("pe_ratio")
+    for metric, field in FUNDAMENTALS_FIELDS.items():
+        value = metrics.get(metric)
+        if value is None or fundamentals.get(field) is not None:
+            continue
+        fundamentals[field] = round(value, REC_MEAN_DP) if metric == "recommendation_mean" else value
+        filled.append(metric)
 
     detail.update(_provenance(payload, metrics, filled))
 

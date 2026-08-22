@@ -14,13 +14,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.screener_config import SCORE_NORMALIZER
-from backend.views._etf_overlay import apply_derived_metrics, apply_derived_to_instrument
+from backend.views._etf_overlay import (
+    FUNDAMENTALS_FIELDS,
+    apply_derived_metrics,
+    apply_derived_to_instrument,
+)
 
 # XNAS.L: Yahoo reports a real trailingPE of 30.55 for the fund; our constituent
 # aggregate says 31.2. UKDV.L is the case where the two visibly disagree.
 PAYLOAD = {
     "metrics": {
         "pe_ratio": 31.19,
+        "peg_ratio": 0.85,
+        "free_cashflow_yield": 1.61,
         "roic": 27.9,
         "recommendation_mean": 1.6937,
         "form13f_score": 0.8,
@@ -88,6 +94,24 @@ def test_stock_payload_follows_the_same_precedence():
     assert reported["screener_score"] == missing["screener_score"]
 
 
+def test_peg_and_fcf_yield_reach_the_stock_page():
+    # Both sit on the KPI row beside P/E; Holdings filled them and Stock did not.
+    detail = {"fundamentals": {"peRatio": None, "pegRatio": None, "fcfYield": None}}
+    apply_derived_to_instrument(detail, PAYLOAD)
+
+    assert detail["fundamentals"]["pegRatio"] == 0.85
+    assert detail["fundamentals"]["fcfYield"] == 1.61
+
+
+def test_every_mapped_field_keeps_the_fund_reported_value():
+    # The precedence rule has to hold for the whole mapping, not just P/E.
+    reported = {"fundamentals": {field: 99.0 for field in FUNDAMENTALS_FIELDS.values()}}
+    apply_derived_to_instrument(reported, PAYLOAD)
+
+    assert all(v == 99.0 for v in reported["fundamentals"].values())
+    assert reported["look_through_fields"] == ["screener_ratio"]
+
+
 def test_the_two_pages_agree_on_an_identical_fund():
     holding = {"pe_ratio": 30.55, "recommendation_mean": None}
     detail = {"fundamentals": {"peRatio": 30.55, "recommendationMean": None}}
@@ -96,6 +120,8 @@ def test_the_two_pages_agree_on_an_identical_fund():
 
     assert holding["pe_ratio"] == detail["fundamentals"]["peRatio"]
     assert holding["recommendation_mean"] == detail["fundamentals"]["recommendationMean"]
+    assert holding["peg_ratio"] == detail["fundamentals"]["pegRatio"]
+    assert holding["free_cashflow_yield"] == detail["fundamentals"]["fcfYield"]
     assert holding["screener_score"] == detail["screener_score"]
 
 

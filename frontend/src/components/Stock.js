@@ -950,8 +950,11 @@ const Stock = () => {
 
   const thesisSummary = i?.thesis?.summary ?? null;
 
-  const fcfYield = (f.freeCashflow && f.marketCap && f.marketCap > 0)
-    ? (f.freeCashflow / f.marketCap) * 100 : null;
+  // Funds report neither cashflow nor market cap, so the overlay supplies the
+  // yield already computed from constituents — same percent units.
+  const fcfYield = f.fcfYield != null ? f.fcfYield
+    : (f.freeCashflow && f.marketCap && f.marketCap > 0) ? (f.freeCashflow / f.marketCap) * 100
+    : null;
 
   // The backend always sets both keys, so a missing figure is null, never
   // undefined — `!== undefined` passed and rendered a fabricated net debt of 0.
