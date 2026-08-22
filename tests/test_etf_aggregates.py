@@ -23,6 +23,7 @@ from backend.utils.etf_aggregates import (
     MEAN,
     METRIC_AGGREGATION,
     MIN_COVERAGE,
+    PRIOR_REVENUE_WEIGHT,
     REVENUE_WEIGHT,
     aggregate_fund,
     revenue_weight,
@@ -170,14 +171,40 @@ def test_analyst_upside_is_cap_weighted_and_exact():
     assert "prediction" not in APPROXIMATE_METRICS
 
 
+def test_growth_weights_by_prior_period_revenue():
+    # sum(rev_t)/sum(rev_t-1) - 1 is the aggregate; weighting by current revenue
+    # over-weights the grower that just grew into its revenue. A £100 book growing
+    # 100% and a £100 book flat: prior revenues are 50 and 100, so the fund grew
+    # 150/150 - 1 = 33%, not the 50% a current-revenue mean reports.
+    constituents = [
+        (50.0, {"ps_ratio": 1.0, "revenue_growth": 100.0}),
+        (50.0, {"ps_ratio": 1.0, "revenue_growth": 0.0}),
+    ]
+    values, _ = aggregate_fund(constituents, total_weight=100.0)
+
+    assert abs(values["revenue_growth"] - 100.0 / 3.0) < TOLERANCE
+    assert values["revenue_growth"] < 50.0, "current-revenue weighting would say 50%"
+
+
+def test_growth_drops_a_constituent_that_lost_all_revenue():
+    # -100% has no prior-period revenue to weight by; the weight would flip sign.
+    constituents = [
+        (50.0, {"ps_ratio": 1.0, "revenue_growth": 10.0}),
+        (50.0, {"ps_ratio": 1.0, "revenue_growth": -100.0}),
+    ]
+    _, coverage = aggregate_fund(constituents, total_weight=100.0)
+    assert abs(coverage["revenue_growth"] - 50.0) < TOLERANCE
+
+
 def test_taxonomy_is_well_formed():
     for metric, (kind, basis, approximate) in METRIC_AGGREGATION.items():
         assert kind in (HARMONIC, MEAN), f"{metric}: {kind}"
-        assert basis in (CAP_WEIGHT, REVENUE_WEIGHT), f"{metric}: {basis}"
+        assert basis in (CAP_WEIGHT, REVENUE_WEIGHT, PRIOR_REVENUE_WEIGHT), f"{metric}: {basis}"
         assert not (kind == HARMONIC and basis == REVENUE_WEIGHT), f"{metric}: multiples price off cap"
         assert isinstance(approximate, bool), metric
-    for metric in ("profit_margins", "gross_margin", "operating_margin", "revenue_growth"):
+    for metric in ("profit_margins", "gross_margin", "operating_margin"):
         assert METRIC_AGGREGATION[metric][1] == REVENUE_WEIGHT, metric
+    assert METRIC_AGGREGATION["revenue_growth"][1] == PRIOR_REVENUE_WEIGHT
     # Multiples must never be averaged arithmetically.
     for metric in ("pe_ratio", "forward_pe_ratio", "ps_ratio", "peg_ratio"):
         assert METRIC_AGGREGATION[metric][0] == HARMONIC
@@ -186,6 +213,8 @@ def test_taxonomy_is_well_formed():
     assert "free_cashflow_yield" not in APPROXIMATE_METRICS
     assert "screener_ratio" not in APPROXIMATE_METRICS
     assert "roic" in APPROXIMATE_METRICS
+    # Prior-period weighting makes growth exact; the UI copy keys off this flag.
+    assert "revenue_growth" not in APPROXIMATE_METRICS
 
 
 def test_min_coverage_matches_the_documented_gate():

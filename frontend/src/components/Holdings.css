@@ -1521,11 +1521,8 @@
 .holdings-table .composite-score.negative  { color: #842029; font-style: italic; }
 
 
-/* Fund rows whose fundamentals are aggregated from their constituents rather
-   than reported for the fund itself. Track METRIC_AGGREGATION in
-   backend/utils/etf_aggregates.py: a metric missing here renders upright and
-   reads as the fund's own figure. Price, return, 52WH, RSI and Δvol are the
-   fund's own and must stay upright. */
+/* Fund fundamentals aggregated from constituents; track METRIC_AGGREGATION in
+   backend/utils/etf_aggregates.py. Price/return/52WH/RSI/Δvol stay upright. */
 .holdings-table tr.look-through .pe,
 .holdings-table tr.look-through .ps,
 .holdings-table tr.look-through .peg,

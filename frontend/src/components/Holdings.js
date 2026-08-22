@@ -300,11 +300,10 @@ function formatCSVValue(value, key) {
     : s;
 }
 
-// Margins and growth are weighted by revenue, which is the exact
-// sum(numerator)/sum(denominator) form. ROIC, ROE/ROA, D/E and the quick ratio
-// have denominators we cannot reconstruct, so they stay weighted means.
-const APPROXIMATE_LABEL = 'Margins are revenue-weighted, so they are exact. ROIC, ROE/ROA, D/E and quick ratio ' +
-  'are weighted means of a ratio and only approximate the exact sum-over-sum figure.';
+// Margins weight by current revenue and growth by prior-period revenue; both
+// are then the exact sum(numerator)/sum(denominator). The rest cannot be.
+const APPROXIMATE_LABEL = 'Margins and growth are revenue-weighted, so they are exact. ROIC, ROE/ROA, D/E and ' +
+  'quick ratio are weighted means of a ratio and only approximate the exact sum-over-sum figure.';
 
 /** Tooltip for the look-through marker on a fund row. */
 function lookThroughTooltip(row) {
@@ -1219,9 +1218,8 @@ const Holdings = () => {
           else if (ratio >= 0.15) className = 'poor';
           else className = 'very-poor';
 
-          // A fund's score is the cap-weighted average of its constituents',
-          // rescaled to the 60-point frame — the same kind of figure as its
-          // averaged ROIC or margin, so it belongs on the same scale as a stock's.
+          // A fund's score is its constituents' cap-weighted average on the
+          // 60-point frame — same kind of figure as its averaged ROIC or margin.
           const max = Math.round(info.row.original.screener_score_max ?? SCREENER_NORMALIZER);
           const isFund = info.row.original.look_through;
           return (

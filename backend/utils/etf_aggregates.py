@@ -23,20 +23,16 @@ MIN_COVERAGE = 0.80
 HARMONIC = "harmonic"
 MEAN = "mean"
 
-# What each weighted mean is weighted *by*. Published weights are market-cap
-# shares, which is right for anything priced off market cap and wrong for
-# anything measured against revenue: cap-weighting a margin over-weights
-# high-multiple, low-revenue names, reading VUAG's net margin at 26.8% against
-# a published S&P figure near 12-13%. Revenue-weighting is the exact
-# sum(numerator)/sum(denominator) form and reads 13.9%.
+# What each weighted mean is weighted *by*. Cap-weighting a margin over-weights
+# high-multiple names: VUAG reads 26.8% cap-weighted, 13.9% revenue-weighted.
 CAP_WEIGHT = "cap"
 REVENUE_WEIGHT = "revenue"
+# Growth compounds off the prior period: sum(rev_t)/sum(rev_t-1) weights by
+# rev/(1+g). Current revenue reads the S&P at 21% against a true 14.5%.
+PRIOR_REVENUE_WEIGHT = "prior_revenue"
 
-# metric key on the holding dict -> (aggregation, weight basis, is_approximate)
-#
-# Approximate marks ratios over a denominator we cannot reconstruct, so the
-# weighted mean of the ratio is the best available and must be labelled in the
-# UI rather than presented as the fund's true figure.
+# metric key -> (aggregation, weight basis, is_approximate). Approximate marks a
+# ratio whose denominator we cannot reconstruct, so the UI must label it.
 METRIC_AGGREGATION: dict[str, tuple[str, str, bool]] = {
     # Price multiples: price over a flow, so the fund's multiple is
     # sum(w*P)/sum(w*E). Non-positive values are dropped, not netted.
@@ -50,9 +46,7 @@ METRIC_AGGREGATION: dict[str, tuple[str, str, bool]] = {
     "profit_margins": (MEAN, REVENUE_WEIGHT, False),
     "gross_margin": (MEAN, REVENUE_WEIGHT, False),
     "operating_margin": (MEAN, REVENUE_WEIGHT, False),
-    # Exact aggregate weights by *prior*-period revenue; current revenue
-    # over-weights the fastest growers slightly. Far closer than cap weighting.
-    "revenue_growth": (MEAN, REVENUE_WEIGHT, True),
+    "revenue_growth": (MEAN, PRIOR_REVENUE_WEIGHT, False),
     # Denominators we cannot reconstruct: invested capital, equity, assets.
     "roic": (MEAN, CAP_WEIGHT, True),
     "return_on_equity": (MEAN, CAP_WEIGHT, True),
@@ -70,16 +64,13 @@ METRIC_AGGREGATION: dict[str, tuple[str, str, bool]] = {
     # Analyst target upside is a return, so cap weighting is exact: it is what
     # the fund returns if every constituent reaches its median target.
     "prediction": (MEAN, CAP_WEIGHT, False),
-    # Computed by the caller as screener_score / screener_score_max. Aggregated
-    # as the mean of the ratios: score_max is sector-dependent (23-60), so
-    # aggregating numerator and denominator separately is a different quantity.
+    # Mean of the ratios, not the ratio of two means: score_max is sector-scaled
+    # (23-60), so aggregating numerator and denominator separately differs.
     "screener_ratio": (MEAN, CAP_WEIGHT, False),
 }
 
-# Deliberately absent: market_cap. The weighted average of constituent market
-# caps is "typical company size in this fund", not the fund's own size, and the
-# Mkt Cap column renders raw quote-currency values without converting — so the
-# figure would be both a different quantity and in an ambiguous unit.
+# Deliberately absent: market_cap. Average constituent size is not the fund's
+# size, and the Mkt Cap column renders quote-currency values unconverted.
 
 
 # Metrics whose value is an approximation of the exact sum/sum form.
@@ -143,6 +134,10 @@ def weighted_mean(pairs: list[tuple[float, float | None]], total_weight: float) 
 def revenue_weight(cap_weight: float, ps_ratio: float | None) -> float | None:
     """Revenue share implied by a cap weight, since P/S is market cap over revenue.
 
+    Revenue comes out in each constituent's own quote currency, so this assumes
+    one reporting currency across the fund — true of all six today (>=99.8%
+    single-currency), but not enforced.
+
     None when P/S is missing or non-positive: without it the constituent's
     revenue is unknown, and guessing would silently reweight the whole fund.
     """
@@ -178,6 +173,19 @@ def revenue_weighted_mean(
     return Aggregate(value, sum(cap for cap, _, _ in usable) / total_weight, len(usable))
 
 
+def _basis_weight(revenue: float | None, basis: str, growth: float | None) -> float | None:
+    """Revenue weight for one constituent, backed out to the prior period for growth.
+
+    A percentage at or below -100 has no prior-period revenue to weight by, so it
+    drops out rather than flipping the weight's sign.
+    """
+    if revenue is None or basis == REVENUE_WEIGHT:
+        return revenue
+    if growth is None or not math.isfinite(growth) or growth <= -100.0:
+        return None
+    return revenue / (1.0 + growth / 100.0)
+
+
 def aggregate_fund(
     constituents: list[tuple[float, dict]],
     total_weight: float,
@@ -199,9 +207,9 @@ def aggregate_fund(
     coverage: dict[str, float] = {}
 
     for metric, (kind, basis, _approximate) in METRIC_AGGREGATION.items():
-        if basis == REVENUE_WEIGHT:
+        if basis in (REVENUE_WEIGHT, PRIOR_REVENUE_WEIGHT):
             triples = [
-                (weight, rev, metrics.get(metric))
+                (weight, _basis_weight(rev, basis, metrics.get(metric)), metrics.get(metric))
                 for rev, (weight, metrics) in zip(revenue_weights, constituents)
             ]
             aggregate = revenue_weighted_mean(triples, total_weight)
