@@ -181,13 +181,13 @@ export function compositeTooltip(score, h) {
   const eff = (base) =>
     presentTotal > 0 ? Math.round(base / presentTotal * 100) : 0;
 
-  // A fund's stored pair is a transport encoding of the constituent-weighted
-  // ratio, not points it earned — say "of max" rather than "n / 60 pts".
+  // A fund's points are its constituents' average, not gates it passed — same
+  // scale as a stock's line, but say which it is.
   const screenerMax = Math.round(h.screener_score_max ?? SCREENER_NORMALIZER);
   const screenerLine = !hasScreener
     ? 'Screener: no data'
     : h.look_through
-      ? `Screener: ${screenerRatio(h.screener_score, h.screener_score_max).toFixed(2)} of max  (eff. ${eff(50)}%)`
+      ? `Screener: ${Math.round(h.screener_score)} / ${screenerMax} pts, constituent avg  (eff. ${eff(50)}%)`
       : `Screener: ${h.screener_score} / ${screenerMax} pts  (eff. ${eff(50)}%)`;
   // Partially-decayed signals (12–24 months) still count, so they take the first
   // branch — surface the age there or the tooltip implies undecayed full weight.

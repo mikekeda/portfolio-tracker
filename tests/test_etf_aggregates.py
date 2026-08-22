@@ -149,6 +149,27 @@ def test_a_constituent_without_ps_lowers_revenue_weighted_coverage():
     assert "profit_margins" not in values, "70% is below the gate"
 
 
+def test_peg_aggregates_harmonically_as_pe_over_earnings_weighted_growth():
+    # PEG = PE/g, so the fund's PEG is its harmonic PE divided by growth weighted
+    # by earnings (E is proportional to w/PE). That reduces to sum(w)/sum(w/PEG),
+    # the plain harmonic mean — asserted here against the two-step route.
+    rows = [(60.0, 20.0, 2.0), (40.0, 40.0, 1.0)]  # (weight, PE, PEG)
+
+    harmonic_peg = weighted_harmonic([(w, peg) for w, _, peg in rows], 100.0).value
+
+    total = sum(w for w, _, _ in rows)
+    fund_pe = total / sum(w / pe for w, pe, _ in rows)
+    growth = sum(w / peg for w, _, peg in rows) / sum(w / pe for w, pe, _ in rows)
+    assert abs(harmonic_peg - fund_pe / growth) < TOLERANCE
+    assert METRIC_AGGREGATION["peg_ratio"] == (HARMONIC, CAP_WEIGHT, False)
+
+
+def test_analyst_upside_is_cap_weighted_and_exact():
+    # A return, so cap weighting is the money-weighted answer, not an approximation.
+    assert METRIC_AGGREGATION["prediction"] == (MEAN, CAP_WEIGHT, False)
+    assert "prediction" not in APPROXIMATE_METRICS
+
+
 def test_taxonomy_is_well_formed():
     for metric, (kind, basis, approximate) in METRIC_AGGREGATION.items():
         assert kind in (HARMONIC, MEAN), f"{metric}: {kind}"
@@ -158,7 +179,7 @@ def test_taxonomy_is_well_formed():
     for metric in ("profit_margins", "gross_margin", "operating_margin", "revenue_growth"):
         assert METRIC_AGGREGATION[metric][1] == REVENUE_WEIGHT, metric
     # Multiples must never be averaged arithmetically.
-    for metric in ("pe_ratio", "forward_pe_ratio", "ps_ratio"):
+    for metric in ("pe_ratio", "forward_pe_ratio", "ps_ratio", "peg_ratio"):
         assert METRIC_AGGREGATION[metric][0] == HARMONIC
     # A ratio whose denominator is market cap aggregates exactly under cap
     # weighting, so it must not be flagged approximate.

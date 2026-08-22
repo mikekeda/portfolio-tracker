@@ -16,6 +16,7 @@ import { calculateBarWidth, getBarColorScheme, calculateMinMax, getBarStyle, sho
 import { getAvailableScreeners } from '../services/screeners';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
 import {
+  SCREENER_NORMALIZER,
   computeComposite,
   compositeTooltip,
   effectiveSignalDate,
@@ -879,16 +880,19 @@ const Holdings = () => {
           else if (value >= 2) className = 'poor';
           else className = 'very-poor';
 
+          // Stocks score a whole number of the nine checks; a fund's is the
+          // weighted mean of its constituents' and needs rounding.
+          const shown = Number.isInteger(value) ? value : value.toFixed(1);
           const details = info.row.original.f_score_details;
           const tip = details
-            ? `Piotroski F-Score: ${value}/9\n\n${Object.entries(details)
+            ? `Piotroski F-Score: ${shown}/9\n\n${Object.entries(details)
                 .map(([label, passed]) => `${passed ? '✓' : '✗'} ${label}`)
                 .join('\n')}`
-            : `Piotroski F-Score: ${value}/9`;
+            : `Piotroski F-Score: ${shown}/9`;
 
           return (
             <span className={`screener-score ${className}`} title={tip}>
-              {value}
+              {shown}
             </span>
           );
         },
@@ -1215,16 +1219,20 @@ const Holdings = () => {
           else if (ratio >= 0.15) className = 'poor';
           else className = 'very-poor';
 
-          // A fund's stored pair encodes the constituent-weighted ratio; it
-          // passed no gates, so printing points would invent 18 of them.
+          // A fund's score is the cap-weighted average of its constituents',
+          // rescaled to the 60-point frame — the same kind of figure as its
+          // averaged ROIC or margin, so it belongs on the same scale as a stock's.
+          const max = Math.round(info.row.original.screener_score_max ?? SCREENER_NORMALIZER);
+          const isFund = info.row.original.look_through;
           return (
             <span
               className={`screener-score ${className}`}
-              title={info.row.original.look_through
-                ? `${ratio.toFixed(2)} of max — constituent-weighted average, not points passed`
-                : undefined}
+              title={isFund
+                ? `${Math.round(value)} / ${max} pts — what the average pound in this fund is`
+                  + ` invested in, not gates the fund passed`
+                : `${value} / ${max} pts = ${ratio.toFixed(2)} of max`}
             >
-              {info.row.original.look_through ? ratio.toFixed(2) : value}
+              {isFund ? Math.round(value) : value}
             </span>
           );
         },

@@ -43,6 +43,9 @@ METRIC_AGGREGATION: dict[str, tuple[str, str, bool]] = {
     "pe_ratio": (HARMONIC, CAP_WEIGHT, False),
     "forward_pe_ratio": (HARMONIC, CAP_WEIGHT, False),
     "ps_ratio": (HARMONIC, CAP_WEIGHT, False),
+    # Also harmonic and exact: PEG = PE/g, so sum(w)/sum(w/PEG) is the fund's PE
+    # over its earnings-weighted growth — what a fund-level PEG means.
+    "peg_ratio": (HARMONIC, CAP_WEIGHT, False),
     # Measured against revenue, so revenue-weighting makes these exact.
     "profit_margins": (MEAN, REVENUE_WEIGHT, False),
     "gross_margin": (MEAN, REVENUE_WEIGHT, False),
@@ -64,6 +67,9 @@ METRIC_AGGREGATION: dict[str, tuple[str, str, bool]] = {
     # Exact under cap weighting: the denominator *is* market cap, so
     # sum(w * FCF/MC) = sum(FCF)/sum(MC) identically.
     "free_cashflow_yield": (MEAN, CAP_WEIGHT, False),
+    # Analyst target upside is a return, so cap weighting is exact: it is what
+    # the fund returns if every constituent reaches its median target.
+    "prediction": (MEAN, CAP_WEIGHT, False),
     # Computed by the caller as screener_score / screener_score_max. Aggregated
     # as the mean of the ratios: score_max is sector-dependent (23-60), so
     # aggregating numerator and denominator separately is a different quantity.

@@ -1522,15 +1522,23 @@
 
 
 /* Fund rows whose fundamentals are aggregated from their constituents rather
-   than reported for the fund itself. */
+   than reported for the fund itself. Track METRIC_AGGREGATION in
+   backend/utils/etf_aggregates.py: a metric missing here renders upright and
+   reads as the fund's own figure. Price, return, 52WH, RSI and Δvol are the
+   fund's own and must stay upright. */
 .holdings-table tr.look-through .pe,
 .holdings-table tr.look-through .ps,
+.holdings-table tr.look-through .peg,
+.holdings-table tr.look-through .margins,
+.holdings-table tr.look-through .growth,
 .holdings-table tr.look-through .roic,
-.holdings-table tr.look-through .screener-score,
-.holdings-table tr.look-through .composite-score,
-.holdings-table tr.look-through .recommendation,
+.holdings-table tr.look-through .fcf-yield,
 .holdings-table tr.look-through .quick-ratio,
-.holdings-table tr.look-through .debt-equity {
+.holdings-table tr.look-through .debt-equity,
+.holdings-table tr.look-through .prediction,
+.holdings-table tr.look-through .recommendation,
+.holdings-table tr.look-through .screener-score,
+.holdings-table tr.look-through .composite-score {
   font-style: italic;
 }
 

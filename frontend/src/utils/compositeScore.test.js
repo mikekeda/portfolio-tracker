@@ -217,10 +217,11 @@ describe('ETF look-through', () => {
     expect(computeComposite(VUAG)).not.toBe(computeComposite(noF13f));
   });
 
-  test('the tooltip reads "of max", never points the fund never earned', () => {
+  test('the tooltip shows points on the same scale as a stock, labelled as an average', () => {
+    // Same units as every other averaged column, but it must never read as
+    // gates the fund passed — the Screeners badge column stays empty for funds.
     const tip = compositeTooltip(4.4, VUAG);
-    expect(tip).toContain('Screener: 0.30 of max');
-    expect(tip).not.toContain('pts');
+    expect(tip).toContain('Screener: 18 / 60 pts, constituent avg');
     expect(tip).toContain('489 constituents');
   });
 
@@ -228,7 +229,7 @@ describe('ETF look-through', () => {
     const tip = compositeTooltip(4.4, VUAG);
     expect(tip).toContain('Signal: no earnings report analysed yet');
     // 50/10/15 of a 75 present total.
-    expect(tip).toContain('Screener: 0.30 of max  (eff. 67%)');
+    expect(tip).toContain('constituent avg  (eff. 67%)');
   });
 });
 

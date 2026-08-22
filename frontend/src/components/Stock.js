@@ -1067,9 +1067,9 @@ const Stock = () => {
   // verdict on the fund rather than as the absence of an equity screening.
   const screenerTooltip = data.look_through
     ? [
-        `Screener: constituent-weighted average of ${data.look_through_n} holdings` +
+        `Screener: cap-weighted average of ${data.look_through_n} constituents' scores` +
           `${data.look_through_as_of ? ` (as of ${data.look_through_as_of})` : ''}`,
-        'Shown as a fraction of the maximum — the fund itself passes no equity screeners.',
+        'What the average pound in this fund is invested in — the fund passes no gates itself.',
       ].join('\n')
     : [
         `Screener score (nightly snapshot${data.screener_as_of ? ` · ${data.screener_as_of}` : ''})`,
@@ -1109,9 +1109,7 @@ const Stock = () => {
     }] : []),
     ...(data.screener_score != null ? [{
       label: 'Screener',
-      value: data.look_through
-        ? screenerRatio(data.screener_score, data.screener_score_max).toFixed(2)
-        : Math.round(data.screener_score),
+      value: Math.round(data.screener_score),
       className: screenerRatio(data.screener_score, data.screener_score_max) >= 0.6 ? 'positive'
         : screenerRatio(data.screener_score, data.screener_score_max) < 0.2 ? 'negative' : '',
       tooltip: screenerTooltip,
