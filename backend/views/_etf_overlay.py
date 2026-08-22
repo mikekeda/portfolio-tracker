@@ -26,13 +26,19 @@ from models import Instrument, InstrumentYahoo
 # hold the *fund*. Its own key keeps it feeding the composite and nothing else.
 LOOK_THROUGH_ONLY = {"form13f_score": "look_through_form13f"}
 
-# metric -> Stock `fundamentals` field, for metrics whose units already match.
-# Yahoo's fractions vs our percents need conversion and are not in here yet.
+# metric -> (Stock `fundamentals` field, factor onto that field's unit). Ours are
+# percents, Yahoo's margins and growth are fractions; a wrong factor reads 1837%.
 FUNDAMENTALS_FIELDS = {
-    "recommendation_mean": "recommendationMean",
-    "pe_ratio": "peRatio",
-    "peg_ratio": "pegRatio",
-    "free_cashflow_yield": "fcfYield",  # not a Yahoo field — Stock computes its own
+    "recommendation_mean": ("recommendationMean", 1.0),
+    "pe_ratio": ("peRatio", 1.0),
+    "peg_ratio": ("pegRatio", 1.0),
+    "free_cashflow_yield": ("fcfYield", 1.0),  # not a Yahoo field — Stock computes its own
+    "roic": ("roic", 1.0),  # already a percent on both sides
+    "return_on_equity": ("returnOnEquity", 0.01),
+    "gross_margin": ("grossMargins", 0.01),
+    "operating_margin": ("operatingMargins", 0.01),
+    "profit_margins": ("profitMargins", 0.01),
+    "revenue_growth": ("revenueGrowth", 0.01),
 }
 
 # Reconstructed rather than stored as a ratio because computeComposite divides
@@ -123,11 +129,12 @@ def apply_derived_to_instrument(detail: dict, payload: dict[str, Any]) -> None:
         filled.append(SCREENER_RATIO)
 
     fundamentals = detail["fundamentals"]
-    for metric, field in FUNDAMENTALS_FIELDS.items():
+    for metric, (field, factor) in FUNDAMENTALS_FIELDS.items():
         value = metrics.get(metric)
         if value is None or fundamentals.get(field) is not None:
             continue
-        fundamentals[field] = round(value, REC_MEAN_DP) if metric == "recommendation_mean" else value
+        scaled = value * factor
+        fundamentals[field] = round(scaled, REC_MEAN_DP) if metric == "recommendation_mean" else scaled
         filled.append(metric)
 
     # Sits outside `metrics`: a fact about the fund's payouts, not a constituent

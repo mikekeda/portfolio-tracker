@@ -506,14 +506,10 @@ SymbolSwitcher.propTypes = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-// The full list shows by default, capped in height; this is the collapsed size.
-const ETF_HOLDINGS_COLLAPSED = 25;
-
 const Stock = () => {
   const { symbol } = useParams();
   const { hideAmounts } = useHideAmounts();
   const [data, setData] = useState(null);
-  const [etfHoldingsOpen, setEtfHoldingsOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [chartLoading, setChartLoading] = useState(false);
@@ -1362,6 +1358,12 @@ const Stock = () => {
 
   // Yahoo margins/growth are fractions; ROIC and Rule of 40 are already percent
   const fmtPct = (v, digits = 1) => (v != null ? `${(v * 100).toFixed(digits)}%` : '-');
+  // Per metric, not per instrument: a figure the fund reports itself is not a
+  // constituent aggregate, so only what the overlay actually supplied says so.
+  const lookThrough = (tip, metrics, approximate = false) => (
+    metrics.every(m => data.look_through_fields?.includes(m))
+      ? `${tip}\n\nWeighted average of ${data.look_through_n} constituents${approximate ? ', approximating the exact sum-over-sum figure' : ''}.`
+      : tip);
   const ruleOf40 = (f.revenueGrowth != null && f.profitMargins != null)
     ? (f.revenueGrowth + f.profitMargins) * 100 : null;
 
@@ -1370,12 +1372,12 @@ const Stock = () => {
       label: 'ROIC',
       value: f.roic != null ? `${f.roic.toFixed(1)}%` : '-',
       className: f.roic != null ? (f.roic > 20 ? 'positive' : f.roic < 10 ? 'negative' : '') : '',
-      tooltip: 'Return on Invested Capital (NOPAT / invested capital) · Green > 20%, Red < 10% · Primary quality gate — leverage-neutral, unlike ROE',
+      tooltip: lookThrough('Return on Invested Capital (NOPAT / invested capital) · Green > 20%, Red < 10% · Primary quality gate — leverage-neutral, unlike ROE', ['roic'], true),
     },
     {
       label: 'ROE',
       value: fmtPct(f.returnOnEquity),
-      tooltip: 'Return on Equity · Not color-coded: distorted by debt and buybacks — prefer ROIC',
+      tooltip: lookThrough('Return on Equity · Not color-coded: distorted by debt and buybacks — prefer ROIC', ['return_on_equity'], true),
     },
     {
       label: 'Gross Margin',
@@ -1383,7 +1385,7 @@ const Stock = () => {
       className: f.grossMargins != null
         ? (f.grossMargins > 0.60 ? 'positive' : f.grossMargins < 0.30 ? 'negative' : '')
         : '',
-      tooltip: 'Gross profit / revenue · Green > 60%, Red < 30% · A proxy for pricing power / moat',
+      tooltip: lookThrough('Gross profit / revenue · Green > 60%, Red < 30% · A proxy for pricing power / moat', ['gross_margin'], false),
     },
     {
       label: 'Op Margin',
@@ -1391,7 +1393,7 @@ const Stock = () => {
       className: f.operatingMargins != null
         ? (f.operatingMargins > 0.25 ? 'positive' : f.operatingMargins < 0.05 ? 'negative' : '')
         : '',
-      tooltip: 'Operating income / revenue · Green > 25%, Red < 5%',
+      tooltip: lookThrough('Operating income / revenue · Green > 25%, Red < 5%', ['operating_margin'], false),
     },
     {
       label: 'Net Margin',
@@ -1399,7 +1401,7 @@ const Stock = () => {
       className: f.profitMargins != null
         ? (f.profitMargins > 0.30 ? 'positive' : f.profitMargins < 0.10 ? 'negative' : '')
         : '',
-      tooltip: 'Net income / revenue · Green > 30%, Red < 10%',
+      tooltip: lookThrough('Net income / revenue · Green > 30%, Red < 10%', ['profit_margins'], false),
     },
     {
       label: 'Rev Growth',
@@ -1407,13 +1409,13 @@ const Stock = () => {
       className: f.revenueGrowth != null
         ? (f.revenueGrowth > 0.40 ? 'positive' : f.revenueGrowth < 0.15 ? 'negative' : '')
         : '',
-      tooltip: 'Revenue growth (YoY) · Green > 40%, Red < 15%',
+      tooltip: lookThrough('Revenue growth (YoY) · Green > 40%, Red < 15%', ['revenue_growth'], false),
     },
     {
       label: 'Rule of 40',
       value: ruleOf40 != null ? Math.round(ruleOf40) : '-',
       className: ruleOf40 != null ? (ruleOf40 >= 40 ? 'positive' : ruleOf40 < 20 ? 'negative' : '') : '',
-      tooltip: 'Revenue growth % + net margin % · Green ≥ 40, Red < 20 · Growth/profitability balance',
+      tooltip: lookThrough('Revenue growth % + net margin % · Green ≥ 40, Red < 20 · Growth/profitability balance', ['revenue_growth', 'profit_margins']),
     },
   ];
 
@@ -1682,9 +1684,6 @@ const Stock = () => {
         )}
         {data.etf_holdings && (() => {
           const h = data.etf_holdings;
-          const list = etfHoldingsOpen ? h.constituents : h.constituents.slice(0, ETF_HOLDINGS_COLLAPSED);
-          const hidden = h.count - list.length;
-          const hiddenPct = h.total_pct - list.reduce((sum, c) => sum + c.weight_pct, 0);
           return (
             <div className="panel" id="sec-holdings">
               <h3>
@@ -1702,7 +1701,7 @@ const Stock = () => {
                     : `${h.resolved_pct.toFixed(1)}% is matched to tracked instruments.`}
               </p>
               <div className="form13f-list etf-holdings-scroll">
-                {list.map((c) => (
+                {h.constituents.map((c) => (
                   <div className="form13f-row" key={c.key}>
                     <span className="etf-holdings-ticker">
                       {c.symbol
@@ -1715,13 +1714,6 @@ const Stock = () => {
                   </div>
                 ))}
               </div>
-              {h.count > ETF_HOLDINGS_COLLAPSED && (
-                <button type="button" className="etf-holdings-toggle" onClick={() => setEtfHoldingsOpen(!etfHoldingsOpen)}>
-                  {etfHoldingsOpen
-                    ? `Show top ${ETF_HOLDINGS_COLLAPSED}`
-                    : `Show all ${h.count.toLocaleString()} · ${hidden.toLocaleString()} more, ${hiddenPct.toFixed(1)}% of the fund`}
-                </button>
-              )}
             </div>
           );
         })()}

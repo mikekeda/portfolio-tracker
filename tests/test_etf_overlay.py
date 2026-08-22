@@ -26,6 +26,8 @@ PAYLOAD = {
     "metrics": {
         "pe_ratio": 31.19,
         "peg_ratio": 0.85,
+        "profit_margins": 18.37,
+        "return_on_equity": 53.81,
         "free_cashflow_yield": 1.61,
         "roic": 27.9,
         "recommendation_mean": 1.6937,
@@ -129,10 +131,30 @@ def test_a_reported_yield_outranks_the_inferred_one():
     assert detail["fundamentals"]["dividendYield"] == 3.19
 
 
+def test_percent_metrics_land_as_yahoo_fractions():
+    # Our metrics are percents; Yahoo stores margins and growth as fractions and
+    # the Stock page multiplies by 100 to display. A missed factor shows 1837%.
+    detail = {"fundamentals": {"profitMargins": None, "returnOnEquity": None, "roic": None}}
+    apply_derived_to_instrument(detail, PAYLOAD)
+
+    assert detail["fundamentals"]["profitMargins"] == 0.1837
+    assert detail["fundamentals"]["returnOnEquity"] == 0.5381
+    assert detail["fundamentals"]["roic"] == 27.9, "roic is a percent on both sides"
+
+
+def test_conversion_factors_are_only_identity_or_percent_to_fraction():
+    # The whole risk of this mapping is a typo in the factor, so pin the set.
+    assert {factor for _, factor in FUNDAMENTALS_FIELDS.values()} == {1.0, 0.01}
+    for metric in ("profit_margins", "gross_margin", "operating_margin", "revenue_growth", "return_on_equity"):
+        assert FUNDAMENTALS_FIELDS[metric][1] == 0.01, metric
+    for metric in ("pe_ratio", "peg_ratio", "roic", "free_cashflow_yield"):
+        assert FUNDAMENTALS_FIELDS[metric][1] == 1.0, metric
+
+
 def test_every_writable_field_keeps_the_fund_reported_value():
     # Must hold for every field the overlay can write, not just P/E. dividendYield
     # is written outside FUNDAMENTALS_FIELDS — it comes from payout history.
-    writable = set(FUNDAMENTALS_FIELDS.values()) | {"dividendYield"}
+    writable = {field for field, _ in FUNDAMENTALS_FIELDS.values()} | {"dividendYield"}
     reported = {"fundamentals": {field: 99.0 for field in writable}}
     apply_derived_to_instrument(reported, PAYLOAD)
 
