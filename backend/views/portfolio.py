@@ -72,12 +72,11 @@ _MIN_DEPOSIT_AMOUNT_GBP = 50.0
 # the announcement date and the following days. Fetch and probe must agree.
 _PRICE_LOOKAHEAD_DAYS = 5
 
-# A third of the Yahoo JSONB payload that nothing on this path reads. Deferred
-# rather than dropped: still lazy-loadable if a caller ever needs one.
+# The largest Yahoo JSONB blobs that nothing on this path reads. Deferred rather
+# than dropped: still lazy-loadable if a caller ever needs one.
 _UNUSED_YAHOO_BLOBS = (
     defer(InstrumentYahoo.news),
     defer(InstrumentYahoo.splits),
-    defer(InstrumentYahoo.quarterly_cashflow),
 )
 
 
