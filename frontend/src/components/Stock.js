@@ -1850,8 +1850,8 @@ const Stock = () => {
               return (
                 <div className="thesis-rules">
                   <div className="thesis-rules-pills">
-                    {ev.buy_signal && <span className="thesis-pill buy">Buy rules met</span>}
-                    {ev.sell_signal && (
+                    {ev.buy_rules_met?.length > 0 && <span className="thesis-pill buy">Buy rules met</span>}
+                    {ev.sell_rules_met?.length > 0 && (
                       <span
                         className="thesis-pill sell"
                         title={`Escalates to EXIT after ${data.sell_rule_persistence} consecutive daily snapshots`}
@@ -1859,7 +1859,9 @@ const Stock = () => {
                         Sell firing — day {data.thesis_sell_streak} of {data.sell_rule_persistence}
                       </span>
                     )}
-                    {!ev.buy_signal && !ev.sell_signal && <span className="thesis-pill none">No rules firing</span>}
+                    {!ev.buy_rules_met?.length && !ev.sell_rules_met?.length && (
+                      <span className="thesis-pill none">No rules firing</span>
+                    )}
                     {ev.allocation_status && (
                       <span className="thesis-pill alloc" title={ev.allocation_reason || undefined}>
                         {ev.allocation_status.replace(/_/g, ' ')}{bandLabel ? ` · target ${bandLabel}` : ''}

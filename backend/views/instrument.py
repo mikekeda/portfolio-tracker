@@ -596,11 +596,11 @@ async def get_instrument(
         )
     ).all()
     features_row = features_rows[0] if features_rows else None
-    # Consecutive newest snapshots with the sell leg firing — the same
-    # backward-only streak the agent uses to escalate a sell to EXIT.
+    # Consecutive newest snapshots with a sell rule fired — the agent's EXIT
+    # counter. Not sell_signal: that also covers above-band, which only trims.
     thesis_sell_streak = 0
     for r in features_rows:
-        if not (r.thesis_rule_eval or {}).get("sell_signal"):
+        if not (r.thesis_rule_eval or {}).get("sell_rules_met"):
             break
         thesis_sell_streak += 1
 
