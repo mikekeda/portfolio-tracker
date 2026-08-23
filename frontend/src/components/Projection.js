@@ -12,6 +12,16 @@ import {
 } from 'recharts';
 import { portfolioAPI } from '../services/api';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
+import {
+  convertRateForMode,
+  fractionAtOrAbove,
+  parsePctInput,
+  runSimulation,
+  solveRequiredCagr,
+  solveRequiredContribution,
+  toNominal,
+  toReal,
+} from '../utils/projectionMath';
 import './Projection.css';
 
 // Defaults used when the API can't provide a value.
@@ -21,7 +31,7 @@ const DEFAULT_REAL_RETURN = 0.065; // MSCI World real return, matches backend be
 const DEFAULT_VOLATILITY = 0.16;
 const DEFAULT_HORIZON_YEARS = 15;
 const DEFAULT_MONTE_CARLO_PATHS = 10000;
-const ISA_ANNUAL_ALLOWANCE = 20000;
+const DEFAULT_ISA_ALLOWANCE = 20000; // Overridden by /api/projection/inputs
 const DEFAULT_SWR = 0.04; // 4% rule
 const DEFAULT_DRAWDOWN_YEARS = 30;
 const MAX_GOAL_YEARS = 50;
@@ -36,181 +46,6 @@ const CPI_STALE_DAYS = 120;
 // Traffic-light thresholds for the goal-seeker probability.
 const GOAL_PROB_GOOD = 0.7;
 const GOAL_PROB_POOR = 0.4;
-
-// mulberry32 — small deterministic PRNG.
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-// Box–Muller standard normal over a uniform source.
-function makeRandn(rand) {
-  return () => {
-    const u = 1 - rand();
-    const v = 1 - rand();
-    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-  };
-}
-
-// Fraction of a sorted sample at or above `target` (binary search).
-function fractionAtOrAbove(sortedValues, target) {
-  let lo = 0;
-  let hi = sortedValues.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (sortedValues[mid] < target) lo = mid + 1;
-    else hi = mid;
-  }
-  return 1 - lo / sortedValues.length;
-}
-
-// Percent-string input → decimal, tolerating partial typing.
-function parsePctInput(raw, fallback) {
-  if (raw.trim() === '') return fallback;
-  const v = Number(raw);
-  return Number.isFinite(v) ? v / 100 : fallback;
-}
-
-// Future value of starting pot plus annual contributions (paid at start of year,
-// compounded for the full year), where contributions run only for the first S
-// years. Supports a growing annuity (g = contribution growth).
-function futureValue(V0, contribution, r, g, T, S = T) {
-  const rT = (1 + r) ** T;
-  const years = Math.min(S, T);
-  const q = (1 + g) / (1 + r);
-  const annuity = Math.abs(r - g) < 1e-9 ? years : (1 - q ** years) / (1 - q);
-  return rT * (V0 + contribution * annuity);
-}
-
-// Bisection on r such that FV == target. Returns null if target unreachable in [-50%, +50%].
-function solveRequiredCagr(V0, contribution, g, T, target, S = T) {
-  let lo = -0.5;
-  let hi = 0.5;
-  const fvLo = futureValue(V0, contribution, lo, g, T, S);
-  const fvHi = futureValue(V0, contribution, hi, g, T, S);
-  if (target < fvLo || target > fvHi) return null;
-  for (let i = 0; i < 80; i += 1) {
-    const mid = (lo + hi) / 2;
-    const fv = futureValue(V0, contribution, mid, g, T, S);
-    if (fv < target) lo = mid;
-    else hi = mid;
-  }
-  return (lo + hi) / 2;
-}
-
-// Required annual contribution to hit `target` given an assumed CAGR `r`.
-// Returns null when contributions can't move the outcome (S = 0).
-function solveRequiredContribution(V0, r, g, T, target, S = T) {
-  const remaining = target - futureValue(V0, 0, r, g, T, S);
-  if (remaining <= 0) return 0;
-  const multiplier = futureValue(0, 1, r, g, T, S);
-  if (multiplier <= 0) return null;
-  return remaining / multiplier;
-}
-
-// Monte Carlo simulation under geometric Brownian motion, annual steps.
-// Contributions are paid at the start of years 1..contributionYears; withdrawals
-// (if any) come off at the start of each year after withdrawalStartYear, floored
-// at zero — a depleted pot stays depleted. The drawdown phase compounds at
-// drawdownReturn (alpha isn't assumed to persist into retirement).
-// Returns { years: number[T+1],
-//           percentiles: { p10, p25, p50, p75, p90: number[T+1] },
-//           deterministic: number[T+1],  // expected path (no volatility)
-//           invested:      number[T+1],  // cumulative capital in, no returns
-//           sortedPerYear: Float64Array[T+1] } // sorted samples, for P(≥ target)
-function runSimulation({
-  startingValue,
-  contribution,
-  contributionGrowth,
-  contributionYears = Infinity,
-  withdrawalAnnual = 0,
-  withdrawalStartYear = null,
-  withdrawalGrowth = 0,
-  expectedReturn,
-  drawdownReturn = expectedReturn,
-  volatility,
-  horizonYears,
-  paths,
-}) {
-  const T = horizonYears;
-  const N = paths;
-  // Returns are geometric (CAGR) inputs — TWRR and the long-run benchmark are
-  // compound rates — so the log-drift is ln(1+r) with no -σ²/2 adjustment;
-  // the median simulated path then compounds at exactly the input rate.
-  const muAccum = Math.log(1 + expectedReturn);
-  const muDrawdown = Math.log(1 + drawdownReturn);
-  const sigma = volatility;
-  const randn = makeRandn(mulberry32(RNG_SEED));
-
-  // Simulate all paths year-by-year. Store results per year as a flat typed array
-  // so sort-based percentile extraction stays fast.
-  const perYear = [];
-  for (let t = 0; t <= T; t += 1) perYear.push(new Float64Array(N));
-
-  const withdrawing = (t) => withdrawalStartYear != null && t > withdrawalStartYear;
-
-  for (let i = 0; i < N; i += 1) {
-    let value = startingValue;
-    let contrib = contribution;
-    let wdraw = withdrawalAnnual;
-    perYear[0][i] = value;
-    for (let t = 1; t <= T; t += 1) {
-      const z = randn();
-      const r = Math.exp((withdrawing(t) ? muDrawdown : muAccum) + sigma * z) - 1;
-      if (t <= contributionYears) value += contrib;
-      if (withdrawing(t)) value = Math.max(0, value - wdraw);
-      value *= 1 + r;
-      perYear[t][i] = value;
-      contrib *= 1 + contributionGrowth;
-      // Indexed every year (not just while withdrawing) so the first withdrawal
-      // is already in that year's money under nominal display.
-      wdraw *= 1 + withdrawalGrowth;
-    }
-  }
-
-  // Sort each year in place (used for both percentiles and goal-probability lookups).
-  const sortedPerYear = perYear.map((arr) => arr.sort());
-  const percentiles = { p10: [], p25: [], p50: [], p75: [], p90: [] };
-  for (let t = 0; t <= T; t += 1) {
-    const sorted = sortedPerYear[t];
-    percentiles.p10.push(sorted[Math.floor(0.10 * N)]);
-    percentiles.p25.push(sorted[Math.floor(0.25 * N)]);
-    percentiles.p50.push(sorted[Math.floor(0.50 * N)]);
-    percentiles.p75.push(sorted[Math.floor(0.75 * N)]);
-    percentiles.p90.push(sorted[Math.floor(0.90 * N)]);
-  }
-
-  // Deterministic line at the expected CAGR, and a "total invested" baseline
-  // showing capital in (starting value + cumulative contributions, no returns).
-  const deterministic = [];
-  const invested = [];
-  let detValue = startingValue;
-  let investedTotal = startingValue;
-  let detContrib = contribution;
-  let detWdraw = withdrawalAnnual;
-  deterministic.push(detValue);
-  invested.push(investedTotal);
-  for (let t = 1; t <= T; t += 1) {
-    if (t <= contributionYears) {
-      detValue += detContrib;
-      investedTotal += detContrib;
-    }
-    if (withdrawing(t)) detValue = Math.max(0, detValue - detWdraw);
-    detValue *= 1 + (withdrawing(t) ? drawdownReturn : expectedReturn);
-    deterministic.push(detValue);
-    invested.push(investedTotal);
-    detContrib *= 1 + contributionGrowth;
-    detWdraw *= 1 + withdrawalGrowth;
-  }
-
-  const years = Array.from({ length: T + 1 }, (_, i) => i);
-  return { years, percentiles, deterministic, invested, sortedPerYear };
-}
 
 // Full-precision variant for figures where "£3k" is too coarse (e.g. a monthly
 // contribution the user would actually set up as a standing order).
@@ -247,7 +82,7 @@ const FanTooltip = ({ active, payload, label, mask }) => {
   if (!active || !payload || payload.length === 0) return null;
   const d = payload[0].payload;
   const rows = [
-    { key: 'det', label: 'Expected path', value: d.det, color: '#ef4444' },
+    { key: 'det', label: 'CAGR path (zero vol)', value: d.det, color: '#ef4444' },
     { key: 'p90', label: 'P90 (optimistic)', value: d.p90, color: '#93c5fd' },
     { key: 'p75', label: 'P75', value: d.p75, color: '#60a5fa' },
     { key: 'p50', label: 'Median', value: d.p50, color: '#1d4ed8', strong: true },
@@ -282,7 +117,9 @@ const Projection = () => {
   const [customReturnPct, setCustomReturnPct] = useState('7.0');
   const [customVolPct, setCustomVolPct] = useState('16.0');
   const [contribution, setContribution] = useState(DEFAULT_CONTRIBUTION);
-  const [contributionGrowsWithInflation, setContributionGrowsWithInflation] = useState(true);
+  // Off by default: the ISA allowance has been frozen at £20k since 2017/18, so a
+  // flat nominal contribution is the honest baseline and uprating is the opt-in.
+  const [allowanceUprated, setAllowanceUprated] = useState(false);
   const [horizonYears, setHorizonYears] = useState(DEFAULT_HORIZON_YEARS);
   const [startingValueInput, setStartingValueInput] = useState(null); // raw string; null = use API value
   const [goalMode, setGoalMode] = useState('amount'); // 'amount' | 'income'
@@ -316,33 +153,41 @@ const Projection = () => {
         ?? DEFAULT_INFLATION;
   }, [inputs]);
 
-  // Benchmark return under the current display mode (real vs nominal).
+  // Benchmark return under the current display mode. The real figure is the only
+  // forecast; nominal is Fisher-derived from it so the toggle is a unit switch.
   const benchReturn = useMemo(() => {
-    if (!inputs) return DEFAULT_REAL_RETURN;
-    return displayMode === 'real'
-      ? inputs.benchmark.real_return
-      : inputs.benchmark.nominal_return;
-  }, [inputs, displayMode]);
+    const real = inputs?.benchmark?.real_return ?? DEFAULT_REAL_RETURN;
+    return displayMode === 'real' ? real : toNominal(real, inflation);
+  }, [inputs, displayMode, inflation]);
 
   const customReturn = useMemo(
     () => parsePctInput(customReturnPct, DEFAULT_REAL_RETURN),
     [customReturnPct],
   );
+
   const customVolatility = useMemo(
     () => parsePctInput(customVolPct, DEFAULT_VOLATILITY),
     [customVolPct],
   );
 
+  // The custom rate is entered in whatever units the label shows, so restate it
+  // on the toggle — otherwise the only return source that isn't a unit switch.
+  const switchDisplayMode = (next) => {
+    if (next === displayMode) return;
+    const restated = convertRateForMode(customReturnPct, next, inflation);
+    if (restated != null) setCustomReturnPct(restated);
+    setDisplayMode(next);
+  };
+
   // Effective expected return based on returnSource + displayMode.
   const expectedReturn = useMemo(() => {
     if (!inputs) return DEFAULT_REAL_RETURN;
 
-    // User's TWRR is nominal (PortfolioDaily TWRR is a nominal return). Convert to real
-    // by deflating if we're in real mode.
+    // PortfolioDaily TWRR is nominal, so deflate it in real mode.
     const rawTwrr = inputs.portfolio?.twrr;
     const userReturn = rawTwrr == null
       ? null
-      : (displayMode === 'real' ? (1 + rawTwrr) / (1 + inflation) - 1 : rawTwrr);
+      : (displayMode === 'real' ? toReal(rawTwrr, inflation) : rawTwrr);
 
     if (returnSource === 'custom') return customReturn;
     if (returnSource === 'benchmark') return benchReturn;
@@ -358,16 +203,12 @@ const Projection = () => {
     return returnSource === 'custom' ? customVolatility : inputs.benchmark.volatility;
   }, [inputs, returnSource, customVolatility]);
 
-  // Contribution growth. When the "keep real purchasing power" toggle is on the
-  // contribution is held flat in real terms (grows with inflation in nominal mode,
-  // zero growth in real mode). When off it stays nominal-constant, which means
-  // real contributions decay by inflation.
+  // Uprated: contribution holds its purchasing power (flat real, CPI-grown nominal).
+  // Frozen: it holds its cash value, so the real contribution decays by CPI.
   const contributionGrowth = useMemo(() => {
-    if (displayMode === 'real') {
-      return contributionGrowsWithInflation ? 0 : -inflation;
-    }
-    return contributionGrowsWithInflation ? inflation : 0;
-  }, [displayMode, contributionGrowsWithInflation, inflation]);
+    if (displayMode === 'real') return allowanceUprated ? 0 : -inflation;
+    return allowanceUprated ? inflation : 0;
+  }, [displayMode, allowanceUprated, inflation]);
 
   // Empty or invalid override falls back to the live API value so the chart
   // never blanks out mid-edit.
@@ -405,6 +246,16 @@ const Projection = () => {
   // they sit beyond the chart horizon.
   const simTarget = drawdownActive ? drawdownEndYears : goalYears;
   const simHorizon = Math.max(horizonYears, Math.min(Math.max(simTarget, 0), MAX_SIM_YEARS));
+  // The drawdown runs past the simulation cap, so survival can't be scored.
+  const simCapped = drawdownActive && drawdownEndYears > MAX_SIM_YEARS;
+
+  const isaAllowance = inputs?.isa_allowance ?? DEFAULT_ISA_ALLOWANCE;
+  // Largest cash contribution the schedule asks for, over the years actually
+  // simulated. Uprating pushes it past a cap frozen at £20k, in either mode.
+  const fundedYears = Math.min(contributionYears, simHorizon);
+  const peakContribution = allowanceUprated
+    ? contribution * (1 + inflation) ** Math.max(0, fundedYears - 1)
+    : contribution;
 
   // The Monte Carlo — memoized on inputs so slider tweaks only rerun when needed.
   const simulation = useMemo(() => {
@@ -422,6 +273,7 @@ const Projection = () => {
       volatility,
       horizonYears: simHorizon,
       paths: DEFAULT_MONTE_CARLO_PATHS,
+      seed: RNG_SEED,
     });
   }, [inputs, startingValue, contribution, contributionGrowth, contributionYears,
     drawdownActive, targetIncome, goalYears, withdrawalGrowth,
@@ -467,6 +319,7 @@ const Projection = () => {
       p10: simulation.percentiles.p10[year],
       p50: simulation.percentiles.p50[year],
       p90: simulation.percentiles.p90[year],
+      ruin: simulation.ruin[year],
     }));
   }, [simulation, horizonYears]);
 
@@ -558,15 +411,19 @@ const Projection = () => {
             <div className="segmented" role="radiogroup" aria-label="Display mode">
               <button
                 type="button"
+                role="radio"
+                aria-checked={displayMode === 'real'}
                 className={displayMode === 'real' ? 'segmented-btn active' : 'segmented-btn'}
-                onClick={() => setDisplayMode('real')}
+                onClick={() => switchDisplayMode('real')}
               >
                 Real (CPI-adjusted)
               </button>
               <button
                 type="button"
+                role="radio"
+                aria-checked={displayMode === 'nominal'}
                 className={displayMode === 'nominal' ? 'segmented-btn active' : 'segmented-btn'}
-                onClick={() => setDisplayMode('nominal')}
+                onClick={() => switchDisplayMode('nominal')}
               >
                 Nominal
               </button>
@@ -615,18 +472,25 @@ const Projection = () => {
             <label className="assumption-inline">
               <input
                 type="checkbox"
-                checked={contributionGrowsWithInflation}
-                onChange={(e) => setContributionGrowsWithInflation(e.target.checked)}
+                checked={allowanceUprated}
+                onChange={(e) => setAllowanceUprated(e.target.checked)}
               />
-              <span>Contributions keep real purchasing power</span>
+              <span>Assume HMRC uprates the ISA allowance with inflation</span>
             </label>
             <div className="assumption-readout">
               Invested as a start-of-year lump sum
               {drawdownActive ? `, until retirement (${targetYear}).` : '.'}
+              {allowanceUprated
+                ? ' Contribution keeps its purchasing power.'
+                : ' Contribution stays flat in cash terms, as the frozen allowance does.'}
             </div>
-            {contribution > ISA_ANNUAL_ALLOWANCE && (
+            {peakContribution > isaAllowance && (
               <div className="warning-note">
-                Above the £{ISA_ANNUAL_ALLOWANCE.toLocaleString()} annual ISA allowance.
+                {contribution > isaAllowance
+                  ? `Above the £${isaAllowance.toLocaleString()} annual ISA allowance.`
+                  : `Uprating reaches £${Math.round(peakContribution).toLocaleString()}/yr by `
+                    + `${currentYear + fundedYears}, above the £${isaAllowance.toLocaleString()} `
+                    + 'allowance frozen since 2017/18.'}
               </div>
             )}
           </div>
@@ -659,7 +523,9 @@ const Projection = () => {
             </select>
             {returnSource === 'custom' && (
               <div className="custom-return-row">
-                <label htmlFor="customReturn" className="custom-return-label">Return %</label>
+                <label htmlFor="customReturn" className="custom-return-label">
+                  {displayMode === 'real' ? 'Real return %' : 'Nominal return %'}
+                </label>
                 <input
                   id="customReturn"
                   type="number"
@@ -722,7 +588,7 @@ const Projection = () => {
                 <span className="legend-item"><span className="legend-swatch swatch-fan-wide" /> 10–90th percentile</span>
                 <span className="legend-item"><span className="legend-swatch swatch-fan-narrow" /> 25–75th percentile</span>
                 <span className="legend-item"><span className="legend-swatch swatch-median" /> Median path</span>
-                <span className="legend-item"><span className="legend-swatch swatch-det" /> Expected path (no volatility)</span>
+                <span className="legend-item"><span className="legend-swatch swatch-det" /> CAGR path (zero volatility)</span>
                 <span className="legend-item"><span className="legend-swatch swatch-invested" /> Total invested</span>
               </div>
             </div>
@@ -786,6 +652,7 @@ const Projection = () => {
                   <th className="num">Pessimistic (P10)</th>
                   <th className="num">Median (P50)</th>
                   <th className="num">Optimistic (P90)</th>
+                  {drawdownActive && <th className="num">Ruined</th>}
                 </tr>
               </thead>
               <tbody>
@@ -795,6 +662,7 @@ const Projection = () => {
                     <td className="num">{maskableValue(row.p10)}</td>
                     <td className="num strong">{maskableValue(row.p50)}</td>
                     <td className="num">{maskableValue(row.p90)}</td>
+                    {drawdownActive && <td className="num">{formatPct(row.ruin, 0)}</td>}
                   </tr>
                 ))}
               </tbody>
@@ -807,6 +675,8 @@ const Projection = () => {
               <div className="segmented goal-mode" role="radiogroup" aria-label="Goal type">
                 <button
                   type="button"
+                  role="radio"
+                  aria-checked={goalMode === 'amount'}
                   className={goalMode === 'amount' ? 'segmented-btn active' : 'segmented-btn'}
                   onClick={() => setGoalMode('amount')}
                 >
@@ -814,6 +684,8 @@ const Projection = () => {
                 </button>
                 <button
                   type="button"
+                  role="radio"
+                  aria-checked={goalMode === 'income'}
                   className={goalMode === 'income' ? 'segmented-btn active' : 'segmented-btn'}
                   onClick={() => setGoalMode('income')}
                 >
@@ -899,19 +771,15 @@ const Projection = () => {
                 </button>
               </div>
             )}
+            {simCapped && (
+              <div className="warning-note">
+                Horizon capped: the simulation runs {MAX_SIM_YEARS} years, but drawing
+                until {targetYear + drawdownYears} needs {drawdownEndYears}. Survival and
+                median residue can&apos;t be scored — shorten the goal year or the draw.
+              </div>
+            )}
             {goalSeeker && (
               <div className="goal-outputs">
-                <div className="goal-output">
-                  <div className="goal-label">Chance of hitting it</div>
-                  <div className={probabilityClass(goalSeeker.probability)}>
-                    {goalSeeker.probability == null
-                      ? '—'
-                      : formatPct(goalSeeker.probability, 0)}
-                  </div>
-                  <div className="goal-note">
-                    of {DEFAULT_MONTE_CARLO_PATHS.toLocaleString()} simulated paths by {targetYear}
-                  </div>
-                </div>
                 {goalMode === 'income' && (
                   <>
                     <div className="goal-output">
@@ -922,7 +790,8 @@ const Projection = () => {
                           : formatPct(goalSeeker.survival, 0)}
                       </div>
                       <div className="goal-note">
-                        drawing £{targetIncome.toLocaleString()}/mo until {targetYear + drawdownYears}
+                        still solvent in {targetYear + drawdownYears} while drawing
+                        £{targetIncome.toLocaleString()}/mo — whatever the pot reached
                       </div>
                     </div>
                     <div className="goal-output">
@@ -931,12 +800,27 @@ const Projection = () => {
                         {goalSeeker.medianEnd == null ? '—' : maskableValue(goalSeeker.medianEnd)}
                       </div>
                       <div className="goal-note">
-                        in {targetYear + drawdownYears}
+                        in {targetYear + drawdownYears}, ruined paths counted at £0
                         {displayMode === 'real' ? ", today's money" : ''}
                       </div>
                     </div>
                   </>
                 )}
+                <div className="goal-output">
+                  <div className="goal-label">
+                    {goalMode === 'income' ? 'Reaches the 4% pot' : 'Chance of hitting it'}
+                  </div>
+                  <div className={probabilityClass(goalSeeker.probability)}>
+                    {goalSeeker.probability == null
+                      ? '—'
+                      : formatPct(goalSeeker.probability, 0)}
+                  </div>
+                  <div className="goal-note">
+                    {goalMode === 'income'
+                      ? `a sizing rule of thumb, not funded status — survival is the income question`
+                      : `of ${DEFAULT_MONTE_CARLO_PATHS.toLocaleString()} simulated paths by ${targetYear}`}
+                  </div>
+                </div>
                 <div className="goal-output">
                   <div className="goal-label">Required CAGR</div>
                   <div className="goal-value">
@@ -954,6 +838,12 @@ const Projection = () => {
                       : (hideAmounts ? MASK : formatGbpFull(goalSeeker.requiredContribution / 12))}
                   </div>
                   <div className="goal-note">at {formatPct(expectedReturn)} assumed return</div>
+                  {goalSeeker.requiredContribution > isaAllowance && (
+                    <div className="warning-note">
+                      {hideAmounts ? MASK : formatGbpFull(goalSeeker.requiredContribution)}/yr is
+                      above the £{isaAllowance.toLocaleString()} ISA allowance.
+                    </div>
+                  )}
                 </div>
               </div>
             )}

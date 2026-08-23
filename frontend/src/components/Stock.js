@@ -950,11 +950,10 @@ const Stock = () => {
 
   const thesisSummary = i?.thesis?.summary ?? null;
 
-  // Funds report neither cashflow nor market cap, so the overlay supplies the
-  // yield already computed from constituents — same percent units.
-  const fcfYield = f.fcfYield != null ? f.fcfYield
-    : (f.freeCashflow && f.marketCap && f.marketCap > 0) ? (f.freeCashflow / f.marketCap) * 100
-    : null;
+  // Backend-supplied (own statements, or constituent aggregate for a fund): the
+  // FX conversion marketCap/freeCashflow needs isn't available here.
+  const fcfYield = f.fcfYield ?? null;
+  const priceToFcf = fcfYield ? 100 / fcfYield : null;
 
   // The backend always sets both keys, so a missing figure is null, never
   // undefined — `!== undefined` passed and rendered a fabricated net debt of 0.
@@ -1347,11 +1346,10 @@ const Stock = () => {
     },
     {
       label: 'Price/FCF',
-      value: (f.marketCap && f.freeCashflow) ? formatRatio(f.marketCap / f.freeCashflow) : '-',
+      value: priceToFcf != null ? formatRatio(priceToFcf) : '-',
       className: (() => {
-        if (!f.marketCap || !f.freeCashflow) return '';
-        const r = f.marketCap / f.freeCashflow;
-        return r < 0 ? 'negative' : r < 20 ? 'positive' : r > 40 ? 'negative' : '';
+        if (priceToFcf == null) return '';
+        return priceToFcf < 0 ? 'negative' : priceToFcf < 20 ? 'positive' : priceToFcf > 40 ? 'negative' : '';
       })(),
       tooltip: valuationTooltips['Price/FCF'],
     },

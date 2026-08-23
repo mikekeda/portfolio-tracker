@@ -148,11 +148,9 @@ TAG_RISK_ALERT_PCT: dict[str, float] = {
     "commodity": 8,
 }
 
-# MSCI World long-run reference figures used on the Projection page (1970–present, rough expectations).
-# Nominal 8.5% / inflation ~2.5% ≈ real 6.5%. σ ~16% p.a. from monthly returns.
-# Reference: https://www.msci.com/documents/10199/178e6643-6ae6-47b9-82be-e1fc565ededb
-PROJECTION_BENCHMARK_NOMINAL_RETURN = 0.085
-PROJECTION_BENCHMARK_REAL_RETURN = 0.065
+# MSCI World long-run reference for the Projection page, 1970–present. Real is the only
+# primitive: https://www.msci.com/documents/10199/178e6643-6ae6-47b9-82be-e1fc565ededb
+PROJECTION_BENCHMARK_REAL_RETURN = 0.065  # nominal is Fisher-derived with live CPI
 PROJECTION_BENCHMARK_VOLATILITY = 0.16
 # UK ISA annual subscription limit — set by HMRC each tax year.
 # Reference: https://www.gov.uk/individual-savings-accounts
