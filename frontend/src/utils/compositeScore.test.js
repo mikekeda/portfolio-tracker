@@ -28,6 +28,7 @@ const NVDA = {
 const VUAG = {
   quote_type: 'ETF',
   sector: null,
+  is_fund: true,
   look_through: true,
   look_through_n: 489,
   look_through_as_of: '2026-08-15',
@@ -165,10 +166,16 @@ describe('reweighting', () => {
 });
 
 describe('exclusions', () => {
-  test('ETFs and sector-less trackers are not scored', () => {
-    expect(computeComposite({ ...NVDA, quote_type: 'ETF' })).toBeNull();
-    // SGLN.L is quoteType EQUITY with no sector.
-    expect(computeComposite({ ...NVDA, sector: null })).toBeNull();
+  test('funds are not scored, on the backend verdict rather than a missing sector', () => {
+    expect(computeComposite({ ...NVDA, quote_type: 'ETF', is_fund: true })).toBeNull();
+    // SGLN.L is quoteType EQUITY with no sector; the flag is what catches it.
+    expect(computeComposite({ ...NVDA, sector: null, is_fund: true })).toBeNull();
+  });
+
+  test('a degraded Yahoo profile still scores', () => {
+    // FISV and Leonardo's German listing lose sector without being funds; the
+    // old sector-null guard hid their score.
+    expect(computeComposite({ ...NVDA, sector: null, is_fund: false })).not.toBeNull();
   });
 
   test('a caller that omits sector entirely is reported, not silently blanked', () => {
@@ -196,7 +203,7 @@ describe('ETF look-through', () => {
   });
 
   test('gold ETCs stay null even though they are quoteType EQUITY', () => {
-    expect(computeComposite({ quote_type: 'EQUITY', sector: null, screener_score: null })).toBeNull();
+    expect(computeComposite({ quote_type: 'EQUITY', sector: null, is_fund: true, screener_score: null })).toBeNull();
     expect(computeComposite({ ...VUAG, look_through: undefined, quote_type: 'EQUITY' })).toBeNull();
   });
 

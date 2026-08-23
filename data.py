@@ -864,9 +864,13 @@ FTSE_100 = [  # updated 2026-07-22, review quarterly
 ]
 
 
-# Physically-backed gold ETCs (SGLN=iShares, GLDW=WisdomTree), which Yahoo calls EQUITY.
+# Physically-backed gold ETCs (SGLN=iShares, GLDW=WisdomTree, XAD5=Xtrackers), which Yahoo calls EQUITY.
 # Fund for fees/screeners/earnings; NOT for cluster caps (one commodity, not a basket).
-ETC_SYMBOLS = frozenset({"SGLN.L", "GLDW.L"})  # updated 2026-08-21, event-driven
+ETC_SYMBOLS = frozenset({"SGLN.L", "GLDW.L", "XAD5.DE"})  # updated 2026-08-23, event-driven
+
+# Closed-end funds holding a portfolio of securities. Yahoo calls them EQUITY with
+# no sector, so nothing in the payload separates them from an operating company.
+INVESTMENT_TRUSTS = frozenset({"SMT.L", "FCIT.L", "UKW.L"})  # updated 2026-08-23, event-driven
 
 
 # Where each ETF's holdings come from, for scripts/update_etf_holdings.py.

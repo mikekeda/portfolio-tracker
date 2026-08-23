@@ -101,11 +101,9 @@ export function computeComposite(h) {
     console.error('computeComposite: input is missing `sector` — score suppressed', h);
     return null;
   }
-  // ETFs have no equity screener data or earnings signal — show blank. Some
-  // trackers (SGLN.L) are quoteType EQUITY, so a null sector disqualifies too.
-  // Funds carrying look-through metrics escape ahead of it; gold ETCs and funds
-  // below the coverage gate never get the flag, so the guard still catches them.
-  if (!h.look_through && (h.quote_type === 'ETF' || h.sector === null)) return null;
+  // Funds have no equity screener data or earnings signal — show blank. The
+  // backend decides which (is_fund); a missing sector also marks a degraded profile.
+  if (!h.look_through && h.is_fund) return null;
 
   // Only the upper bound is clamped: scores above the sector max are possible but
   // shouldn't outweigh their 50%, while red-flag stocks must stay negative.

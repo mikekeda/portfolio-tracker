@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.agent.rules_strategy import RulesStrategy
+from backend.agent.types import is_fund
 from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.etf_aggregates import MIN_COVERAGE
@@ -704,6 +705,9 @@ async def get_instrument(
             "thesis": instrument.thesis,
             "tags": instrument.tags,
             "quote_type": yd.get("quoteType"),
+            # Same verdict Holdings gets from calculate_screener_results, so both
+            # pages suppress a fund's composite on identical grounds.
+            "is_fund": is_fund(instrument.yahoo_symbol or "", quote_type=yd.get("quoteType")),
         },
         "fundamentals": fundamentals,
         "earnings": (yh.earnings or {}) if yh else {},

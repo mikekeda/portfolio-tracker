@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Literal, Optional
 
-from data import ETC_SYMBOLS
+from data import ETC_SYMBOLS, INVESTMENT_TRUSTS
 
 Action = Literal["buy", "add", "trim", "exit"]
 
@@ -102,17 +102,37 @@ class AgentLimits:
         )
 
 
-def is_fund(symbol: str, etf_symbols: frozenset[str]) -> bool:
+def is_etp(symbol: str, etf_symbols: frozenset[str]) -> bool:
+    """Whether `symbol` is an exchange-traded product rather than a share.
+
+    The transaction-tax test: ETFs and ETCs escape UK stamp duty and the French
+    FTT, but a closed-end trust is a UK company whose shares still attract SDRT.
+    Narrower than `is_fund` on purpose — do not merge them.
+    """
+    return symbol in etf_symbols or symbol in ETC_SYMBOLS
+
+
+def is_fund(symbol: str, etf_symbols: frozenset[str] = frozenset(), quote_type: Optional[str] = None) -> bool:
     """Whether `symbol` is a fund rather than an operating company.
 
-    Wider than `etf_symbols` (quoteType == 'ETF'): physically-backed ETCs belong
-    here too, but Yahoo reports them as EQUITY. Governs fee exemption, screener
-    blanking and new-buy eligibility.
+    Wider than `etf_symbols` (quoteType == 'ETF'): physically-backed ETCs and
+    closed-end trusts belong here too, but Yahoo reports them as EQUITY. Governs
+    screener blanking and new-buy eligibility — NOT transaction taxes, which stay
+    on `is_etp`. Callers holding a row pass `quote_type`, symbol-only callers
+    pass `etf_symbols`.
+
+    Only 'ETF' is trusted from quoteType — Yahoo labels the German listings of
+    Keyence and Daikin MUTUALFUND, and leaves it NONE for live companies.
 
     Deliberately NOT the thematic-cap test — that one stays on `etf_symbols`,
     since an ETC is a single-commodity holding, not a diversified basket.
     """
-    return symbol in etf_symbols or symbol in ETC_SYMBOLS
+    return (
+        quote_type == "ETF"
+        or symbol in etf_symbols
+        or symbol in ETC_SYMBOLS
+        or symbol in INVESTMENT_TRUSTS
+    )
 
 
 def trade_fee_rate(symbol: str, currency: str | None, is_etf: bool, side: str, limits: AgentLimits) -> float:

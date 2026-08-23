@@ -17,7 +17,7 @@ import pandas as pd
 
 from backend.agent.constraints import apply_constraints
 from backend.agent.strategy import Strategy
-from backend.agent.types import AgentLimits, PortfolioState, TradeOrder, is_fund, trade_fee_rate
+from backend.agent.types import AgentLimits, PortfolioState, TradeOrder, is_etp, trade_fee_rate
 from backend.agent.backtest.data import (
     MarketData,
     features_for_date,
@@ -145,7 +145,7 @@ def _fill(
         fee_rate = trade_fee_rate(
             order.symbol,
             md.currencies.get(order.symbol),
-            is_fund(order.symbol, md.etf_symbols),
+            is_etp(order.symbol, md.etf_symbols),
             side,
             limits,
         )
@@ -190,7 +190,7 @@ def buy_and_hold_curve(
     if first_priced is None:
         raise ValueError(f"{symbol}: no prices in backtest window")
     fee_rate = trade_fee_rate(
-        symbol, md.currencies.get(symbol), is_fund(symbol, md.etf_symbols), "buy", limits
+        symbol, md.currencies.get(symbol), is_etp(symbol, md.etf_symbols), "buy", limits
     )
     quantity = initial_cash * (1 - fee_rate) / prices.loc[first_priced]
     curve = quantity * prices

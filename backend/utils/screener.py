@@ -4,11 +4,9 @@ Screener Utilities
 Helper functions for screener evaluation and calculation.
 """
 
-from itertools import combinations
-
+from backend.agent.types import is_fund
 from backend.screener_config import FieldRef, get_screener_config
 from config import logger
-from data import ETC_SYMBOLS
 
 # Expected field names in portfolio data (for validation)
 EXPECTED_FIELDS = {
@@ -57,9 +55,14 @@ def calculate_screener_results(portfolio_data: list[dict]) -> None:
     failures = 0
     unscoreable = 0
     for holding_data in portfolio_data:
+        # Published so the UI suppresses a fund's composite on this verdict rather
+        # than re-deriving one from a missing sector, which degraded rows also lack.
+        holding_data["is_fund"] = is_fund(
+            holding_data.get("yahoo_symbol") or "", quote_type=holding_data.get("quote_type")
+        )
         # Funds fail every gate, summing to a 0 indistinguishable from a scored
         # equity that passed nothing. Branch on kind, never on score == 0.
-        if holding_data.get("quote_type") == "ETF" or holding_data.get("yahoo_symbol") in ETC_SYMBOLS:
+        if holding_data["is_fund"]:
             _blank_result(holding_data)
             unscoreable += 1
             continue

@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.agent.constraints import apply_constraints
-from backend.agent.types import AgentLimits, PortfolioState, TradeIntent, is_fund
+from backend.agent.types import AgentLimits, PortfolioState, TradeIntent, is_etp, is_fund
 
 LIMITS = AgentLimits(
     max_daily_turnover=0.05,
@@ -305,11 +305,40 @@ def test_deterministic():
     assert first == second
 
 
+def test_closed_end_trusts_are_funds():
+    """Trusts hold a portfolio of securities, so they cannot be screened as a business."""
+    assert is_fund("SMT.L", frozenset())
+    assert is_fund("FCIT.L", frozenset())
+    assert is_fund("UKW.L", frozenset())
+    # A REIT owns its warehouses outright — an operating company, not a fund.
+    assert not is_fund("BBOX.L", frozenset())
+
+
+def test_only_etf_is_trusted_from_quote_type():
+    """Yahoo mislabels the German listings of Keyence and Daikin as MUTUALFUND,
+    and leaves quoteType NONE or absent on live companies like DraftKings."""
+    assert is_fund("VUAG.L", quote_type="ETF")
+    assert not is_fund("KEE.DE", quote_type="MUTUALFUND")
+    assert not is_fund("DEAC", quote_type="NONE")
+    assert not is_fund("GIG", quote_type=None)
+    # Curated membership still wins regardless of what quoteType claims.
+    assert is_fund("SGLN.L", quote_type="EQUITY")
+
+
+def test_trusts_pay_stamp_duty_though_they_are_funds():
+    """A closed-end trust is a UK company: T212 charges SDRT on the buy. The tax
+    test must stay narrower than the fund test, or the agent under-prices trades."""
+    for trust in ("SMT.L", "FCIT.L", "UKW.L"):
+        assert is_fund(trust, frozenset())
+        assert not is_etp(trust, frozenset())
+
+
 def test_etc_is_exempt_from_stamp_duty():
-    """SGLN.L is a fund for fee purposes even though Yahoo calls it EQUITY."""
-    assert is_fund("SGLN.L", frozenset())
-    assert is_fund("GLDW.L", frozenset())
-    assert not is_fund("BA.L", frozenset())
+    """SGLN.L is an ETP for fee purposes even though Yahoo calls it EQUITY."""
+    assert is_etp("SGLN.L", frozenset())
+    assert is_etp("GLDW.L", frozenset())
+    assert is_etp("XAD5.DE", frozenset())
+    assert not is_etp("BA.L", frozenset())
     # GBP fund buy pays neither SDRT nor FX fee, so the order is unshrunk.
     state = make_state_with_etc()
     limits = replace(LIMITS, cluster_caps={"ai": 45, "space": 15, "commodity": 20})

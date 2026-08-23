@@ -151,6 +151,12 @@ FX_LOOKBACK_DAYS = 7
 
 _BAD_NUMERIC_STRINGS = frozenset({"infinity", "-infinity", "inf", "-inf", "nan"})
 
+# Static company facts from Yahoo's asset-profile module, which drops out of
+# otherwise-healthy responses taking all of them at once. Carried forward, not cleared.
+_PROFILE_FIELDS = frozenset(
+    {"sector", "industry", "country", "longBusinessSummary", "financialCurrency", "website", "fullTimeEmployees"}
+)
+
 
 @lru_cache(maxsize=1)
 def _get_session_factory() -> sessionmaker:
@@ -291,6 +297,37 @@ def request_json(url: str, headers: dict[str, str], retries: int = REQUEST_RETRY
         if attempt < retries - 1:
             time.sleep(2**attempt)
     raise RuntimeError(f"Failed to GET {url} after {retries} attempts")
+
+
+def _blank(value: Any) -> bool:
+    """Whether a profile field carries no usable value: absent, null or empty text.
+
+    Yahoo degrades both ways — FISV lost the keys outright, Leonardo's German
+    listing kept `sector` as an empty string.
+    """
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _preserve_profile(cached: dict[str, Any], fresh: dict[str, Any], symbol: str) -> dict[str, Any]:
+    """Fresh Yahoo info, with profile fields carried over from `cached` where blank.
+
+    Yahoo intermittently returns a healthy quote payload whose asset-profile module
+    is missing; replacing wholesale would drop the sector a screener needs and the
+    financialCurrency the FX correction needs.
+    """
+    if not cached:
+        return fresh
+
+    recovered = {
+        key: cached[key]
+        for key in _PROFILE_FIELDS
+        if _blank(fresh.get(key)) and not _blank(cached.get(key))
+    }
+    if not recovered:
+        return fresh
+
+    logger.warning("Yahoo profile missing for %s — keeping cached %s", symbol, ", ".join(sorted(recovered)))
+    return {**fresh, **recovered}
 
 
 @lru_cache()
@@ -453,7 +490,7 @@ def update_holdings() -> list[HoldingDaily]:
                     yahoo_row.profile_fetched_at = datetime.now(TIMEZONE)
                 continue
             if yahoo_row:
-                yahoo_row.info = yahoo_data
+                yahoo_row.info = _preserve_profile(yahoo_row.info, yahoo_data, yahoo_symbol)
                 # Fetch failures past the info stage (e.g. the flaky
                 # get_earnings_dates) return empty dicts — don't wipe cached data.
                 if payload["cashflow"]:

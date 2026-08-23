@@ -1049,6 +1049,7 @@ const Stock = () => {
   const compositeInput = {
     quote_type: i.quote_type,
     sector: i.sector,
+    is_fund: i.is_fund,
     screener_score: data.screener_score,
     // Paired with the score above — both come from the same nightly snapshot.
     screener_score_max: data.screener_score_max,

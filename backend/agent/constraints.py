@@ -27,7 +27,7 @@ from backend.agent.types import (
     PortfolioState,
     TradeIntent,
     TradeOrder,
-    is_fund,
+    is_etp,
     trade_fee_rate,
 )
 
@@ -40,7 +40,7 @@ ETF_TAG = "etf"
 
 def _fee_rate(symbol: str, side: str, state: PortfolioState, limits: AgentLimits) -> float:
     return trade_fee_rate(
-        symbol, state.currencies.get(symbol), is_fund(symbol, state.etf_symbols), side, limits
+        symbol, state.currencies.get(symbol), is_etp(symbol, state.etf_symbols), side, limits
     )
 
 
