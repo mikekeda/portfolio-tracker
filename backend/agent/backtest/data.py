@@ -100,9 +100,11 @@ FUNDAMENTAL_COLUMNS = (
     "eps_next_q_growth",
 )
 
-# The screener overhaul (currency-correct FCF, fixed BB-width percentile, margin
-# gates, reweighting) landed here; screener_score is not comparable across it.
-SCREENER_CUTOVER = date(2026, 7, 30)
+# screener_score is not comparable across these dates — each changed how it is computed.
+SCREENER_CUTOVERS = (
+    date(2026, 7, 30),  # currency-correct FCF, fixed BB-width percentile, margin gates, reweighting
+    date(2026, 8, 23),  # fcf_margin/fcf_yield moved off Yahoo's levered freeCashflow (utils/fcf.py)
+)
 
 
 @dataclass

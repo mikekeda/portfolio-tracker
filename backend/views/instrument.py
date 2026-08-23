@@ -11,6 +11,7 @@ from backend.agent.rules_strategy import RulesStrategy
 from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.etf_aggregates import MIN_COVERAGE
+from backend.utils.fcf import trailing_fcf
 from backend.utils.form13f import (
     Form13FFilingRow,
     _build_sec_13f_url,
@@ -286,6 +287,17 @@ async def get_instrument(
     chart = await _chart_payload(session, instrument, start_date)
 
     yd = (instrument.yahoo.info or {}) if instrument.yahoo else {}
+    # info["freeCashflow"] is levered and understates the statements — see utils/fcf.py.
+    fcf = (
+        trailing_fcf(
+            instrument.yahoo.quarterly_cashflow,
+            instrument.yahoo.quarterly_income_stmt,
+            instrument.yahoo.cashflow,
+            instrument.yahoo.income_stmt,
+        )
+        if instrument.yahoo
+        else None
+    )
 
     fundamentals = {
         "marketCap": yd.get("marketCap"),
@@ -298,7 +310,7 @@ async def get_instrument(
         "totalDebt": yd.get("totalDebt"),
         "totalCash": yd.get("totalCash"),
         "sharesOutstanding": yd.get("sharesOutstanding") or yd.get("impliedSharesOutstanding"),
-        "freeCashflow": yd.get("freeCashflow"),
+        "freeCashflow": fcf.fcf if fcf else None,
         "operatingCashflow": yd.get("operatingCashflow"),
         "totalRevenue": yd.get("totalRevenue"),
         "revenuePerShare": yd.get("revenuePerShare"),

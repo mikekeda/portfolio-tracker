@@ -13,6 +13,7 @@ from sqlalchemy.orm import defer, selectinload
 from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.drawdown import compute_max_drawdown, underwater_series
+from backend.utils.fcf import trailing_fcf
 from backend.utils.form13f import _get_form13f_for_instruments
 from backend.utils.market_breadth import compute_live_rolling_breadth
 from utils.market_data import (
@@ -460,17 +461,18 @@ async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict
         # `financialCurrency`; mixing the two is wrong for ~22% of the universe.
         fx = statement_to_quote_factor(info, currency_rates)
         market_cap = info.get("marketCap")
-        free_cashflow = info.get("freeCashflow")
         total_revenue = info.get("totalRevenue")
         ebitda = info.get("ebitda")
         total_debt = info.get("totalDebt")
         total_cash = info.get("totalCash")
-        fcf_quote = free_cashflow * fx if (free_cashflow is not None and fx) else None
         revenue_quote = total_revenue * fx if (total_revenue is not None and fx) else None
 
         # Quarterly statements are the only multi-period fundamentals available.
         # roic_ttm sums four quarters, so it is comparable with `roic` above.
         quarterly_income_stmt = yh.quarterly_income_stmt if yh else None
+        # info["freeCashflow"] is levered and understates the statements — see utils/fcf.py.
+        fcf = trailing_fcf(yh.quarterly_cashflow, quarterly_income_stmt, yh.cashflow, yh.income_stmt) if yh else None
+        fcf_quote = fcf.fcf * fx if (fcf and fx) else None
         roic_ttm_series = (
             get_roic_ttm_series(yh.quarterly_balance_sheet, quarterly_income_stmt) if yh else []
         )
@@ -546,10 +548,8 @@ async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict
                 "f_score": f_score_result["score"] if f_score_result else None,
                 "f_score_details": f_score_result["details"] if f_score_result else None,
                 "free_cashflow_yield": fcf_quote / market_cap * 100 if (fcf_quote is not None and market_cap) else None,
-                # Both terms are in the reporting currency, so this is FX-immune.
-                "fcf_margin": free_cashflow / total_revenue * 100
-                if (free_cashflow is not None and total_revenue)
-                else None,
+                # Both terms are in the reporting currency and span the same periods.
+                "fcf_margin": fcf.fcf / fcf.revenue * 100 if fcf else None,
                 "quickRatio": info.get("quickRatio") if info.get("sector") != "Financial Services" else None,
                 "debtToEquity": info.get("debtToEquity"),
                 "net_cash": total_cash > total_debt if (total_cash is not None and total_debt is not None) else None,
