@@ -114,7 +114,7 @@ export function solveRequiredContribution(V0, r, g, T, target, S = T) {
  * Contributions are paid at the start of years 1..contributionYears; withdrawals
  * come off at the start of each year after withdrawalStartYear and are floored at
  * zero, so a depleted pot stays depleted. The drawdown phase compounds at
- * drawdownReturn rather than expectedReturn.
+ * drawdownReturn with drawdownVolatility rather than expectedReturn/volatility.
  *
  * @returns {{years: number[], percentiles: {p10: number[], p25: number[],
  *   p50: number[], p75: number[], p90: number[]}, deterministic: number[],
@@ -134,6 +134,7 @@ export function runSimulation({
   expectedReturn,
   drawdownReturn = expectedReturn,
   volatility,
+  drawdownVolatility = volatility,
   horizonYears,
   paths,
   seed,
@@ -144,7 +145,6 @@ export function runSimulation({
   // term; the median path then compounds at exactly the input rate.
   const muAccum = Math.log(1 + expectedReturn);
   const muDrawdown = Math.log(1 + drawdownReturn);
-  const sigma = volatility;
   const randn = makeRandn(mulberry32(seed));
 
   // Simulate all paths year-by-year. Store results per year as a flat typed array
@@ -161,7 +161,9 @@ export function runSimulation({
     perYear[0][i] = value;
     for (let t = 1; t <= T; t += 1) {
       const z = randn();
-      const r = Math.exp((withdrawing(t) ? muDrawdown : muAccum) + sigma * z) - 1;
+      const inDrawdown = withdrawing(t);
+      const mu = inDrawdown ? muDrawdown : muAccum;
+      const r = Math.exp(mu + (inDrawdown ? drawdownVolatility : volatility) * z) - 1;
       if (t <= contributionYears) value += contrib;
       if (withdrawing(t)) value = Math.max(0, value - wdraw);
       value *= 1 + r;

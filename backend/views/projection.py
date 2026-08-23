@@ -2,7 +2,7 @@
 Projection endpoint — feeds the /projection page with assumption inputs.
 
 Returns the values that would otherwise be guessed on the frontend:
-  * portfolio starting value + annualised TWRR (as of the latest snapshot)
+  * portfolio starting value, annualised TWRR and beta (latest snapshot)
   * track-record length in years
   * UK CPI trailing 12m and trailing 10y CAGR (from the ONS MM23 dataset)
   * MSCI-World-style long-run real return and volatility (static constants)
@@ -115,6 +115,16 @@ async def get_projection_inputs(
         )
     ).first()
 
+    # Beta needs a year of history, so it lags TWRR onto the series by ~21 rows.
+    beta_row = (
+        await session.execute(
+            select(PortfolioDaily.beta)
+            .where(PortfolioDaily.beta.is_not(None))
+            .order_by(PortfolioDaily.date.desc())
+            .limit(1)
+        )
+    ).first()
+
     twrr: Optional[float] = None
     track_record_years: Optional[float] = None
     starting_value: Optional[float] = None
@@ -132,6 +142,7 @@ async def get_projection_inputs(
         "portfolio": {
             "starting_value": starting_value,
             "twrr": twrr,
+            "beta": beta_row.beta if beta_row else None,
             "track_record_years": track_record_years,
         },
         "inflation": {

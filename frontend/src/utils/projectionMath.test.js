@@ -216,6 +216,21 @@ describe('runSimulation', () => {
     expect(derisked.percentiles.p50[20]).toBeLessThan(flat.percentiles.p50[20]);
   });
 
+  test('the drawdown phase disperses at drawdownVolatility, not volatility', () => {
+    const shared = { ...base, withdrawalStartYear: 10, horizonYears: 20 };
+    const wide = runSimulation({ ...shared, drawdownVolatility: 0.30 });
+    const narrow = runSimulation({ ...shared, drawdownVolatility: 0.05 });
+    const spread = (s, t) => s.percentiles.p90[t] - s.percentiles.p10[t];
+    expect(spread(wide, 10)).toBeCloseTo(spread(narrow, 10), 6);
+    expect(spread(wide, 20)).toBeGreaterThan(spread(narrow, 20));
+  });
+
+  test('drawdownVolatility defaults to volatility', () => {
+    const shared = { ...base, withdrawalStartYear: 10, horizonYears: 20 };
+    const explicit = runSimulation({ ...shared, drawdownVolatility: base.volatility });
+    expect(runSimulation(shared).percentiles.p90[20]).toBe(explicit.percentiles.p90[20]);
+  });
+
   test('withdrawals start the year after withdrawalStartYear', () => {
     const sim = runSimulation({
       ...base, volatility: 0, withdrawalAnnual: 10000, withdrawalStartYear: 3, horizonYears: 4,

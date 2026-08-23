@@ -46,6 +46,11 @@ const CPI_STALE_DAYS = 120;
 // Traffic-light thresholds for the goal-seeker probability.
 const GOAL_PROB_GOOD = 0.7;
 const GOAL_PROB_POOR = 0.4;
+// The median is pinned to the input CAGR whatever σ is, so extra volatility only
+// adds mass above a target sitting above it — read this tile alongside survival.
+const PROBABILITY_VOL_NOTE = 'Rises with volatility: the simulated median compounds at the '
+  + 'input CAGR regardless of σ, so a wider spread only adds paths above a target that sits '
+  + 'above the median. Survival during drawdown moves the other way.';
 
 // Full-precision variant for figures where "£3k" is too coarse (e.g. a monthly
 // contribution the user would actually set up as a standing order).
@@ -196,12 +201,21 @@ const Projection = () => {
     return userReturn == null ? benchReturn : 0.5 * userReturn + 0.5 * benchReturn;
   }, [inputs, returnSource, customReturn, displayMode, inflation, benchReturn]);
 
-  // Volatility: always benchmark long-run σ (user's realized σ is too noisy for a
-  // ~1 year track record). Exposed as custom for power users.
+  // Return and dispersion must describe the same portfolio, so beta scales the
+  // benchmark σ at the same weights the return blend uses.
+  const volatilityBeta = useMemo(() => {
+    const beta = inputs?.portfolio?.beta;
+    if (beta == null) return 1;
+    if (returnSource === 'twrr') return beta;
+    if (returnSource === 'blend') return 0.5 * beta + 0.5;
+    return 1;
+  }, [inputs, returnSource]);
+
   const volatility = useMemo(() => {
     if (!inputs) return customVolatility;
-    return returnSource === 'custom' ? customVolatility : inputs.benchmark.volatility;
-  }, [inputs, returnSource, customVolatility]);
+    if (returnSource === 'custom') return customVolatility;
+    return inputs.benchmark.volatility * volatilityBeta;
+  }, [inputs, returnSource, customVolatility, volatilityBeta]);
 
   // Uprated: contribution holds its purchasing power (flat real, CPI-grown nominal).
   // Frozen: it holds its cash value, so the real contribution decays by CPI.
@@ -241,6 +255,10 @@ const Projection = () => {
   // Post-retirement regime: alpha isn't assumed to persist into drawdown, so
   // returns fall back to the benchmark unless the user chose a custom rate.
   const drawdownReturn = returnSource === 'custom' ? customReturn : benchReturn;
+  // Dropping to benchmark returns in drawdown means dropping to benchmark σ too.
+  const drawdownVolatility = returnSource === 'custom'
+    ? customVolatility
+    : (inputs?.benchmark?.volatility ?? DEFAULT_VOLATILITY);
 
   // Simulate far enough to score the goal — and the drawdown phase — even when
   // they sit beyond the chart horizon.
@@ -271,13 +289,14 @@ const Projection = () => {
       expectedReturn,
       drawdownReturn,
       volatility,
+      drawdownVolatility,
       horizonYears: simHorizon,
       paths: DEFAULT_MONTE_CARLO_PATHS,
       seed: RNG_SEED,
     });
   }, [inputs, startingValue, contribution, contributionGrowth, contributionYears,
     drawdownActive, targetIncome, goalYears, withdrawalGrowth,
-    expectedReturn, drawdownReturn, volatility, simHorizon]);
+    expectedReturn, drawdownReturn, volatility, drawdownVolatility, simHorizon]);
 
   // Shape for Recharts: one datum per year with all percentile bands flattened
   // into stacked deltas so AreaChart can draw the fan.
@@ -310,10 +329,13 @@ const Projection = () => {
     return ticks;
   }, [horizonYears]);
 
-  // Summary table at 5-year checkpoints (clipped to horizon).
+  // Summary table at 5-year checkpoints, always ending on the horizon itself —
+  // the year the slider is set to is the one the user is asking about.
   const summaryCheckpoints = useMemo(() => {
     if (!simulation) return [];
-    const marks = [5, 10, 15, 20, 25, 30, 35, 40].filter((m) => m <= horizonYears);
+    const marks = [];
+    for (let y = 5; y < horizonYears; y += 5) marks.push(y);
+    marks.push(horizonYears);
     return marks.map((year) => ({
       year,
       p10: simulation.percentiles.p10[year],
@@ -545,8 +567,10 @@ const Projection = () => {
             )}
             <div className="assumption-readout">
               {formatPct(expectedReturn)} return · σ {formatPct(volatility, 0)}
-              {drawdownActive && drawdownReturn !== expectedReturn
-                && ` · ${formatPct(drawdownReturn)} from ${targetYear}`}
+              {drawdownActive
+                && (drawdownReturn !== expectedReturn || drawdownVolatility !== volatility)
+                && ` · ${formatPct(drawdownReturn)}, σ ${formatPct(drawdownVolatility, 0)}`
+                   + ` from ${targetYear}`}
             </div>
           </div>
 
@@ -555,6 +579,13 @@ const Projection = () => {
               {trackRecordYears != null && <span className="muted"> · {trackRecordYears.toFixed(1)}y history</span>}
             </div>
             <div>Benchmark ({displayMode}): <strong>{formatPct(benchReturn)}</strong></div>
+            {volatilityBeta !== 1 && (
+              <div>Your beta: <strong>{inputs.portfolio.beta.toFixed(2)}</strong>
+                <span className="muted">
+                  {' '}· σ scaled to {formatPct(volatility, 0)} from {formatPct(inputs.benchmark.volatility, 0)}
+                </span>
+              </div>
+            )}
             <div>UK CPI (10y avg): <strong>{formatPct(inflation)}</strong>
               <span className="muted">
                 {cpiAsOfLabel ? ` · to ${cpiAsOfLabel}` : ' · default assumption'}
@@ -806,9 +837,10 @@ const Projection = () => {
                     </div>
                   </>
                 )}
-                <div className="goal-output">
+                <div className="goal-output" title={PROBABILITY_VOL_NOTE}>
                   <div className="goal-label">
                     {goalMode === 'income' ? 'Reaches the 4% pot' : 'Chance of hitting it'}
+                    <span className="goal-label-hint" aria-hidden="true">ⓘ</span>
                   </div>
                   <div className={probabilityClass(goalSeeker.probability)}>
                     {goalSeeker.probability == null

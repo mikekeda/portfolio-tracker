@@ -429,6 +429,12 @@ label.assumption-inline input[type="checkbox"] {
   letter-spacing: 0.04em;
 }
 
+.goal-label-hint {
+  margin-left: 4px;
+  color: #9ca3af;
+  cursor: help;
+}
+
 .goal-value {
   margin-bottom: 4px;
   font-size: 22px;
