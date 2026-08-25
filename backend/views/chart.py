@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from backend.app import get_db_session
 from backend.screener_config import get_screener_config
 from backend.utils.roic import get_roic
-from backend.views._shared import PRICE_COLUMN
+from backend.views._shared import PRICE_COLUMN, get_rates
 from config import TIMEZONE
 from models import HoldingDaily, Instrument, InstrumentMetricsDaily, PricesDaily
 
@@ -162,17 +162,19 @@ async def _get_chart_metric(symbols: str, days: int, metric: str, session: Async
                 .options(selectinload(HoldingDaily.instrument))
             )
             holdings_data = result.scalars().all()
+            # ppl is GBP while current_price is native (pence for GBX), so the cost
+            # basis has to be converted before the two can be divided.
+            currency_rates = await get_rates(session)
             for holding in holdings_data:
                 symbol = holding.instrument.yahoo_symbol
                 if metric == "profit":
                     value = holding.ppl
                 elif metric == "profit_pct":
-                    market_value = holding.quantity * holding.current_price
-                    value = (
-                        round((holding.ppl / (market_value - holding.ppl) * 100.0), 2)
-                        if (market_value - holding.ppl) > 0
-                        else 0.0
+                    market_value_gbp = (
+                        holding.quantity * holding.current_price * currency_rates[holding.instrument.currency]
                     )
+                    cost_basis = market_value_gbp - holding.ppl
+                    value = round((holding.ppl / cost_basis * 100.0), 2) if cost_basis > 0 else 0.0
                 else:
                     value = None
 

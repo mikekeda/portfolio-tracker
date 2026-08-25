@@ -565,7 +565,7 @@ async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict
                 if info.get("52WeekChange") is not None
                 else None,
                 "short_percent_of_float": info["shortPercentOfFloat"] * 100
-                if info.get("shortPercentOfFloat")
+                if info.get("shortPercentOfFloat") is not None
                 else None,
                 "rsi": rsi_data.get(holding.instrument.yahoo_symbol),
                 "rule_of_40_score": (info.get("revenueGrowth", 0) * 100) + (info.get("profitMargins", 0) * 100)
@@ -779,12 +779,14 @@ async def get_portfolio_history(
 
     snap_res = await session.execute(query)
     snapshots = snap_res.scalars().all()
+    if not snapshots:
+        return {"history": [], "days": days, "benchmark": BENCHES}
 
     bench_res = await session.execute(
         select(PricesDaily.date, PRICE_COLUMN, PricesDaily.symbol)
         .where(
             PricesDaily.symbol.in_(BENCHES),
-            PricesDaily.date >= snapshots[0].date,  # latest date in the snapshots
+            PricesDaily.date >= snapshots[0].date,  # earliest date in the window
         )
         .order_by(PricesDaily.date)
     )
