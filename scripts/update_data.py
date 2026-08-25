@@ -185,8 +185,11 @@ def get_session() -> Generator[Session, None, None]:
         session.close()
 
 
-def convert_ticker(t212: str) -> str:
-    """Convert a Trading 212 code to a Yahoo Finance symbol (example: 'BARCl_EQ' -> 'BARC.L')."""
+def convert_ticker(t212: str, currency: str) -> str:
+    """Convert a Trading 212 code to a Yahoo Finance symbol (example: 'BARCl_EQ' -> 'BARC.L').
+
+    `currency` resolves codes Trading 212 sends without an exchange tag.
+    """
     if t212 in STOCKS_DELISTED:
         raise ValueError(f"{t212} is delisted")
 
@@ -202,8 +205,11 @@ def convert_ticker(t212: str) -> str:
         sym, tag = core[:-1], core[-1]
     elif t212 == "IITU_EQ":
         return core
+    elif currency in ("GBX", "GBP"):
+        # Untagged codes (IWFM_EQ) carry no exchange; a sterling quote means LSE.
+        return STOCKS_ALIASES.get(core, core) + ".L"
     else:
-        raise ValueError(f"Cannot parse: {t212}")
+        raise ValueError(f"Cannot parse: {t212} (currency {currency})")
 
     sym = sym.rstrip("_")
     sym = STOCKS_ALIASES.get(sym, sym)
@@ -662,7 +668,7 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
                     if existing:
                         existing.name = instrument["name"]
                         existing.currency = instrument["currencyCode"]
-                        existing.yahoo_symbol = convert_ticker(instrument["ticker"])
+                        existing.yahoo_symbol = convert_ticker(instrument["ticker"], instrument["currencyCode"])
                         existing.isin = instrument["isin"]
                         existing.updated_at = datetime.now(TIMEZONE)
                         instruments.append(existing)
@@ -673,7 +679,7 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
                             t212_code=instrument["ticker"],
                             name=instrument["name"],
                             currency=instrument["currencyCode"],
-                            yahoo_symbol=convert_ticker(instrument["ticker"]),
+                            yahoo_symbol=convert_ticker(instrument["ticker"], instrument["currencyCode"]),
                             isin=instrument["isin"],
                         )
                         session.add(new_instrument)
