@@ -29,6 +29,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select
 
 from config import BATCH_SIZE_YF, HISTORY_YEARS, TIMEZONE, logger
+from data import STOCKS_DELISTED
 from models import Instrument, PricesDaily
 from scripts.optimize_glidepath import ETF_UNIVERSE, STOCK_UNIVERSE
 from scripts.update_data import _update_prices, get_session
@@ -66,7 +67,11 @@ def main() -> None:
 
     with get_session() as session:
         if args.all:
-            symbols = sorted({s for s in session.scalars(select(Instrument.yahoo_symbol)).all() if s})
+            # Same exclusion as update_prices: a delisted line returns nothing, or
+            # worse returns junk (PJXC.DE's frozen adj_close).
+            symbols = sorted(
+                {s for s in session.scalars(select(Instrument.yahoo_symbol)).all() if s and s not in STOCKS_DELISTED}
+            )
         elif args.symbols:
             symbols = list(dict.fromkeys(s.strip() for s in args.symbols.split(",") if s.strip()))
         else:

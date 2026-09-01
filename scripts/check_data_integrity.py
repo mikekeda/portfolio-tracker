@@ -57,6 +57,10 @@ FX_RATE_TOL = 0.02       # ratio must match the day's rate within 2%
 FX_REVERT_TOL = 0.05     # next close back within 5% of prev = transient junk row
 FX_INCEPTION_ROWS = 20   # series-start window where USD junk rows cluster
 
+# Exchange-wide shutdowns leave a hole in every symbol trading that venue, so the
+# gap is history, not a fetch failure. Keyed on the last session before reopening.
+MARKET_CLOSURES = {"2001-09-10": "2001-09-17"}  # 9/11: US markets shut, LSE stayed open
+
 # (name, description, fix hint, SQL) — every check is a plain read-only query
 # so it can be pasted into psql/pgAdmin unchanged when digging into a finding.
 CHECKS: list[tuple[str, str, str, str]] = [
@@ -242,13 +246,17 @@ CHECKS: list[tuple[str, str, str, str]] = [
         "Probe the window with yf.download(sym, start=prev_date, end=date). Rows with "
         "volume > 0 = real hole: refill with _update_prices(session, [sym], prev_date). "
         "Zero-volume or empty = the line didn't trade (NZM2.DE case), nothing to fix — "
-        "charts bridge the gap via connectNulls.",
-        """
+        "charts bridge the gap via connectNulls. Exchange shutdowns are excluded via "
+        "MARKET_CLOSURES; add a pair there rather than triaging one per symbol.",
+        f"""
         SELECT symbol, prev_date, date, date - prev_date AS gap_days
         FROM (SELECT symbol, date,
                      lag(date) OVER (PARTITION BY symbol ORDER BY date) AS prev_date
               FROM prices_daily) t
         WHERE date - prev_date > 6
+          AND (prev_date, date) NOT IN ({
+            ", ".join(f"(DATE '{a}', DATE '{b}')" for a, b in MARKET_CLOSURES.items())
+        })
         ORDER BY gap_days DESC
         """,
     ),
