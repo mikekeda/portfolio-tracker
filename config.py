@@ -85,7 +85,7 @@ SEC_USER_AGENT = get_env_var(
 PRICE_FIELD = "Adj Close"  # or "close_price" if you prefer raw closes
 BATCH_SIZE_YF = 50  # tickers per yahoo request
 REQUEST_RETRY = 5
-HISTORY_YEARS = 10
+HISTORY_YEARS = 25  # seed window for new tickers; scripts/backfill_prices.py reaches back for existing ones
 
 # Portfolio Configuration
 PATTERN_MULTI = re.compile(r"^(?P<sym>.+?)_(?P<tag>[A-Z]{2,3})$")

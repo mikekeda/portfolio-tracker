@@ -149,6 +149,10 @@ QUARTER_MATCH_TOLERANCE_DAYS = 15
 # batch always carries a usable close forward into the non-trading days.
 FX_LOOKBACK_DAYS = 7
 
+# PostgreSQL caps a statement at 65535 bind parameters and a price row binds 9,
+# so anything past ~7200 rows per INSERT is rejected outright.
+DB_CHUNK_ROWS = 5000
+
 _BAD_NUMERIC_STRINGS = frozenset({"infinity", "-infinity", "inf", "-inf", "nan"})
 
 # Static company facts from Yahoo's asset-profile module, which drops out of
@@ -704,10 +708,14 @@ def update_instruments(isins: set[tuple[str, str]]) -> list[Instrument]:
     return instruments
 
 
-def _update_prices(session: Session, tickers: list[str], start: date) -> None:
-    """Update price data from Yahoo Finance."""
+def _update_prices(session: Session, tickers: list[str], start: date) -> set[str]:
+    """Update price data from Yahoo Finance, returning the tickers that stored rows.
+
+    Tickers missing from the result got nothing back from Yahoo; an empty set
+    means the upsert failed and the open transaction was rolled back.
+    """
     if not tickers:
-        return None
+        return set()
 
     now = datetime.now(TIMEZONE)
 
@@ -731,10 +739,13 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
 
     # Bulk upsert
     all_price_data = []
+    stored: set[str] = set()
     for ticker in df.columns.get_level_values(0).unique():
         # Yahoo pads non-traded days on thin lines with NaN prices but Volume=0,
         # so dropna(how="all") let them through and stored NaN closes.
         tdf = df[ticker].dropna(subset=["Close", "Adj_Close"])
+        if not tdf.empty:
+            stored.add(ticker)
         for dt, row in tdf.iterrows():
             all_price_data.append(
                 {
@@ -750,8 +761,8 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
                 }
             )
 
-    if all_price_data:
-        insert_stmt = pg_insert(PricesDaily).values(all_price_data)
+    for offset in range(0, len(all_price_data), DB_CHUNK_ROWS):
+        insert_stmt = pg_insert(PricesDaily).values(all_price_data[offset : offset + DB_CHUNK_ROWS])
 
         # Define what to do ON CONFLICT (i.e., when symbol/date key exists)
         # We update the existing row with the new values
@@ -768,12 +779,15 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> None:
             },
         )
 
-        # Execute the single bulk statement
         try:
             session.execute(on_conflict_stmt)
         except Exception as e:
             logger.error("Failed to bulk upsert prices for %s: %s", tickers, e)
-            session.rollback()  # Rollback this batch
+            # Rolls back the whole open transaction, so callers must commit per batch.
+            session.rollback()
+            return set()
+
+    return stored
 
 
 def update_prices(tickers_to_add: set[str]) -> None:
