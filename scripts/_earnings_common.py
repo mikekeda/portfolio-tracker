@@ -76,6 +76,10 @@ def _get_genai_client() -> genai.Client:
 class EPSGuidance(BaseModel):
     """EPS guidance is most important for stock price (Price = EPS × PE)."""
 
+    unit: str | None = Field(
+        None,
+        description="Stated EPS unit: ISO currency code (USD, EUR, GBP, etc.), GBp for UK pence or USc for US cents. Null when not stated; never infer from the listing currency.",
+    )
     next_quarter: float | None = Field(None, description="EPS guidance for next quarter")
     next_year: float | None = Field(None, description="EPS guidance for full year")
     growth_pct: float | None = Field(None, description="Implied YoY growth percentage from guidance")
@@ -84,6 +88,10 @@ class EPSGuidance(BaseModel):
 class RevenueGuidance(BaseModel):
     """Revenue guidance for forward periods."""
 
+    currency: str | None = Field(
+        None,
+        description="Reporting currency explicitly stated for revenue guidance, as an ISO code (USD, EUR, GBP, etc.). Null when not stated; do not convert amounts.",
+    )
     next_quarter: float | None = Field(None, description="Revenue guidance for next quarter in millions")
     next_year: float | None = Field(None, description="Revenue guidance for full year in millions")
     growth_pct: float | None = Field(None, description="Implied growth percentage")
@@ -287,8 +295,9 @@ on a compounder with an intact moat is not an `avoid`.
 1. **Guidance (MOST IMPORTANT - REQUIRED):**
    - Scan ALL of: "Outlook", "Guidance", "Forecast", "Expectations", "Financial Outlook", "Business Outlook", "Looking Ahead", MD&A forward-looking sections.
    - **EPS guidance** (currency-neutral; preserve the report's stated unit — UK companies often quote EPS in pence, e.g. "178.5p"): patterns like "expects EPS of X.XX", "forecasts EPS between X and Y", "diluted EPS guidance of X.XX–Y.YY".
+     Record eps_guidance.unit explicitly (e.g. USD, EUR, GBP, GBp for pence, USc for cents). Leave it null when not stated.
      Calculate growth_pct vs prior year actual EPS if available.
-   - **Revenue guidance**: extract in millions for next quarter and full year; calculate growth_pct if prior period available.
+   - **Revenue guidance**: extract in millions for next quarter and full year; record revenue_guidance.currency as the stated ISO currency code, without conversion or guessing from the listing. Calculate growth_pct if prior period available.
    - **Operating margin guidance**: capture if stated explicitly (e.g. "operating margin of approximately 20%", "adjusted EBIT margin ~15%").
    - **Outlook commentary**: if no specific numbers exist, write 1–2 sentences
      summarising management's qualitative forward outlook

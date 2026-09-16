@@ -94,7 +94,7 @@ function buildMgrSection(label, mgrs, direction) {
           <tr>
             <th>Manager</th>
             <th>Change</th>
-            {hasValChg && <th>Value Δ</th>}
+            {hasValChg && <th title="Share change valued at quarter-end price; actual execution prices are not reported">Est. flow</th>}
             {hasValChg && <th>% Fund</th>}
           </tr>
         </thead>
@@ -819,7 +819,7 @@ const Form13FOverview = () => {
 
 // ─── Moves section ────────────────────────────────────────────────────────────
 
-const PositionCard = ({ position }) => {
+export const PositionCard = ({ position }) => {
   const isLinked = !!position.yahoo_symbol;
   const nameEl = isLinked ? (
     <Link className="pos-ticker-link" to={`/stock/${encodeURIComponent(position.yahoo_symbol)}`}>
@@ -843,9 +843,9 @@ const PositionCard = ({ position }) => {
         {position.pct_of_portfolio != null && (
           <span className="pos-pct">{position.pct_of_portfolio}% of fund</span>
         )}
-        {position.value_change != null && (
-          <span className={`pos-value-change ${position.value_change >= 0 ? 'positive' : 'negative'}`}>
-            {formatValueChange(position.value_change)}
+        {position.estimated_flow != null && (
+          <span title="Estimated net share change valued at the quarter-end price; not actual trade proceeds" className={`pos-value-change ${position.estimated_flow >= 0 ? 'positive' : 'negative'}`}>
+            Est. flow {formatValueChange(position.estimated_flow)}
           </span>
         )}
       </div>
@@ -996,7 +996,7 @@ const PortfolioTable = ({ portfolio }) => {
               <SortHeader label="% Fund"     field="pct_of_portfolio" sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="Shares"     field="shares"          sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
               <SortHeader label="QoQ Change" field="change_sort"     sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <SortHeader label="Value Δ"    field="value_change"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <SortHeader label="Market value Δ"    field="value_change"    sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
             </tr>
           </thead>
           <tbody>

@@ -5,12 +5,16 @@ functions, and the DB query helper used across multiple views.
 
 from collections import defaultdict
 from datetime import date
+from math import isfinite
 from typing import Optional, TypedDict
+from types import SimpleNamespace
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import Form13FFiling, Form13FHolding, Form13FManager
+from models import Form13FFiling, Form13FHolding, Form13FManager, Instrument, InstrumentYahoo
+
+from backend.utils.form13f_actions import HON_CUSIPS, quantity_split_history
 
 # Thresholds (USD for value, % for change)
 FORM13F_MIN_AUM_PCT_NEW = 0.1  # 0.1% of AUM minimum for new position signal
@@ -42,6 +46,7 @@ class Form13FHolder(TypedDict):
     report_date: str | None
     shares: int | None
     shares_prev: int | None
+    shares_prev_adjusted: float | None
     value: int | None
     value_prev: int | None
     scored: bool
@@ -68,36 +73,74 @@ class Form13FFilingRow(TypedDict):
     filing_total_value: int
 
 
-def _safe_pct(value: int, value_prev: int | None, shares: int, shares_prev: int) -> float:
-    """
-    Compute QoQ % change using value-based calculation where possible.
+def split_adjusted_shares(
+    shares: float | None, splits: dict | None, previous_date: date | None, report_date: date
+) -> float | None:
+    """Restate shares using quantity_split_history's verified/common share factors."""
+    if shares is None or shares == 0 or previous_date is None:
+        return shares
+    adjusted = shares
+    for stamp, factor in (splits or {}).items():
+        try:
+            split_date = date.fromisoformat(str(stamp)[:10])
+        except ValueError:
+            continue
+        if previous_date < split_date <= report_date:
+            if not isinstance(factor, (int, float)) or isinstance(factor, bool) or not isfinite(factor) or factor <= 0:
+                return None  # Corporate action needs verification; withhold the comparison.
+            adjusted *= factor
+    return adjusted
 
-    Value-based is preferred (split-adjusted), but DB unit inconsistencies can occur
-    (e.g. one quarter stored in thousands, another in dollars).  When the share-based
-    direction contradicts value-based by a large margin we fall back to share-based.
-    """
-    pct_shares = (shares - shares_prev) / shares_prev * 100
-    if not (value and value_prev):
-        return pct_shares
-    pct_value = (value - value_prev) / value_prev * 100
-    # Sanity-check: if both agree on direction, trust value-based (split-adjusted).
-    # If they disagree on sign (unit mismatch in DB), trust share-based.
-    if (pct_value >= 0) == (pct_shares >= 0):
-        return pct_value
-    return pct_shares
+
+async def load_split_history(session: AsyncSession, instrument_ids) -> dict[int, dict]:
+    """One bulk read; never fetch Yahoo while serving a 13F view."""
+    if not instrument_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(Instrument.id, InstrumentYahoo.splits, Instrument.yahoo_symbol)
+            .outerjoin(InstrumentYahoo, Instrument.id == InstrumentYahoo.instrument_id).where(
+                Instrument.id.in_(instrument_ids)
+            )
+        )
+    ).all()
+    return {iid: quantity_split_history(splits, symbol) for iid, splits, symbol in rows}
+
+
+def resolved_holding_instrument_id():
+    """Resolve the verified HON CUSIP transition without rewriting source filings."""
+    hon_id = select(func.min(Instrument.id)).where(Instrument.yahoo_symbol == "HON").scalar_subquery()
+    return func.coalesce(
+        Form13FHolding.instrument_id,
+        case((func.upper(Form13FHolding.cusip).in_(HON_CUSIPS), hon_id)),
+    )
+
+
+async def load_form13f_holdings(session: AsyncSession, filing_ids) -> list:
+    rows = (await session.execute(
+        select(Form13FHolding, resolved_holding_instrument_id().label("resolved_id"))
+        .where(Form13FHolding.filing_id.in_(filing_ids))
+    )).all()
+    # Read-only projections: never dirty ORM entities while resolving aliases.
+    return [SimpleNamespace(
+        filing_id=h.filing_id, cusip=h.cusip, issuer=h.issuer,
+        shares=h.shares, value=h.value, instrument_id=iid,
+    ) for h, iid in rows]
+
+
+def _safe_pct(shares: int, shares_prev: float) -> float:
+    """Quantity change only; prior shares must use the current share basis."""
+    return (shares - shares_prev) / shares_prev * 100
 
 
 def _compute_form13f_change(
     shares: int,
-    shares_prev: int | None,
-    value: int = 0,
-    value_prev: int | None = None,
+    shares_prev: float | None,
 ) -> str:
     """
     Compute the quarter-over-quarter change label for a 13F position.
 
-    Uses value-based % when both values are available (split-adjusted).
-    Falls back to share-based % when value data is missing.
+    Uses share-count change, with previous shares already split-adjusted by the caller.
 
     Returns: "—" (no prior data), "New", "Closed", or "+X.X%".
     """
@@ -107,13 +150,13 @@ def _compute_form13f_change(
         return "Closed"
     if shares_prev == 0:
         return "New"
-    pct = _safe_pct(value, value_prev, shares, shares_prev)
+    pct = _safe_pct(shares, shares_prev)
     return f"{pct:+.1f}%"
 
 
 def _compute_form13f_signal_score(
     shares: int,
-    shares_prev: int | None,
+    shares_prev: float | None,
     value: int = 0,
     value_prev: int | None = None,
     filing_total_value: int | None = None,
@@ -121,8 +164,7 @@ def _compute_form13f_signal_score(
     """
     Compute per-holder 13F signal score (-2 to +2).
 
-    Uses value-based % change when both values are available and directionally consistent
-    (split-adjusted). Falls back to share-based % on DB unit inconsistency.
+    Uses split-adjusted share-count change; value only sets the conviction floor.
 
     Score rules (contiguous, no gaps):
       +2: New (pct AUM >= 0.1%); or increase ≥1000% with pct AUM >= 0.1%
@@ -140,7 +182,7 @@ def _compute_form13f_signal_score(
         return -2
     if shares_prev == 0:
         return 2 if pct_aum >= FORM13F_MIN_AUM_PCT_NEW else 0
-    pct = _safe_pct(value, value_prev, shares, shares_prev)
+    pct = _safe_pct(shares, shares_prev)
     if pct >= FORM13F_INCREASE_EFFECTIVE_NEW:
         return 2 if pct_aum >= FORM13F_MIN_AUM_PCT_NEW else (1 if pct_aum >= FORM13F_MIN_AUM_PCT_INCREASE else 0)
     if pct <= FORM13F_TRIM_EFFECTIVE_LIQUIDATION:
@@ -183,7 +225,7 @@ def _score_reason(
     if score != 0:
         return None  # contributing to score — no explanation needed
     if change == "—":
-        return "no prior quarter for comparison"
+        return "no comparable prior shares (missing history or unverified corporate action)"
 
     pct_aum = (value / filing_total_value * 100) if (filing_total_value and filing_total_value > 0) else 0.0
     if change == "New" and pct_aum < FORM13F_MIN_AUM_PCT_NEW:
@@ -211,7 +253,7 @@ async def _get_form13f_for_instruments(
     Get 13F score and holders for each instrument.
 
     Score aggregation:
-    1. Per-holder score: -2 to +2 from raw share counts (see _compute_form13f_signal_score)
+    1. Per-holder score: -2 to +2 from split-adjusted share counts (see _compute_form13f_signal_score)
     2. Exclude score=0 holders (no prior data or stable — no directional signal)
     3. Conviction-weighted average: weight = value / filing_total_value (treats funds equally by commitment %)
     4. Clamp to [-2, 2], round to 1 decimal
@@ -221,12 +263,13 @@ async def _get_form13f_for_instruments(
     if not instrument_ids:
         return {}
 
+    splits_by_id = await load_split_history(session, instrument_ids)
     rows = (
         await session.execute(
-            select(Form13FHolding, Form13FFiling, Form13FManager)
+            select(Form13FHolding, Form13FFiling, Form13FManager, resolved_holding_instrument_id())
             .join(Form13FFiling, Form13FHolding.filing_id == Form13FFiling.id)
             .join(Form13FManager, Form13FFiling.manager_id == Form13FManager.id)
-            .where(Form13FHolding.instrument_id.in_(instrument_ids))
+            .where(resolved_holding_instrument_id().in_(instrument_ids))
         )
     ).all()
 
@@ -246,11 +289,11 @@ async def _get_form13f_for_instruments(
     current_ids, _ = current_manager_ids({mid: dates[0] for mid, dates in manager_filing_dates.items()})
 
     by_manager_filing: dict[tuple[int, int, int], dict[str, str | int | date | None]] = {}
-    for holding, filing, manager in rows:
-        key = (holding.instrument_id, manager.id, filing.id)
+    for holding, filing, manager, iid in rows:
+        key = (iid, manager.id, filing.id)
         if key not in by_manager_filing:
             by_manager_filing[key] = {
-                "instrument_id": holding.instrument_id,
+                "instrument_id": iid,
                 "manager_name": manager.name,
                 "manager_id": manager.id,
                 "report_date": filing.report_date,
@@ -284,9 +327,13 @@ async def _get_form13f_for_instruments(
             shares_prev = None
             value_prev = None
 
+        shares_prev_reported = shares_prev
+        shares_prev = split_adjusted_shares(
+            shares_prev, splits_by_id.get(iid), prev["report_date"] if prev else None, latest["report_date"]
+        )
         shares = latest["shares"]
         filing_total = latest["filing_total_value"] or 0
-        change = _compute_form13f_change(shares, shares_prev, value=latest["value"], value_prev=value_prev)
+        change = _compute_form13f_change(shares, shares_prev)
         score = _compute_form13f_signal_score(shares, shares_prev, value=latest["value"], value_prev=value_prev, filing_total_value=filing_total)
         conviction = latest["value"] / filing_total if filing_total > 0 else 0.0
         by_instrument[iid].append(
@@ -302,7 +349,8 @@ async def _get_form13f_for_instruments(
                 "filing_total_value": filing_total,
                 "report_date": latest["report_date"].isoformat() if latest.get("report_date") else None,
                 "shares": latest["shares"],
-                "shares_prev": shares_prev,
+                "shares_prev": shares_prev_reported,
+                "shares_prev_adjusted": shares_prev,
             }
         )
 
@@ -322,6 +370,7 @@ async def _get_form13f_for_instruments(
                     "report_date": h.get("report_date"),
                     "shares": h.get("shares"),
                     "shares_prev": h.get("shares_prev"),
+                    "shares_prev_adjusted": h.get("shares_prev_adjusted"),
                     "value": h.get("value"),
                     "value_prev": h.get("value_prev"),
                     "scored": id(h) in scoring_set,

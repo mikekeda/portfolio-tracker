@@ -585,7 +585,7 @@ const PORTFOLIO_INDICATOR_CONFIGS = {
     referenceLines: [],
   },
   profit: {
-    label: 'Total Profit',
+    label: 'Open-position P/L',
     yFormatter: v => `£${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
     color: '#28a745',
     area: true,
@@ -594,7 +594,7 @@ const PORTFOLIO_INDICATOR_CONFIGS = {
     ],
   },
   return_pct: {
-    label: 'Total Return',
+    label: 'P/L / current cost basis',
     yFormatter: v => `${v?.toFixed(2)}%`,
     color: '#9b59b6',
     area: true,
@@ -977,7 +977,7 @@ const Dashboard = () => {
                 <ChartIcon />
               </button>
             )}
-            <h3>Total Profit</h3>
+            <h3 title="Unrealized profit or loss on open positions; excludes realized gains, dividends and interest.">Open-position P/L</h3>
             <p className={`value ${summary.total_profit >= 0 ? 'positive' : 'negative'}`}>
               {hideAmounts ? MASK : `£${summary.total_profit.toLocaleString()}`}
             </p>
@@ -993,7 +993,7 @@ const Dashboard = () => {
             )}>
               <ChartIcon />
             </button>
-            <h3>Total Return</h3>
+            <h3 title="Realized plus unrealized P/L divided by the current invested cost basis. This is not the account’s lifetime or annualized return.">P/L / current cost basis</h3>
             <p className={`value ${summary.total_return_pct >= 0 ? 'positive' : 'negative'}`}>
               {summary.total_return_pct >= 0 ? '+' : ''}{summary.total_return_pct.toFixed(2)}%
             </p>

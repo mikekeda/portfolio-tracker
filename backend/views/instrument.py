@@ -15,6 +15,8 @@ from backend.utils.etf_aggregates import MIN_COVERAGE
 from backend.utils.fcf import trailing_fcf
 from backend.utils.form13f import (
     Form13FFilingRow,
+    split_adjusted_shares,
+    resolved_holding_instrument_id,
     _build_sec_13f_url,
     _compute_form13f_change,
     _compute_form13f_signal_score,
@@ -28,6 +30,7 @@ from backend.utils.roic import get_roic
 from backend.views._etf_overlay import apply_derived_to_instrument, fund_derived_metrics
 from backend.views._shared import get_rates, statement_to_quote_factor
 from config import BENCHES, PRICE_FIELD, TIMEZONE
+from backend.utils.form13f_actions import quantity_split_history
 from models import (
     EtfHolding,
     FeaturesDaily,
@@ -358,7 +361,7 @@ async def get_instrument(
         select(Form13FHolding, Form13FFiling, Form13FManager)
         .join(Form13FFiling, Form13FHolding.filing_id == Form13FFiling.id)
         .join(Form13FManager, Form13FFiling.manager_id == Form13FManager.id)
-        .where(Form13FHolding.instrument_id == instrument.id)
+        .where(resolved_holding_instrument_id() == instrument.id)
     )
     rows = holdings_result.all()
 
@@ -419,7 +422,14 @@ async def get_instrument(
             shares_prev = None
             value_prev_h = None
 
-        change = _compute_form13f_change(latest["shares"], shares_prev, value=latest["value"], value_prev=value_prev_h)
+        shares_prev_reported = shares_prev
+        shares_prev = split_adjusted_shares(
+            shares_prev,
+            quantity_split_history(instrument.yahoo.splits if instrument.yahoo else {}, instrument.yahoo_symbol),
+            prev["report_date"] if prev else None,
+            latest["report_date"],
+        )
+        change = _compute_form13f_change(latest['shares'], shares_prev)
         report_date_prev = prev["report_date"].isoformat() if prev else None
         filing_total = latest.get("filing_total_value") or 0
         pct_of_portfolio = (latest["value"] / filing_total * 100) if filing_total > 0 else None
@@ -442,7 +452,8 @@ async def get_instrument(
                 "value_prev": value_prev_h,
                 "pct_of_portfolio": round(pct_of_portfolio, 2) if pct_of_portfolio is not None else None,
                 "shares": latest["shares"],
-                "shares_prev": shares_prev,
+                "shares_prev": shares_prev_reported,
+                "shares_prev_adjusted": shares_prev,
                 "report_date": latest["report_date"].isoformat(),
                 "report_date_prev": report_date_prev,
                 "change": change,
@@ -456,7 +467,7 @@ async def get_instrument(
     # then unscored holders by current value descending.
     def _abs_flow(h: dict) -> float:
         shares = h.get("shares") or 0
-        shares_prev = h.get("shares_prev")
+        shares_prev = h.get("shares_prev_adjusted")
         value = h.get("value") or 0
         if shares_prev is None:
             return 0.0

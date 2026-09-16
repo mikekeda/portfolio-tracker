@@ -1,4 +1,6 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
+import { markdownToHtml, formatGuidance } from '../utils/reportFormatting';
+import { holderFlow } from '../utils/form13f';
 import PropTypes from 'prop-types';
 import {Link, useNavigate, useParams} from 'react-router-dom';
 import {portfolioAPI} from '../services/api';
@@ -367,39 +369,6 @@ const withinCutoff = (rows, cutoff) => {
 
 
 // Convert markdown to HTML (handles headers, bold, lists)
-const markdownToHtml = (markdown) => {
-  if (!markdown) return '';
-  const bold = (s) => s.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  const lines = markdown.split('\n');
-  const output = [];
-  let inList = false;
-
-  for (const line of lines) {
-    if (line.startsWith('### ')) {
-      if (inList) { output.push('</ul>'); inList = false; }
-      output.push(`<h3>${bold(line.slice(4))}</h3>`);
-    } else if (line.startsWith('## ')) {
-      if (inList) { output.push('</ul>'); inList = false; }
-      output.push(`<h2>${bold(line.slice(3))}</h2>`);
-    } else if (line.startsWith('# ')) {
-      if (inList) { output.push('</ul>'); inList = false; }
-      output.push(`<h1>${bold(line.slice(2))}</h1>`);
-    } else if (/^[\s]*[-*] /.test(line)) {
-      const content = line.replace(/^[\s]*[-*] /, '');
-      if (!inList) { output.push('<ul>'); inList = true; }
-      output.push(`<li>${bold(content)}</li>`);
-    } else if (line.trim()) {
-      if (inList) { output.push('</ul>'); inList = false; }
-      output.push(`<p>${bold(line)}</p>`);
-    } else {
-      if (inList) { output.push('</ul>'); inList = false; }
-    }
-  }
-  if (inList) output.push('</ul>');
-
-  return output.join('\n');
-};
-
 // ── Symbol switcher ───────────────────────────────────────────────────────────
 
 const SymbolSwitcher = ({ currentSymbol }) => {
@@ -1730,11 +1699,7 @@ const Stock = () => {
             // Summary counts + net flow
             const buyCount  = holdings.filter(h => h.scored && (h.change === 'New' || (h.change !== 'Closed' && h.change !== '—' && parseFloat(h.change) > 0))).length;
             const sellCount = holdings.filter(h => h.scored && (h.change === 'Closed' || (h.change !== 'New' && h.change !== '—' && parseFloat(h.change) < 0))).length;
-            const netFlow   = holdings.reduce((sum, h) => {
-              if (h.shares == null || h.value == null || h.shares_prev == null) return sum;
-              const price = h.shares > 0 ? h.value / h.shares : 0;
-              return sum + (h.shares - h.shares_prev) * price;
-            }, 0);
+            const netFlow = holdings.reduce((sum, h) => sum + (holderFlow(h) ?? 0), 0);
             const formatFlow = (n) => {
               const abs = Math.abs(n);
               const sign = n >= 0 ? '+' : '−';
@@ -1761,7 +1726,7 @@ const Stock = () => {
                   <span className="form13f-summary-hold">{holdings.length - buyCount - sellCount} unchanged</span>
                   {netFlow !== 0 && (
                     <span className={`form13f-summary-flow ${netFlow > 0 ? 'positive' : 'negative'}`}>
-                      {formatFlow(netFlow)} net flow
+                      {formatFlow(netFlow)} estimated net flow
                     </span>
                   )}
                 </div>
@@ -1770,17 +1735,17 @@ const Stock = () => {
                     const scored = h.scored !== false;
                     // Detect boundary: first noise row that follows at least one scored row
                     const isFirstNoise = !scored && idx > 0 && holdings[idx - 1]?.scored !== false;
-                    const flow = (h.shares != null && h.value != null && h.shares_prev != null)
-                      ? (h.shares - h.shares_prev) * (h.shares > 0 ? h.value / h.shares : 0)
-                      : null;
+                    const flow = holderFlow(h);
                     const tooltipParts = [`Report date: ${h.report_date}`];
                     if (h.shares_prev != null)
                       tooltipParts.push(`Shares: ${h.shares_prev.toLocaleString()} → ${h.shares?.toLocaleString() ?? '-'}`);
                     else
                       tooltipParts.push(`Shares: ${h.shares?.toLocaleString() ?? '-'}`);
+                    if (h.shares_prev_adjusted != null && h.shares_prev_adjusted !== h.shares_prev)
+                      tooltipParts.push(`Previous shares on current split basis: ${h.shares_prev_adjusted.toLocaleString()}`);
                     if (h.report_date_prev) tooltipParts.push(`Prev report: ${h.report_date_prev}`);
                     if (!scored && h.score_reason) tooltipParts.push(`Not scored: ${h.score_reason}`);
-                    if (flow != null && flow !== 0) tooltipParts.push(`Flow: ${formatFlow(flow)}`);
+                    if (flow != null && flow !== 0) tooltipParts.push(`Estimated flow at quarter-end price: ${formatFlow(flow)}`);
 
                     const valueDisplay = h.pct_of_portfolio != null
                       ? `$${formatShort(h.value)} (${h.pct_of_portfolio}%)`
@@ -2523,7 +2488,7 @@ const Stock = () => {
                 </div>
               )}
 
-              {(epsGuidance.next_quarter || epsGuidance.next_year || revenueGuidance.next_quarter || revenueGuidance.next_year || guidance.operating_margin_guidance != null || guidance.outlook_commentary) && (
+              {(epsGuidance.next_quarter != null || epsGuidance.next_year != null || revenueGuidance.next_quarter != null || revenueGuidance.next_year != null || guidance.operating_margin_guidance != null || guidance.outlook_commentary) && (
                 <div className="earnings-guidance">
                   <h5>
                     Guidance
@@ -2537,10 +2502,10 @@ const Stock = () => {
                     )}
                   </h5>
                   <div className="guidance-metrics">
-                    {epsGuidance.next_year && (
+                    {epsGuidance.next_year != null && (
                       <div className="guidance-metric">
                         <span className="guidance-label">EPS (Full Year):</span>
-                        <span className="guidance-value">${epsGuidance.next_year.toFixed(2)}</span>
+                        <span className="guidance-value">{formatGuidance(epsGuidance.next_year, epsGuidance.unit)}</span>
                         {epsGuidance.growth_pct != null && (
                           <span className={`guidance-growth ${epsGuidance.growth_pct >= 0 ? 'positive' : 'negative'}`}>
                             {epsGuidance.growth_pct >= 0 ? '+' : ''}{epsGuidance.growth_pct.toFixed(1)}%
@@ -2548,22 +2513,22 @@ const Stock = () => {
                         )}
                       </div>
                     )}
-                    {epsGuidance.next_quarter && (
+                    {epsGuidance.next_quarter != null && (
                       <div className="guidance-metric">
                         <span className="guidance-label">EPS (Next Q):</span>
-                        <span className="guidance-value">${epsGuidance.next_quarter.toFixed(2)}</span>
+                        <span className="guidance-value">{formatGuidance(epsGuidance.next_quarter, epsGuidance.unit)}</span>
                       </div>
                     )}
-                    {revenueGuidance.next_quarter && (
+                    {revenueGuidance.next_quarter != null && (
                       <div className="guidance-metric">
                         <span className="guidance-label">Revenue (Next Q):</span>
-                        <span className="guidance-value">${(revenueGuidance.next_quarter / 1000).toFixed(2)}B</span>
+                        <span className="guidance-value">{formatGuidance(revenueGuidance.next_quarter, revenueGuidance.currency, true)}</span>
                       </div>
                     )}
-                    {revenueGuidance.next_year && (
+                    {revenueGuidance.next_year != null && (
                       <div className="guidance-metric">
                         <span className="guidance-label">Revenue (FY):</span>
-                        <span className="guidance-value">${(revenueGuidance.next_year / 1000).toFixed(2)}B</span>
+                        <span className="guidance-value">{formatGuidance(revenueGuidance.next_year, revenueGuidance.currency, true)}</span>
                         {revenueGuidance.growth_pct != null && (
                           <span className={`guidance-growth ${revenueGuidance.growth_pct >= 0 ? 'positive' : 'negative'}`}>
                             {revenueGuidance.growth_pct >= 0 ? '+' : ''}{revenueGuidance.growth_pct.toFixed(1)}%

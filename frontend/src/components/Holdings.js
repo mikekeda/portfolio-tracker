@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { Link } from 'react-router-dom';
 import { portfolioAPI } from '../services/api';
+import { holderFlow } from '../utils/form13f';
 import {
   useReactTable,
   getCoreRowModel,
@@ -153,20 +154,12 @@ function formatHolderShares(val) {
   return n.toLocaleString();
 }
 
-/**
- * Net flow for a single holder: (shares_change × price_at_report).
- * Matches the highlights endpoint formula exactly — measures trading activity
- * only, not price appreciation. value_prev is intentionally NOT used here.
- * Returns null when shares or shares_prev are unknown.
- */
-function holderFlow(h) {
-  if (h.shares == null || h.value == null || h.shares_prev == null) return null;
-  const priceNow = h.shares > 0 ? h.value / h.shares : 0;
-  return (h.shares - h.shares_prev) * priceNow;
-}
 
 function buildHolderTooltip(h) {
   const lines = [h.name, `Change: ${h.change}`];
+  if (h.shares_prev_adjusted != null && h.shares_prev_adjusted !== h.shares_prev) {
+    lines.push(`Previous shares on current split basis: ${formatHolderShares(h.shares_prev_adjusted)}`);
+  }
   if (h.report_date) lines.push(`Report date: ${h.report_date}`);
   if (h.shares != null && h.shares_prev != null) {
     lines.push(`Shares: ${formatHolderShares(h.shares_prev)} → ${formatHolderShares(h.shares)}`);

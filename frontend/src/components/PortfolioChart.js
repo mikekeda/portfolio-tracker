@@ -332,7 +332,7 @@ const PortfolioChart = ({ selectedPeriod, movers, moversError }) => {
         </div>
 
         <div className="chart-panel">
-          <h3>Total Return (%)</h3>
+          <h3>Time-weighted return (%)</h3>
           <ResponsiveContainer width="100%" height={220} key={`line-${timeRange}`}>
             <LineChart data={chartData || []} isAnimationActive={false}>
               <CartesianGrid strokeDasharray="3 3" />

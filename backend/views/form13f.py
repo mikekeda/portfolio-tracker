@@ -11,8 +11,13 @@ from backend.utils.form13f import (
     _compute_form13f_change,
     _compute_form13f_signal_score,
     _safe_pct,
+    load_split_history,
+    load_form13f_holdings,
+    resolved_holding_instrument_id,
+    split_adjusted_shares,
     current_manager_ids,
 )
+from backend.utils.form13f_actions import canonical_cusip
 from models import Form13FFiling, Form13FHolding, Form13FManager, HoldingDaily, Instrument
 
 router = APIRouter()
@@ -33,10 +38,10 @@ def _aggregate_holdings_by_cusip(holdings: list) -> dict[str, dict]:
     for h in holdings:
         # Upper-cased so a filer's lower-case CUSIP cannot split one name into two entries;
         # the writer normalises too, this is the guard if a future one does not.
-        cusip = h.cusip.upper()
+        cusip = canonical_cusip(h.cusip)
         if cusip not in by_cusip:
             by_cusip[cusip] = {
-                "cusip": cusip,
+                "cusip": h.cusip.upper(),
                 "issuer": h.issuer,
                 "value": 0,
                 "shares": 0,
@@ -51,20 +56,34 @@ def _aggregate_holdings_by_cusip(holdings: list) -> dict[str, dict]:
     return by_cusip
 
 
+def _adjust_previous_holdings(
+    previous: dict, splits_by_id: dict, previous_date: date_type | None, report_date: date_type
+) -> dict:
+    """Keep filed quantities available while comparing quantities on one basis."""
+    return {
+        key: {
+            **item,
+            "shares_reported": item["shares"],
+            "shares": split_adjusted_shares(
+                item["shares"], splits_by_id.get(item["instrument_id"]), previous_date, report_date
+            ),
+        }
+        for key, item in previous.items()
+    }
+
+
 def _change_sort_value(
     shares: int,
     shares_prev: Optional[int],
-    value: int = 0,
-    value_prev: Optional[int] = None,
 ) -> float:
-    """Numeric sort key for QoQ change: New=+1e9, Closed=-1e9, else value-based %."""
+    """Numeric sort key for QoQ change: New=+1e9, Closed=-1e9, else split-adjusted share %."""
     if shares_prev is None:
         return 0.0
     if shares == 0:
         return -1.0e9
     if shares_prev == 0:
         return 1.0e9
-    return _safe_pct(value, value_prev, shares, shares_prev)
+    return _safe_pct(shares, shares_prev)
 
 
 def _build_portfolio_and_moves(
@@ -93,14 +112,14 @@ def _build_portfolio_and_moves(
             value_prev = None
 
         value_change = (item["value"] - value_prev) if value_prev is not None else None
-        change = _compute_form13f_change(item["shares"], shares_prev, value=item["value"], value_prev=value_prev)
+        change = _compute_form13f_change(item['shares'], shares_prev)
 
         instr = instruments.get(item["instrument_id"])
         pct = item["value"] / total_value * 100 if total_value else 0.0
 
         portfolio.append(
             {
-                "cusip": cusip,
+                "cusip": item.get("cusip", cusip),
                 "issuer": item["issuer"],
                 "yahoo_symbol": instr.yahoo_symbol if instr else None,
                 "name": instr.name if instr else item["issuer"],
@@ -108,12 +127,16 @@ def _build_portfolio_and_moves(
                 "shares": item["shares"],
                 "pct_of_portfolio": round(pct, 2),
                 "change": change,
-                "change_sort": _change_sort_value(
-                    item["shares"], shares_prev, value=item["value"], value_prev=value_prev
-                ),
+                "change_sort": _change_sort_value(item['shares'], shares_prev),
                 "value_change": value_change,
                 "value_prev": value_prev,
-                "shares_prev": shares_prev,
+                "shares_prev": prev.get("shares_reported", shares_prev) if prev else shares_prev,
+                "shares_prev_adjusted": shares_prev,
+                "estimated_flow": (
+                    ((item["shares"] - shares_prev) * item["value"] / item["shares"])
+                    if shares_prev is not None and item["shares"]
+                    else None
+                ),
             }
         )
 
@@ -128,14 +151,15 @@ def _build_portfolio_and_moves(
             instr = instruments.get(prev["instrument_id"])
             closed.append(
                 {
-                    "cusip": cusip,
+                    "cusip": prev.get("cusip", cusip),
                     "issuer": prev["issuer"],
                     "yahoo_symbol": instr.yahoo_symbol if instr else None,
                     "name": instr.name if instr else prev["issuer"],
                     "value": 0,
                     "value_prev": prev["value"],
                     "shares": 0,
-                    "shares_prev": prev["shares"],
+                    "shares_prev": prev.get("shares_reported", prev["shares"]),
+                    "shares_prev_adjusted": prev["shares"],
                     "change": "Closed",
                     "change_sort": -1.0e9,
                     "value_change": -prev["value"],
@@ -150,13 +174,13 @@ def _build_portfolio_and_moves(
     )
     existing = [p for p in portfolio if p["change"] not in ("New", "Closed", "—")]
     all_buys = sorted(
-        [p for p in existing if (p["value_change"] or 0) > 0],
-        key=lambda x: x["value_change"],
+        [p for p in existing if p["change_sort"] > 0],
+        key=lambda x: x["estimated_flow"] or 0,
         reverse=True,
     )
     all_sells = sorted(
-        [p for p in existing if (p["value_change"] or 0) < 0],
-        key=lambda x: x["value_change"],
+        [p for p in existing if p["change_sort"] < 0],
+        key=lambda x: x["estimated_flow"] or 0,
     )
 
     moves = {
@@ -215,8 +239,10 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
             prev_ids[mid] = mf[1].id
 
     relevant_ids = list(set(latest_ids.values()) | set(prev_ids.values()))
-    holdings_result = await session.execute(select(Form13FHolding).where(Form13FHolding.filing_id.in_(relevant_ids)))
-    all_holdings = holdings_result.scalars().all()
+    all_holdings = await load_form13f_holdings(session, relevant_ids)
+    splits_by_id = await load_split_history(
+        session, {h.instrument_id for h in all_holdings if h.instrument_id is not None}
+    )
 
     instrument_ids = {h.instrument_id for h in all_holdings if h.instrument_id is not None}
     instruments: dict[int, Any] = {}
@@ -239,6 +265,10 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
         latest_by_cusip = _aggregate_holdings_by_cusip(holdings_by_filing.get(latest_ids[mid], []))
         prev_by_cusip = (
             _aggregate_holdings_by_cusip(holdings_by_filing.get(prev_ids[mid], [])) if mid in prev_ids else {}
+        )
+
+        prev_by_cusip = _adjust_previous_holdings(
+            prev_by_cusip, splits_by_id, mf[1].report_date if len(mf) > 1 else None, mf[0].report_date
         )
 
         # Most held (count every manager that holds this stock currently)
@@ -281,11 +311,9 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
             # These produce misleading 0-value entries since price cannot be inferred.
             if item["value"] == 0:
                 continue
-            change = _compute_form13f_change(
-                item["shares"], shares_prev, value=item["value"], value_prev=value_prev_buy
-            )
+            change = _compute_form13f_change(item['shares'], shares_prev)
             # Capital deployed = shares added × current quarter-end price.
-            # This is independent of stock price movement and shows actual money spent.
+            # Estimated at quarter-end price; actual execution prices are not reported.
             price_now = item["value"] / item["shares"] if item["shares"] else 0
             shares_added = item["shares"] - shares_prev
             transaction_value = round(shares_added * price_now)  # always positive for buys
@@ -332,16 +360,11 @@ async def get_form13f_highlights(session: AsyncSession = Depends(get_db_session)
                 )
                 if score >= 0:
                     continue
-                change = _compute_form13f_change(
-                    latest_item["shares"],
-                    prev_item["shares"],
-                    value=latest_item["value"],
-                    value_prev=prev_item["value"],
-                )
+                change = _compute_form13f_change(latest_item['shares'], prev_item['shares'])
                 instr_id = latest_item["instrument_id"] or prev_item["instrument_id"]
                 issuer = latest_item["issuer"]
                 # Capital extracted = shares sold × current quarter-end price.
-                # Independent of price movement; shows actual proceeds received.
+                # Estimated at quarter-end price; actual proceeds are not reported.
                 price_now = latest_item["value"] / latest_item["shares"] if latest_item["shares"] else 0
                 shares_sold = prev_item["shares"] - latest_item["shares"]
                 transaction_value = -round(shares_sold * price_now)  # negative = extracted
@@ -490,10 +513,10 @@ async def get_form13f_managers_list(session: AsyncSession = Depends(get_db_sessi
             prev_ids[mid] = mf[1].id
 
     relevant_filing_ids = list(set(latest_ids.values()) | set(prev_ids.values()))
-    holdings_result = await session.execute(
-        select(Form13FHolding).where(Form13FHolding.filing_id.in_(relevant_filing_ids))
+    all_holdings = await load_form13f_holdings(session, relevant_filing_ids)
+    splits_by_id = await load_split_history(
+        session, {h.instrument_id for h in all_holdings if h.instrument_id is not None}
     )
-    all_holdings = holdings_result.scalars().all()
 
     # Group holdings by filing_id
     holdings_by_filing: dict[int, list] = defaultdict(list)
@@ -512,6 +535,10 @@ async def get_form13f_managers_list(session: AsyncSession = Depends(get_db_sessi
         latest_cusips = _aggregate_holdings_by_cusip(holdings_by_filing.get(latest_ids[mid], []))
         prev_cusips = (
             _aggregate_holdings_by_cusip(holdings_by_filing.get(prev_ids.get(mid), [])) if mid in prev_ids else {}
+        )
+
+        prev_cusips = _adjust_previous_holdings(
+            prev_cusips, splits_by_id, mf[1].report_date if len(mf) > 1 else None, latest_filing.report_date
         )
 
         # Count activity types and collect top stock names per category.
@@ -540,10 +567,7 @@ async def get_form13f_managers_list(session: AsyncSession = Depends(get_db_sessi
             for cusip, item in latest_cusips.items():
                 prev = prev_cusips.get(cusip)
                 shares_prev = prev["shares"] if prev is not None else 0
-                value_prev_act = prev["value"] if prev is not None else 0
-                change = _compute_form13f_change(
-                    item["shares"], shares_prev, value=item["value"], value_prev=value_prev_act
-                )
+                change = _compute_form13f_change(item['shares'], shares_prev)
                 name = item.get("issuer") or cusip
                 if change == "New":
                     activity["new"] += 1
@@ -656,8 +680,10 @@ async def get_form13f_manager_detail(
     prev_filing = filings[target_idx + 1] if target_idx + 1 < len(filings) else None
 
     filing_ids = [target_filing.id] + ([prev_filing.id] if prev_filing else [])
-    holdings_result = await session.execute(select(Form13FHolding).where(Form13FHolding.filing_id.in_(filing_ids)))
-    all_holdings = holdings_result.scalars().all()
+    all_holdings = await load_form13f_holdings(session, filing_ids)
+    splits_by_id = await load_split_history(
+        session, {h.instrument_id for h in all_holdings if h.instrument_id is not None}
+    )
 
     # Load instruments referenced by any of these holdings
     instrument_ids = {h.instrument_id for h in all_holdings if h.instrument_id is not None}
@@ -673,6 +699,10 @@ async def get_form13f_manager_detail(
 
     latest_by_cusip = _aggregate_holdings_by_cusip(holdings_by_filing[target_filing.id])
     prev_by_cusip = _aggregate_holdings_by_cusip(holdings_by_filing[prev_filing.id]) if prev_filing else {}
+
+    prev_by_cusip = _adjust_previous_holdings(
+        prev_by_cusip, splits_by_id, prev_filing.report_date if prev_filing else None, target_filing.report_date
+    )
 
     portfolio, moves = _build_portfolio_and_moves(
         latest_by_cusip, prev_by_cusip, target_filing.total_value, instruments
@@ -733,12 +763,14 @@ async def get_13f_not_in_portfolio(
     latest_fid_by_mgr: dict[int, int] = {}
     prev_fid_by_mgr: dict[int, int] = {}
     latest_date_by_mgr: dict[int, date_type] = {}
+    prev_date_by_mgr: dict[int, date_type] = {}
     for f in filings_result.scalars().all():
         if f.manager_id not in latest_fid_by_mgr:
             latest_fid_by_mgr[f.manager_id] = f.id
             latest_date_by_mgr[f.manager_id] = f.report_date
         elif f.manager_id not in prev_fid_by_mgr:
             prev_fid_by_mgr[f.manager_id] = f.id
+            prev_date_by_mgr[f.manager_id] = f.report_date
 
     current_ids, _ = current_manager_ids(latest_date_by_mgr)
     for mid in list(latest_fid_by_mgr):
@@ -753,13 +785,13 @@ async def get_13f_not_in_portfolio(
     # 3. Holdings from latest + prev filings (aggregated by filing+instrument)
     rows_result = await session.execute(
         select(
-            Form13FHolding.instrument_id,
+            resolved_holding_instrument_id().label("instrument_id"),
             Form13FHolding.filing_id,
             Form13FHolding.value,
             Form13FHolding.shares,
         ).where(
             Form13FHolding.filing_id.in_(all_fids),
-            Form13FHolding.instrument_id.is_not(None),
+            resolved_holding_instrument_id().is_not(None),
         )
     )
     # agg[(filing_id, instrument_id)] = {value, shares}  — sums multiple share classes
@@ -770,6 +802,8 @@ async def get_13f_not_in_portfolio(
             agg[k] = {"value": 0, "shares": 0}
         agg[k]["value"] += row.value
         agg[k]["shares"] += row.shares
+
+    splits_by_id = await load_split_history(session, {iid for _, iid in agg})
 
     # 4. Per instrument: manager_count, buy_count, total_value
     by_instrument: dict[int, dict] = {}
@@ -795,23 +829,31 @@ async def get_13f_not_in_portfolio(
         by_instrument[inst_id]["total_value"] += data["value"]
 
         if prev_fid is not None:
+            previous_shares = split_adjusted_shares(
+                prev["shares"] if prev else 0,
+                splits_by_id.get(inst_id),
+                prev_date_by_mgr.get(manager_id),
+                latest_date_by_mgr[manager_id],
+            )
+            if previous_shares is None:
+                continue
             price_now = data["value"] / data["shares"] if data["shares"] else 0
+            share_change = _safe_pct(data['shares'], previous_shares) if previous_shares else None
             # Buying: new position OR shares increased by ≥10% (matches _compute_form13f_signal_score)
-            if prev is None or data["shares"] > prev["shares"] * 1.10:
-                shares_added = data["shares"] - (prev["shares"] if prev else 0)
+            if share_change is None or share_change >= 10:
+                shares_added = data["shares"] - previous_shares
                 transaction_value = round(shares_added * price_now)  # capital deployed
-                change = "New" if prev is None else f"+{round((data['shares'] / prev['shares'] - 1) * 100)}%"
+                change = _compute_form13f_change(data['shares'], previous_shares)
                 by_instrument[inst_id]["buy_managers_data"][manager_id] = {
                     "change": change,
                     "value_change": transaction_value,
                 }
             # Selling: shares decreased by >10%
-            elif prev is not None and data["shares"] < prev["shares"] * 0.90:
-                shares_sold = prev["shares"] - data["shares"]
+            elif share_change < -10:
+                shares_sold = previous_shares - data["shares"]
                 transaction_value = -round(shares_sold * price_now)  # capital extracted, negative
-                pct = round((data["shares"] / prev["shares"] - 1) * 100)
                 by_instrument[inst_id]["sell_managers_data"][manager_id] = {
-                    "change": f"{pct}%",
+                    "change": _compute_form13f_change(data['shares'], previous_shares),
                     "value_change": transaction_value,
                 }
 
