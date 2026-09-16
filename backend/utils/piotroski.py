@@ -11,6 +11,7 @@ rows are line items). The two most recent dates are used for the YoY checks.
 
 from typing import Any, Optional, TypedDict
 
+from backend.utils.fcf import operating_cashflow
 
 # Human-readable check labels — these strings end up in the Holdings tooltip
 # (as `✓ {label}` / `✗ {label}`) and the Stock page breakdown, so keep them
@@ -56,10 +57,10 @@ def _row(statement: Optional[dict[str, Any]], date_key: str) -> dict[str, Any]:
 
 def _latest_two_keys(statement: Optional[dict[str, Any]]) -> tuple[Optional[str], Optional[str]]:
     """Return (current_year_key, prior_year_key) — sorted ISO date strings sort chronologically."""
-    if not isinstance(statement, dict) or len(statement) < 2:
+    if not isinstance(statement, dict) or not statement:
         return None, None
     keys = sorted(statement.keys())
-    return keys[-1], keys[-2]
+    return keys[-1], keys[-2] if len(keys) > 1 else None
 
 
 def _ratio(num: Optional[float], den: Optional[float]) -> Optional[float]:
@@ -115,7 +116,7 @@ def get_piotroski_f_score(
     shares_cur = _safe_number(bs_cur_row.get("Ordinary Shares Number") or bs_cur_row.get("Share Issued"))
     shares_prev = _safe_number(bs_prev_row.get("Ordinary Shares Number") or bs_prev_row.get("Share Issued"))
 
-    ocf_cur = _safe_number(cf_cur_row.get("Operating Cash Flow"))
+    ocf_cur = operating_cashflow(cf_cur_row)
 
     details: dict[str, bool] = {}
     available = 0

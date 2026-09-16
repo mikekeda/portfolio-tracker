@@ -12,11 +12,14 @@ when Yahoo's `info` disagrees with the statements about currency.
 """
 
 import sys
+
+import pytest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.utils.fcf import trailing_fcf
+from backend.utils.fcf import operating_cashflow, trailing_fcf
+from backend.utils.dcf import _extract_trailing_fcf
 
 QUARTERS = ("2026-06-30", "2026-03-31", "2025-12-31", "2025-09-30")
 
@@ -136,3 +139,26 @@ if __name__ == "__main__":
             failures += 1
             print(f"FAIL {name}: {e}")
     sys.exit(1 if failures else 0)
+
+
+@pytest.mark.parametrize("primary", [None, float("nan"), float("inf"), True])
+def test_ocf_alias_recovers_missing_or_invalid_primary(primary):
+    assert (
+        operating_cashflow({"Operating Cash Flow": primary, "Cash Flow From Continuing Operating Activities": 120})
+        == 120
+    )
+
+def test_ocf_alias_preserves_zero_and_reported_fcf():
+    assert operating_cashflow({"Operating Cash Flow": 0, "Cash Flow From Continuing Operating Activities": 120}) == 0
+    row = {
+        "Operating Cash Flow": None,
+        "Cash Flow From Continuing Operating Activities": 120,
+        "Capital Expenditure": -20,
+    }
+    cf = {"2025-12-31": row}
+    income = {"2025-12-31": {"Total Revenue": 300}}
+    assert trailing_fcf({}, {}, cf, income).fcf == 100
+    assert _extract_trailing_fcf(cf)[0] == 100
+    row["Free Cash Flow"] = 80
+    assert trailing_fcf({}, {}, cf, income).fcf == 80
+    assert _extract_trailing_fcf(cf)[0] == 80

@@ -43,17 +43,26 @@ def _rows(statement: Optional[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {period: row for period, row in statement.items() if isinstance(row, dict)}
 
 
+def operating_cashflow(row: dict[str, Any]) -> Optional[float]:
+    """Yahoo's OCF labels; preserve a valid zero and reject non-finite values."""
+    for label in ("Operating Cash Flow", "Cash Flow From Continuing Operating Activities"):
+        value = _number(row.get(label))
+        if value is not None:
+            return value
+    return None
+
+
 def _period_fcf(row: dict[str, Any]) -> Optional[float]:
     """One period's FCF, derived from cash flow and capex when not reported directly."""
     reported = _number(row.get("Free Cash Flow"))
     if reported is not None:
         return reported
 
-    operating_cashflow = _number(row.get("Operating Cash Flow"))
+    ocf = operating_cashflow(row)
     capex = _number(row.get("Capital Expenditure"))
-    if operating_cashflow is None or capex is None:
+    if ocf is None or capex is None:
         return None
-    return operating_cashflow + capex  # Yahoo signs capex negative
+    return ocf + capex  # Yahoo signs capex negative
 
 
 def _period_revenue(row: dict[str, Any]) -> Optional[float]:

@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import EQUITY_RISK_PREMIUM, RISK_FREE_RATE, SPY, TERMINAL_GROWTH_RATE, TIMEZONE
 from models import CurrencyRateDaily, Instrument, PricesDaily
 from utils.market_data import get_risk_free_rates
+from backend.utils.fcf import operating_cashflow
 from backend.utils.fx import latest_rates_to_gbp
 from backend.utils.technical import PRICE_COLUMN
 
@@ -235,7 +236,7 @@ def _extract_trailing_fcf(cashflow: dict[str, Any]) -> tuple[Optional[float], Op
         row = cashflow.get(y) or {}
         fcf = _safe_number(row.get("Free Cash Flow"))
         if fcf is None:
-            ocf = _safe_number(row.get("Operating Cash Flow"))
+            ocf = operating_cashflow(row)
             capex = _safe_number(row.get("Capital Expenditure"))
             if ocf is not None and capex is not None:
                 fcf = ocf + capex  # Note: Capex is usually negative
