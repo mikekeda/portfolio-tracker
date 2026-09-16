@@ -108,6 +108,8 @@ def apply_constraints(
     if len(symbols) != len(set(symbols)):
         raise ValueError("duplicate symbols in intents")
     for i in intents:
+        if i.action not in BUY_ACTIONS + ("trim", "exit"):
+            raise ValueError(f"{i.symbol}: unknown action {i.action!r}")
         if i.action in BUY_ACTIONS + ("trim",) and i.target_weight is None:
             raise ValueError(f"{i.symbol}: {i.action} intent requires target_weight")
         if i.target_weight is not None and not (math.isfinite(i.target_weight) and 0.0 <= i.target_weight <= 1.0):

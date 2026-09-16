@@ -828,6 +828,24 @@ class PositionReview(Base):
         return f"<PositionReview(instrument_id={self.instrument_id}, created_at='{self.created_at}')>"
 
 
+class TradeAgentRun(Base):
+    """One completed agent attempt; zero-action runs are still successful runs."""
+
+    __tablename__ = "trade_agent_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    as_of_date: Mapped[Optional[date]] = mapped_column(Date)
+    strategy: Mapped[str] = mapped_column(String(30), nullable=False)
+    ran_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False)  # success | skipped | failed
+    intent_count: Mapped[Optional[int]] = mapped_column(Integer)
+    order_count: Mapped[Optional[int]] = mapped_column(Integer)
+    executable_count: Mapped[Optional[int]] = mapped_column(Integer)
+    reason: Mapped[Optional[str]] = mapped_column(String(200))
+
+    __table_args__ = (Index("idx_trade_agent_runs_strategy_ran_at", "strategy", "ran_at"),)
+
+
 class TradeSuggestion(Base):
     """Daily agent trade suggestion (scripts/run_trade_agent.py) — suggest-only.
 

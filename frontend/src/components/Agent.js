@@ -152,12 +152,26 @@ const Agent = () => {
         </p>
       </div>
 
+      {data.latest_run && data.latest_run.status !== 'success' && (
+        <div className="agent-error" role="status">
+          Latest attempt {data.latest_run.status} ({new Date(data.latest_run.ran_at).toLocaleString()}): {data.latest_run.reason}.
+          {data.run && ' Showing the last successful evaluation below.'}
+        </div>
+      )}
+      {data.run && (
+        <div className="agent-subtitle">
+          Last successful evaluation: {new Date(data.run.ran_at).toLocaleString()} ({data.run.strategy}).
+          {' '}{data.run.intent_count} intents; {data.run.order_count} orders,
+          {' '}{data.run.executable_count} executable.
+          {' '}Counts describe this run; previously accepted or dismissed proposals remain visible.
+        </div>
+      )}
       {data.date == null ? (
-        <div className="agent-empty">No suggestions yet — run scripts/run_trade_agent.py on the server.</div>
+        <div className="agent-empty">No proposals recorded yet.</div>
       ) : (
         <>
           <h2 className="agent-section-title">Suggestions for {data.date}</h2>
-          {actionable.length === 0 && <div className="agent-empty">Nothing to do today — the book is where the strategy wants it.</div>}
+          {actionable.length === 0 && <div className="agent-empty">{vetoed.length > 0 ? 'No executable proposals for this date; see vetoed proposals below.' : data.run?.status === 'success' && data.run.order_count === 0 ? 'Agent completed successfully with no proposals.' : 'No proposals recorded for this date. This does not confirm that the agent ran successfully.'}</div>}
           {actionable.length > 0 && (
             <table className="agent-table">
               <thead>{headers()}</thead>
