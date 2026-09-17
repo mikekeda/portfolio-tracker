@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import backend.app as app_module
 import scripts.run_trade_agent as runner
 from backend.views.agent import get_suggestions
-from models import HoldingDaily, Instrument, TradeAgentRun, TradeSuggestion
+from models import HoldingDaily, Instrument, PortfolioDaily, TradeAgentRun, TradeSuggestion
 from postgres_helpers import postgres_database
 
 
@@ -20,6 +20,7 @@ def test_no_action_rerun_and_failed_replacement_are_transactional(monkeypatch):
     async def check():
         async with postgres_database() as factory:
             monkeypatch.setattr(app_module, "_get_session_factory", lambda: factory)
+            monkeypatch.setattr(runner, "datetime", SimpleNamespace(now=lambda tz: datetime(2026, 9, 16, 7, tzinfo=tz)))
             d = date(2026, 9, 15)
             md = SimpleNamespace(
                 gbp_prices=pd.DataFrame({"TEST": [100.0]}, index=[d]), currencies={}, tags={}, etf_symbols=set()
@@ -56,6 +57,10 @@ def test_no_action_rerun_and_failed_replacement_are_transactional(monkeypatch):
                         updated_at=datetime(2026, 9, 16),
                     )
                 )
+                session.add(PortfolioDaily(
+                    date=d, value=100, cash=0, invested=100, unrealised_profit=0, realised_profit=0,
+                    updated_at=datetime(2026, 9, 16),
+                ))
                 for i, status in enumerate(("proposed", "accepted", "dismissed"), 1):
                     session.add(
                         TradeSuggestion(
@@ -91,4 +96,34 @@ def test_no_action_rerun_and_failed_replacement_are_transactional(monkeypatch):
                 runs = (await session.execute(select(TradeAgentRun))).scalars().all()
                 assert len(runs) == 2
 
+    asyncio.run(check())
+
+
+def test_missing_held_price_persists_skip_and_keeps_previous_proposals(monkeypatch):
+    async def check():
+        async with postgres_database() as factory:
+            monkeypatch.setattr(app_module, '_get_session_factory', lambda: factory)
+            monkeypatch.setattr(runner, 'datetime', SimpleNamespace(now=lambda tz: datetime(2026, 9, 16, 7, tzinfo=tz)))
+            d = date(2026, 9, 15)
+            md = SimpleNamespace(gbp_prices=pd.DataFrame({'SMALL': [100.]}, index=[d]))
+            monkeypatch.setattr(runner, 'load_market_data', AsyncMock(return_value=md))
+            async with factory.begin() as session:
+                for iid, symbol in [(1, 'SMALL'), (2, 'LARGE')]:
+                    session.add(Instrument(id=iid, t212_code=symbol, yahoo_symbol=symbol, name=symbol, currency='GBP',
+                                           created_at=datetime(2026, 9, 16), updated_at=datetime(2026, 9, 16)))
+                await session.flush()
+                for iid, qty in [(1, 1), (2, 1000)]:
+                    session.add(HoldingDaily(instrument_id=iid, date=d, quantity=qty, avg_price=100, current_price=100,
+                                             ppl=0, updated_at=datetime(2026, 9, 16)))
+                session.add(PortfolioDaily(date=d, value=100100, cash=0, invested=100100,
+                                           unrealised_profit=0, realised_profit=0, updated_at=datetime(2026, 9, 16)))
+                session.add(TradeSuggestion(date=d, instrument_id=1, strategy='rules', action='buy', value_gbp=100,
+                                            status='proposed'))
+            await runner.run_trade_agent()
+            async with factory() as session:
+                result = await get_suggestions(session=session)
+                assert result['latest_run']['status'] == 'skipped'
+                assert 'LARGE' in result['latest_run']['reason']
+                assert len(result['suggestions']) == 1
+                assert result['suggestions'][0]['value_gbp'] == 100
     asyncio.run(check())

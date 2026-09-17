@@ -164,6 +164,7 @@ const Agent = () => {
           {' '}{data.run.intent_count} intents; {data.run.order_count} orders,
           {' '}{data.run.executable_count} executable.
           {' '}Counts describe this run; previously accepted or dismissed proposals remain visible.
+          {data.run.reason && <div>{data.run.reason}</div>}
         </div>
       )}
       {data.date == null ? (

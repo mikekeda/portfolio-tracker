@@ -84,6 +84,7 @@ def make_session(results=()):
 def agent_inputs(monkeypatch):
     import scripts.run_trade_agent as runner
 
+    monkeypatch.setattr(runner, "datetime", SimpleNamespace(now=lambda tz: datetime(2026, 9, 16, 7, tzinfo=tz)))
     d = date(2026, 9, 15)
     md = SimpleNamespace(
         gbp_prices=pd.DataFrame({"TEST": [100.0]}, index=[d]), currencies={}, tags={}, etf_symbols=set()
@@ -102,7 +103,7 @@ def test_zero_intent_rerun_commits_deletion_and_run_together(monkeypatch, agent_
     runner, md = agent_inputs
     d = md.gbp_prices.index[-1]
     session = make_session(
-        [Result(d), Result(rows=[SimpleNamespace(yahoo_symbol="TEST", quantity=1)]), Result(0), Result()]
+        [Result(d), Result(rows=[SimpleNamespace(yahoo_symbol="TEST", quantity=1)]), Result(SimpleNamespace(date=date(2026, 9, 15), cash=0, value=100)), Result()]
     )
     monkeypatch.setattr(app_module, "_get_session_factory", lambda: lambda: session)
     asyncio.run(runner.run_trade_agent())
@@ -125,7 +126,7 @@ def test_missing_inputs_record_skipped_without_deleting_proposals(monkeypatch, a
         md.gbp_prices = pd.DataFrame()
         session = make_session()
     else:
-        session = make_session([Result(date(2026, 9, 15)), Result(), Result(0)])
+        session = make_session([Result(date(2026, 9, 15)), Result(), Result(SimpleNamespace(date=date(2026, 9, 15), cash=0, value=100))])
     monkeypatch.setattr(app_module, "_get_session_factory", lambda: lambda: session)
     asyncio.run(runner.run_trade_agent())
     run = session.add.call_args.args[0]
@@ -168,7 +169,7 @@ def test_all_vetoed_intents_still_record_success_and_order_counts(monkeypatch, a
         [
             Result(md.gbp_prices.index[-1]),
             Result(rows=[SimpleNamespace(yahoo_symbol="TEST", quantity=1)]),
-            Result(0),
+            Result(SimpleNamespace(date=date(2026, 9, 15), cash=0, value=100)),
             Result(),
             Result(rows=[("TEST", 7)]),
             Result(),
@@ -189,3 +190,118 @@ def test_unknown_action_fails_instead_of_becoming_an_empty_order_batch():
 
     with pytest.raises(ValueError, match="unknown action"):
         apply_constraints([TradeIntent("TEST", "typo", None, score=1)], SimpleNamespace(), {"TEST": 100})
+
+
+@pytest.mark.parametrize('bad_price', [None, float('nan'), float('inf'), 0, -1])
+def test_partial_valuation_skips_before_strategy_or_proposal_deletion(monkeypatch, agent_inputs, bad_price):
+    runner, md = agent_inputs
+    d = md.gbp_prices.index[-1]
+    md.gbp_prices['LARGE'] = bad_price
+    propose = Mock()
+    monkeypatch.setattr(runner.RulesStrategy, 'propose', propose)
+    session = make_session([
+        Result(d),
+        Result(rows=[SimpleNamespace(id=1, yahoo_symbol='TEST', quantity=1),
+                     SimpleNamespace(id=2, yahoo_symbol='LARGE', quantity=1000)]),
+        Result(SimpleNamespace(date=d, cash=0, value=100100)),
+    ])
+    run = {'ran_at': datetime(2026, 9, 16, 12, tzinfo=timezone.utc)}
+    asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
+    assert run['status'] == 'skipped' and 'LARGE' in run['reason']
+    assert '1/2 holdings' in run['reason']
+    propose.assert_not_called()
+    assert all('DELETE' not in str(c.args[0]) for c in session.execute.call_args_list)
+
+
+@pytest.mark.parametrize('symbol', ['NOT_IN_PRICE_MATRIX', None])
+def test_unmapped_holding_is_not_silently_dropped(agent_inputs, symbol):
+    runner, md = agent_inputs
+    d = md.gbp_prices.index[-1]
+    session = make_session([
+        Result(d), Result(rows=[SimpleNamespace(id=77, yahoo_symbol=symbol, quantity=1)]),
+        Result(SimpleNamespace(date=d, cash=0, value=100)),
+    ])
+    run = {'ran_at': datetime(2026, 9, 16, 12, tzinfo=timezone.utc)}
+    asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
+    assert run['status'] == 'skipped' and 'Incomplete valuation' in run['reason']
+
+
+def test_intraday_partial_row_cannot_select_decision_date(monkeypatch, agent_inputs):
+    runner, md = agent_inputs
+    d = md.gbp_prices.index[-1]
+    md.gbp_prices.loc[date(2026, 9, 16)] = [float('nan')]
+    observed = []
+    monkeypatch.setattr(runner.RulesStrategy, 'propose', lambda self, day, features, state: observed.append(state) or [])
+    session = make_session([
+        Result(d), Result(rows=[SimpleNamespace(id=1, yahoo_symbol='TEST', quantity=1)]),
+        Result(SimpleNamespace(date=d, cash=0, value=100)), Result(),
+    ])
+    run = {'ran_at': datetime(2026, 9, 16, 22, tzinfo=timezone.utc)}
+    asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
+    assert run['status'] == 'success' and run['as_of_date'] == d
+    assert observed[0].total_value_gbp == 100 and observed[0].weights == {'TEST': 1.0}
+
+
+@pytest.mark.parametrize('snapshot, reason', [
+    (None, 'missing'),
+    (SimpleNamespace(date=date(2026, 9, 14), cash=0, value=100), 'different dates'),
+    (SimpleNamespace(date=date(2026, 9, 15), cash=None, value=100), 'invalid'),
+    (SimpleNamespace(date=date(2026, 9, 15), cash=0, value=10000), 'differs'),
+])
+def test_account_snapshot_gates_before_proposals(agent_inputs, snapshot, reason):
+    runner, md = agent_inputs
+    d = md.gbp_prices.index[-1]
+    session = make_session([
+        Result(d), Result(rows=[SimpleNamespace(id=1, yahoo_symbol='TEST', quantity=1)]), Result(snapshot),
+    ])
+    run = {'ran_at': datetime(2026, 9, 16, 7, tzinfo=timezone.utc)}
+    asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
+    assert run['status'] == 'skipped' and reason in run['reason']
+    assert all('DELETE' not in str(c.args[0]) for c in session.execute.call_args_list)
+
+
+@pytest.mark.parametrize('price_date, reason', [
+    (date(2026, 9, 16), 'provisional'),
+    (date(2026, 9, 10), 'stale'),
+])
+def test_current_only_or_stale_prices_skip(agent_inputs, price_date, reason):
+    runner, md = agent_inputs
+    md.gbp_prices.index = [price_date]
+    session = make_session()
+    run = {'ran_at': datetime(2026, 9, 16, 7, tzinfo=timezone.utc)}
+    asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
+    assert run['status'] == 'skipped' and reason in run['reason']
+    session.execute.assert_not_awaited()
+
+
+def test_bounded_valuation_carry_uses_calendar_days_and_never_future_prices(agent_inputs):
+    runner, _ = agent_inputs
+    d = date(2026, 9, 16)
+    prices = pd.DataFrame({
+        'HOLIDAY': [80., 100., float('nan'), 999.],
+        'STALE': [50., float('nan'), float('nan'), 999.],
+        'FRESH': [40., 50., 60., 999.],
+    }, index=[date(2026, 9, 10), date(2026, 9, 11), d, date(2026, 9, 17)])
+    values, carried = runner._valuation_prices(prices, ['HOLIDAY', 'STALE', 'FRESH', 'MISSING'], d)
+    assert values == {'HOLIDAY': 100., 'FRESH': 60.}
+    assert carried == {'HOLIDAY': date(2026, 9, 11)}
+    assert pd.isna(prices.loc[d, 'HOLIDAY'])  # No invented candle or overwritten cache.
+
+
+def test_carried_holding_counts_in_full_account_but_is_not_given_a_fresh_candle(monkeypatch, agent_inputs):
+    runner, md = agent_inputs
+    d = date(2026, 9, 15)
+    md.gbp_prices = pd.DataFrame({'TEST': [100., 100.], 'HOLIDAY': [100., float('nan')]},
+                                index=[date(2026, 9, 12), d])
+    observed = []
+    monkeypatch.setattr(runner.RulesStrategy, 'propose', lambda self, day, features, state: observed.append(state) or [])
+    session = make_session([
+        Result(d), Result(rows=[SimpleNamespace(id=1, yahoo_symbol='TEST', quantity=1),
+                               SimpleNamespace(id=2, yahoo_symbol='HOLIDAY', quantity=9)]),
+        Result(SimpleNamespace(date=d, cash=0, value=1000)), Result(),
+    ])
+    run = {'ran_at': datetime(2026, 9, 16, 7, tzinfo=timezone.utc)}
+    asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
+    assert run['status'] == 'success' and 'HOLIDAY (2026-09-12)' in run['reason']
+    assert observed[0].total_value_gbp == 1000 and observed[0].weights['HOLIDAY'] == .9
+    assert pd.isna(md.gbp_prices.loc[d, 'HOLIDAY'])

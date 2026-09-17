@@ -12,7 +12,8 @@ into trade_suggestions. Run from project root:
 """
 
 import asyncio
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
+from math import isfinite
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -27,6 +28,45 @@ from models import HoldingDaily, Instrument, PortfolioDaily, TradeAgentRun, Trad
 
 # Price history window: enough for 252d technicals + 504d risk window with slack.
 LOOKBACK_DAYS = 900
+# Conservative calendar-day bounds allow weekends and ordinary market holidays.
+# Incomplete inputs skip the run; we never silently shrink the account or
+# forward-fill prices indefinitely to make a recommendation possible.
+MAX_INPUT_AGE_DAYS = 4
+MAX_VALUATION_PRICE_AGE_DAYS = 5
+MAX_VALUATION_DRIFT = 0.10
+
+
+def _skip(run: dict, reason: str) -> None:
+    logger.warning("Trade-agent skipped: %s", reason)
+    run.update(status="skipped", reason=reason[:200])
+
+
+def _positive(value) -> bool:
+    return value is not None and isfinite(value) and value > 0
+
+
+def _valuation_prices(prices, symbols, decision_date):
+    """Latest valid GBP valuation per holding, bounded in calendar days.
+
+    This does not manufacture candles or technical signals. Holdings with no
+    observed decision-day price remain outside the strategy's tradable universe.
+    """
+    window = prices.loc[
+        (prices.index <= decision_date)
+        & (prices.index >= decision_date - timedelta(days=MAX_VALUATION_PRICE_AGE_DAYS))
+    ]
+    values, carried = {}, {}
+    for symbol in symbols:
+        if not symbol or symbol not in window:
+            continue
+        valid = window[symbol].dropna()
+        valid = valid[valid.map(_positive)]
+        if valid.empty:
+            continue
+        values[symbol] = float(valid.iloc[-1])
+        if valid.index[-1] != decision_date:
+            carried[symbol] = valid.index[-1]
+    return values, carried
 
 
 async def run_trade_agent() -> None:
@@ -49,13 +89,24 @@ async def run_trade_agent() -> None:
 
 
 async def _generate_suggestions(session, limits: AgentLimits, run: dict) -> None:
-    md = await load_market_data(session, date.today() - timedelta(days=LOOKBACK_DAYS))
+    today = run["ran_at"].astimezone(timezone.utc).date()
+    md = await load_market_data(session, today - timedelta(days=LOOKBACK_DAYS))
     if md.gbp_prices.empty:
         run.update(status="skipped", reason="No price data loaded")
         logger.warning("Trade-agent: no price data loaded")
         return
-    d = md.gbp_prices.index[-1]
+    # During a manual/intraday run, today's sparse bars must not select the
+    # portfolio or the strategy universe. Use the latest prior UTC date only;
+    # do not fall back to an older, more convenient date when coverage fails.
+    dates = md.gbp_prices.index[md.gbp_prices.index < today]
+    if dates.empty:
+        _skip(run, "No prior-day price data; current-day bars are provisional")
+        return
+    d = dates[-1]
     run["as_of_date"] = d
+    if (today - d).days > MAX_INPUT_AGE_DAYS:
+        _skip(run, f"Price data is stale: {d}")
+        return
 
     latest = (await session.execute(select(HoldingDaily.date).order_by(HoldingDaily.date.desc()).limit(1))).scalar()
     holding_rows = (
@@ -65,23 +116,55 @@ async def _generate_suggestions(session, limits: AgentLimits, run: dict) -> None
             .where(HoldingDaily.date == latest, HoldingDaily.quantity > 0)
         )
     ).all()
-    cash = (
-        await session.execute(select(PortfolioDaily.cash).order_by(PortfolioDaily.date.desc()).limit(1))
-    ).scalar() or 0.0
-
-    prices_today = md.gbp_prices.loc[d]
-    quantities = {r.yahoo_symbol: r.quantity for r in holding_rows if r.yahoo_symbol in md.gbp_prices.columns}
-    values = {s: q * prices_today.get(s) for s, q in quantities.items()}
-    values = {s: v for s, v in values.items() if v == v}  # drop NaN-priced
-    total_value = cash + sum(values.values())
-    if total_value <= 0:
-        run.update(status="skipped", reason="Portfolio value is zero")
-        logger.warning("Trade-agent: portfolio value is zero")
+    snapshot = (
+        await session.execute(select(PortfolioDaily).order_by(PortfolioDaily.date.desc()).limit(1))
+    ).scalar()
+    if snapshot is None or latest is None or snapshot.date != latest:
+        _skip(run, "Holdings and account snapshots are missing or have different dates")
         return
+    if not 0 <= (today - latest).days <= MAX_INPUT_AGE_DAYS:
+        _skip(run, f"Holdings/account snapshot is stale or future-dated: {latest}")
+        return
+    if not _positive(snapshot.value) or snapshot.cash is None or not isfinite(snapshot.cash):
+        _skip(run, "Account value or cash is invalid")
+        return
+    cash = snapshot.cash
+    prices_today, carried = _valuation_prices(md.gbp_prices, [r.yahoo_symbol for r in holding_rows], d)
+    quantities = {}
+    missing = []
+    for row in holding_rows:
+        symbol = row.yahoo_symbol
+        if not symbol or not _positive(row.quantity) or not _positive(prices_today.get(symbol)):
+            missing.append(symbol or f"instrument {row.id}")
+            continue
+        quantities[symbol] = quantities.get(symbol, 0.0) + row.quantity
+    if missing:
+        _skip(
+            run,
+            f"Incomplete valuation for {d}: {len(missing)}/{len(holding_rows)} holdings lack valid price/FX/quantity: "
+            + ", ".join(sorted(missing)),
+        )
+        return
+    values = {s: q * prices_today[s] for s, q in quantities.items()}
+    total_value = cash + sum(values.values())
+    if not _positive(total_value):
+        _skip(run, "Portfolio value is zero or invalid")
+        return
+    # A complete set of prices can still have wrong currency/share units.
+    # This is a sanity bound, not exact reconciliation of asynchronously sampled
+    # broker quotes and the prior day's adjusted closes.
+    if abs(total_value / snapshot.value - 1) > MAX_VALUATION_DRIFT:
+        _skip(run, f"Valuation differs from broker snapshot by more than {MAX_VALUATION_DRIFT:.0%}")
+        return
+    if carried:
+        details = ", ".join(f"{symbol} ({stamp})" for symbol, stamp in sorted(carried.items()))
+        reason = f"Carried valuation prices for {len(carried)} holding(s): {details}"
+        logger.warning("Trade-agent: %s", reason)
+        run["reason"] = reason[:200]
     weights = {s: v / total_value for s, v in values.items()}
 
     universe = tradable_universe(md, d)
-    features = features_for_date(md, d, universe, fundamentals_as_of=date.today()).join(risk_columns(md, d, weights))
+    features = features_for_date(md, d, universe, fundamentals_as_of=today).join(risk_columns(md, d, weights))
     state = PortfolioState(
         date=d,
         total_value_gbp=total_value,

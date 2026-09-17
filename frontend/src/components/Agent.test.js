@@ -38,3 +38,12 @@ test('failed latest attempt stays visible while showing the last successful run'
   expect(await screen.findByRole('status')).toHaveTextContent('Latest attempt failed');
   expect(screen.getByRole('status')).toHaveTextContent('Showing the last successful evaluation below');
 });
+
+test('successful run discloses carried valuation prices', async () => {
+  const run = { status: 'success', ran_at: '2026-09-17T07:00:00Z', strategy: 'rules', intent_count: 0,
+    order_count: 0, executable_count: 0, reason: 'Carried valuation prices for 1 holding(s): MDA.TO (2026-07-02)' };
+  portfolioAPI.getAgentSuggestions.mockResolvedValue({ date: '2026-09-16', suggestions: [], run, latest_run: run });
+  portfolioAPI.getAgentSuggestionsHistory.mockResolvedValue({ suggestions: [] });
+  render(<Agent />);
+  expect(await screen.findByText(run.reason)).toBeInTheDocument();
+});
