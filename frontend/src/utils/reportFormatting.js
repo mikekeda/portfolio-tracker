@@ -48,3 +48,17 @@ export const formatGuidance = (value, unit, revenue = false) => {
   // ISO codes avoid ambiguous dollar symbols and are escaped by React.
   return `${unit} ${amount}`;
 };
+
+// Unit/currency metadata alone must not hide the press release's guidance.
+export const hasGuidance = (guidance) => Boolean(guidance && (
+  ['eps_guidance', 'revenue_guidance'].some(key => (
+    ['next_quarter', 'next_year'].some(period => Number.isFinite(guidance[key]?.[period]))
+  ))
+  || Number.isFinite(guidance.operating_margin_guidance)
+  || (typeof guidance.outlook_commentary === 'string' && guidance.outlook_commentary.trim())
+));
+
+export const selectGuidance = (metrics) => {
+  const guidanceFromPR = !hasGuidance(metrics.guidance) && hasGuidance(metrics.pr_guidance);
+  return { guidance: (guidanceFromPR ? metrics.pr_guidance : metrics.guidance) || {}, guidanceFromPR };
+};

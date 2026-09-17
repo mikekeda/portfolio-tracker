@@ -139,19 +139,19 @@ class Result:
 def test_holdings_13f_query_preserves_filed_shares_but_scores_split_basis():
     from backend.utils.form13f import _get_form13f_for_instruments
 
-    manager = SimpleNamespace(id=1, name="Manager")
-    current = SimpleNamespace(id=2, manager_id=1, report_date=date(2026, 6, 30), total_value=1000000)
-    previous = SimpleNamespace(id=1, manager_id=1, report_date=date(2026, 3, 31), total_value=1000000)
+    manager = SimpleNamespace(id=1, name="Manager", cik="1")
+    current = SimpleNamespace(id=2, manager_id=1, report_date=date(2026, 6, 30), total_value=1000000, accession_number="accession")
+    previous = SimpleNamespace(id=1, manager_id=1, report_date=date(2026, 3, 31), total_value=1000000, accession_number="accession")
     rows = [
-        (SimpleNamespace(instrument_id=7, shares=200, value=20000), current, manager, 7),
-        (SimpleNamespace(instrument_id=7, shares=100, value=10000), previous, manager, 7),
+        (SimpleNamespace(filing_id=2, shares=200, value=20000), 7),
+        (SimpleNamespace(filing_id=1, shares=100, value=10000), 7),
     ]
     session = SimpleNamespace(
         execute=AsyncMock(
             side_effect=[
                 Result(rows=[(7, {"2026-04-20": 2}, "TEST")]),
+                Result(rows=[(current, manager), (previous, manager)]),
                 Result(rows=rows),
-                Result(rows=[(1, current.report_date), (1, previous.report_date)]),
             ]
         )
     )
@@ -160,3 +160,76 @@ def test_holdings_13f_query_preserves_filed_shares_but_scores_split_basis():
     holder = result["holders"][0]
     assert holder["change"] == "+0.0%"
     assert holder["shares_prev"] == 100 and holder["shares_prev_adjusted"] == 200
+
+
+def test_latest_manager_periods_handle_exits_reentry_and_old_positions():
+    from backend.utils.form13f import _get_form13f_for_instruments
+
+    manager = SimpleNamespace(id=1, name='Manager', cik='1')
+    filings = [SimpleNamespace(id=i, manager_id=1, report_date=d, total_value=1000000, accession_number=str(i))
+               for i, d in [(3, date(2026, 6, 30)), (2, date(2026, 3, 31)), (1, date(2025, 12, 31))]]
+    # Only holdings in the latest two manager filings should be queried. Stock 8
+    # existed in Q4 only: it must not reappear as a current holder. Stock 9
+    # re-entered in Q2; its old Q4 holding must not become its comparison base.
+    rows = [(SimpleNamespace(filing_id=fid, shares=qty, value=value), iid)
+            for fid, iid, qty, value in [(2, 7, 100, 100000), (3, 9, 10, 10000),
+                                         (2, 10, 100, 10000), (3, 10, 200, 20000)]]
+    session = SimpleNamespace(execute=AsyncMock(side_effect=[
+        Result(rows=[(iid, {}, str(iid)) for iid in [7, 8, 9, 10]]),
+        Result(rows=[(f, manager) for f in filings]), Result(rows=rows),
+    ]))
+    result = asyncio.run(_get_form13f_for_instruments(session, [7, 8, 9, 10]))
+    closed = result[7]['holders'][0]
+    assert closed['change'] == 'Closed' and closed['scored']
+    assert closed['shares'] == closed['value'] == 0
+    assert closed['shares_prev'] == 100 and closed['value_prev'] == 100000
+    assert closed['report_date'] == '2026-06-30' and closed['report_date_prev'] == '2026-03-31'
+    assert closed['sec_filing_url'].endswith('/3/')
+    assert result[7]['score'] == -2
+    assert 8 not in result
+    assert result[9]['holders'][0]['change'] == 'New'
+    assert result[10]['holders'][0]['change'] == '+100.0%'
+    sql = str(session.execute.call_args.args[0].compile(compile_kwargs={'literal_binds': True}))
+    assert 'filing_id IN (3, 2)' in sql
+
+
+def test_exit_uses_prior_conviction_in_mixed_signal_score():
+    from backend.utils.form13f import _get_form13f_for_instruments
+
+    sold = SimpleNamespace(id=1, name='Sold', cik='1')
+    bought = SimpleNamespace(id=2, name='Bought', cik='2')
+    def filing(fid, mid, d):
+        return SimpleNamespace(id=fid, manager_id=mid, report_date=d, total_value=1000000, accession_number=str(fid))
+    session = SimpleNamespace(execute=AsyncMock(side_effect=[
+        Result(rows=[(7, {}, 'TEST')]),
+        Result(rows=[(filing(2, 1, date(2026, 6, 30)), sold),
+                     (filing(4, 2, date(2026, 6, 30)), bought),
+                     (filing(1, 1, date(2026, 3, 31)), sold),
+                     (filing(3, 2, date(2026, 3, 31)), bought)]),
+        Result(rows=[(SimpleNamespace(filing_id=1, shares=100, value=100000), 7),
+                     (SimpleNamespace(filing_id=4, shares=10, value=10000), 7)]),
+    ]))
+    result = asyncio.run(_get_form13f_for_instruments(session, [7]))[7]
+    assert result['score'] == -1.6  # (-2 * 10% + 2 * 1%) / 11%, not +2.
+
+
+@pytest.mark.parametrize('adjusted', [100, 2500, None])
+def test_exit_flow_uses_prior_value_without_mixing_split_price_bases(adjusted):
+    from backend.utils.form13f import estimated_holder_flow
+    assert estimated_holder_flow({'shares': 0, 'value': 0, 'shares_prev': 100,
+                                  'shares_prev_adjusted': adjusted, 'value_prev': 10000}) == -10000
+    assert estimated_holder_flow({'shares': 0, 'value': 0, 'shares_prev': 100}) is None
+
+
+def test_holder_flow_matches_split_adjusted_buy_example():
+    from backend.utils.form13f import estimated_holder_flow
+    assert estimated_holder_flow({'shares': 25536950, 'value': 4551705968, 'shares_prev': 997498,
+                                  'shares_prev_adjusted': 24937450}) == pytest.approx(106854880)
+
+
+def test_ingestion_maps_both_honeywell_cusips_to_existing_instrument():
+    from unittest.mock import Mock
+    from scripts.scrape_13f import _build_cusip_to_instrument_map
+    session = SimpleNamespace(execute=Mock(return_value=Result(rows=[SimpleNamespace(id=7, isin='US4385161066')])))
+    mapping = _build_cusip_to_instrument_map(session)
+    assert mapping['438516106'] == mapping['438516205'] == 7

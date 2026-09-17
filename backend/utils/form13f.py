@@ -42,6 +42,10 @@ class Form13FHolder(TypedDict):
 
     manager_id: int | None
     name: str
+    manager_name: str
+    report_date_prev: str | None
+    pct_of_portfolio: float | None
+    sec_filing_url: str | None
     change: str
     report_date: str | None
     shares: int | None
@@ -59,18 +63,6 @@ class Form13FInstrumentResult(TypedDict):
     score: Optional[float]
     holders: list[Form13FHolder]
 
-
-class Form13FFilingRow(TypedDict):
-    """Aggregated row per (manager, filing) for a single instrument in get_instrument."""
-
-    manager_name: str
-    manager_id: int
-    manager_cik: str
-    report_date: date
-    accession_number: str
-    value: int
-    shares: int
-    filing_total_value: int
 
 
 def split_adjusted_shares(
@@ -217,11 +209,9 @@ def aggregate_signal_score(scoring_pairs: list[tuple[float, float]]) -> Optional
 
 
 def _score_reason(
-    score: int, change: str, value: int, filing_total_value: int | None = None, stale: bool = False
+    score: int, change: str, value: int, filing_total_value: int | None = None
 ) -> str | None:
     """Human-readable explanation for why a holder does not contribute to the score (tooltip)."""
-    if stale:
-        return "has not filed for the latest quarter — change is from an older filing"
     if score != 0:
         return None  # contributing to score — no explanation needed
     if change == "—":
@@ -246,143 +236,106 @@ def _build_sec_13f_url(cik: Optional[str], accession: Optional[str]) -> Optional
     return f"https://www.sec.gov/Archives/edgar/data/{cik_num}/{accession_clean}/"
 
 
+def estimated_holder_flow(holder: dict) -> float | None:
+    """Share-flow proxy: exits use prior value; not actual trading proceeds."""
+    shares, value = holder.get("shares"), holder.get("value")
+    prior_shares, prior_value = holder.get("shares_prev"), holder.get("value_prev")
+    if shares == 0 and prior_shares is not None and prior_shares > 0:
+        return -prior_value if prior_value is not None and isfinite(prior_value) and prior_value >= 0 else None
+    adjusted = holder.get("shares_prev_adjusted", prior_shares)
+    if any(v is None or not isfinite(v) for v in (shares, value, adjusted)) or shares <= 0:
+        return None
+    return (shares - adjusted) * value / shares
+
+
 async def _get_form13f_for_instruments(
     session: AsyncSession, instrument_ids: list[int]
 ) -> dict[int, Form13FInstrumentResult]:
-    """
-    Get 13F score and holders for each instrument.
+    """Compare each manager's latest two filings, including absent/closed positions.
 
-    Score aggregation:
-    1. Per-holder score: -2 to +2 from split-adjusted share counts (see _compute_form13f_signal_score)
-    2. Exclude score=0 holders (no prior data or stable — no directional signal)
-    3. Conviction-weighted average: weight = value / filing_total_value (treats funds equally by commitment %)
-    4. Clamp to [-2, 2], round to 1 decimal
-
-    Returns {instrument_id: {score, holders}}.
+    Holdings and Stock consume these same rows and score. Never select periods
+    from the subset of filings that happens to contain the requested security.
+    Source holdings remain untouched, including resolved corporate-action IDs.
     """
     if not instrument_ids:
         return {}
-
     splits_by_id = await load_split_history(session, instrument_ids)
-    rows = (
-        await session.execute(
-            select(Form13FHolding, Form13FFiling, Form13FManager, resolved_holding_instrument_id())
-            .join(Form13FFiling, Form13FHolding.filing_id == Form13FFiling.id)
-            .join(Form13FManager, Form13FFiling.manager_id == Form13FManager.id)
-            .where(resolved_holding_instrument_id().in_(instrument_ids))
-        )
-    ).all()
+    filing_rows = (await session.execute(
+        select(Form13FFiling, Form13FManager)
+        .join(Form13FManager, Form13FFiling.manager_id == Form13FManager.id)
+        .order_by(Form13FFiling.report_date.desc(), Form13FFiling.id.desc())
+    )).all()
+    by_manager = defaultdict(list)
+    managers = {}
+    for filing, manager in filing_rows:
+        managers[manager.id] = manager
+        if len(by_manager[manager.id]) < 2:
+            by_manager[manager.id].append(filing)
+    current_ids, _ = current_manager_ids({mid: filings[0].report_date for mid, filings in by_manager.items()})
+    filing_ids = [f.id for mid in current_ids for f in by_manager[mid]]
+    if not filing_ids:
+        return {}
+    rows = (await session.execute(
+        select(Form13FHolding, resolved_holding_instrument_id())
+        .where(Form13FHolding.filing_id.in_(filing_ids), resolved_holding_instrument_id().in_(instrument_ids))
+    )).all()
+    holdings = defaultdict(lambda: {"shares": 0, "value": 0})
+    instruments_by_manager = defaultdict(set)
+    manager_by_filing = {f.id: mid for mid in current_ids for f in by_manager[mid]}
+    for holding, iid in rows:
+        item = holdings[(holding.filing_id, iid)]
+        item["shares"] += holding.shares
+        item["value"] += holding.value
+        instruments_by_manager[manager_by_filing[holding.filing_id]].add(iid)
 
-    # Every manager, not just holders of these instruments: the consensus quarter has to be the
-    # newest across all managers, or a wholly stale subset would look current.
-    manager_filing_dates: dict[int, list[date]] = defaultdict(list)
-    filing_rows = (
-        await session.execute(
-            select(Form13FFiling.manager_id, Form13FFiling.report_date).order_by(
-                Form13FFiling.manager_id, Form13FFiling.report_date.desc()
+    result = {}
+    scoring_pairs = defaultdict(list)
+    for mid in sorted(current_ids):
+        manager = managers[mid]
+        filings = by_manager[mid]
+        latest = filings[0]
+        previous = filings[1] if len(filings) > 1 else None
+        for iid in sorted(instruments_by_manager[mid]):
+            current = holdings.get((latest.id, iid), {"shares": 0, "value": 0})
+            prior = holdings.get((previous.id, iid), {"shares": 0, "value": 0}) if previous else None
+            shares_prev = prior["shares"] if prior else None
+            value_prev = prior["value"] if prior else None
+            adjusted = split_adjusted_shares(
+                shares_prev, splits_by_id.get(iid), previous.report_date if previous else None, latest.report_date
             )
-        )
-    ).all()
-    for mid, rdate in filing_rows:
-        manager_filing_dates[mid].append(rdate)
-
-    current_ids, _ = current_manager_ids({mid: dates[0] for mid, dates in manager_filing_dates.items()})
-
-    by_manager_filing: dict[tuple[int, int, int], dict[str, str | int | date | None]] = {}
-    for holding, filing, manager, iid in rows:
-        key = (iid, manager.id, filing.id)
-        if key not in by_manager_filing:
-            by_manager_filing[key] = {
-                "instrument_id": iid,
-                "manager_name": manager.name,
-                "manager_id": manager.id,
-                "report_date": filing.report_date,
-                "filing_total_value": filing.total_value,
-                "value": 0,
-                "shares": 0,
-            }
-        by_manager_filing[key]["value"] += holding.value
-        by_manager_filing[key]["shares"] += holding.shares
-
-    by_manager: dict[tuple[int, int], list[dict[str, str | int | date | None]]] = defaultdict(list)
-    for (iid, mid, fid), data in by_manager_filing.items():
-        by_manager[(iid, mid)].append(data)
-
-    by_instrument: dict[int, list[dict[str, str | int | date | None]]] = defaultdict(list)
-    for (iid, mid), filings_list in by_manager.items():
-        filings_list.sort(key=lambda x: x["report_date"], reverse=True)
-        latest = filings_list[0]
-        prev = filings_list[1] if len(filings_list) > 1 else None
-
-        if prev is not None:
-            # Manager held this instrument in both quarters
-            shares_prev: int | None = prev["shares"]
-            value_prev: int | None = prev["value"]
-        elif len(manager_filing_dates.get(mid, [])) >= 2:
-            # Manager has a prior filing but didn't hold this instrument → new position
-            shares_prev = 0
-            value_prev = 0
-        else:
-            # Manager has only one filing total → no comparison possible
-            shares_prev = None
-            value_prev = None
-
-        shares_prev_reported = shares_prev
-        shares_prev = split_adjusted_shares(
-            shares_prev, splits_by_id.get(iid), prev["report_date"] if prev else None, latest["report_date"]
-        )
-        shares = latest["shares"]
-        filing_total = latest["filing_total_value"] or 0
-        change = _compute_form13f_change(shares, shares_prev)
-        score = _compute_form13f_signal_score(shares, shares_prev, value=latest["value"], value_prev=value_prev, filing_total_value=filing_total)
-        conviction = latest["value"] / filing_total if filing_total > 0 else 0.0
-        by_instrument[iid].append(
-            {
+            shares, value = current["shares"], current["value"]
+            closed = shares == 0 and (shares_prev or 0) > 0
+            # An unverified split prevents quantity comparisons, but cannot turn
+            # absence in the latest filing into continued ownership.
+            change = "Closed" if closed else _compute_form13f_change(shares, adjusted)
+            score = -2 if closed else _compute_form13f_signal_score(
+                shares, adjusted, value=value, value_prev=value_prev, filing_total_value=latest.total_value
+            )
+            # Exits have zero current value: weight their signal by prior conviction.
+            conviction_value = value_prev if closed else value
+            conviction_total = previous.total_value if closed else latest.total_value
+            conviction = conviction_value / conviction_total if conviction_total > 0 else 0.0
+            if score:
+                scoring_pairs[iid].append((score, conviction))
+            pct = value / latest.total_value * 100 if latest.total_value > 0 else None
+            holder = {
                 "manager_id": mid,
-                "stale": mid not in current_ids,
-                "manager_name": latest["manager_name"],
+                "name": manager.name,
+                "manager_name": manager.name,
                 "change": change,
-                "score": score,
-                "value": latest["value"],
+                "report_date": latest.report_date.isoformat(),
+                "report_date_prev": previous.report_date.isoformat() if previous else None,
+                "shares": shares,
+                "shares_prev": shares_prev,
+                "shares_prev_adjusted": adjusted,
+                "value": value,
                 "value_prev": value_prev,
-                "conviction": conviction,
-                "filing_total_value": filing_total,
-                "report_date": latest["report_date"].isoformat() if latest.get("report_date") else None,
-                "shares": latest["shares"],
-                "shares_prev": shares_prev_reported,
-                "shares_prev_adjusted": shares_prev,
+                "pct_of_portfolio": round(pct, 2) if pct is not None else None,
+                "scored": score != 0,
+                "score_reason": _score_reason(score, change, value, latest.total_value),
+                "sec_filing_url": _build_sec_13f_url(manager.cik, latest.accession_number),
             }
-        )
-
-    result: dict[int, Form13FInstrumentResult] = {}
-    for iid, holders in by_instrument.items():
-        # Only holders with a directional signal contribute. score == 0 is mostly
-        # a position below the AUM floors, sometimes stable or a first filing.
-        scoring_holders = [h for h in holders if h["score"] != 0 and not h["stale"]]
-        scoring_set = set(id(h) for h in scoring_holders)
-        result[iid] = {
-            "score": aggregate_signal_score([(h["score"], h["conviction"]) for h in scoring_holders]),
-            "holders": [
-                {
-                    "manager_id": h.get("manager_id"),
-                    "name": h["manager_name"],
-                    "change": h["change"],
-                    "report_date": h.get("report_date"),
-                    "shares": h.get("shares"),
-                    "shares_prev": h.get("shares_prev"),
-                    "shares_prev_adjusted": h.get("shares_prev_adjusted"),
-                    "value": h.get("value"),
-                    "value_prev": h.get("value_prev"),
-                    "scored": id(h) in scoring_set,
-                    "score_reason": _score_reason(
-                        h["score"],
-                        h["change"],
-                        h.get("value") or 0,
-                        h.get("filing_total_value"),
-                        stale=h["stale"],
-                    ),
-                }
-                for h in holders
-            ],
-        }
+            result.setdefault(iid, {"score": None, "holders": []})["holders"].append(holder)
+    for iid, item in result.items():
+        item["score"] = aggregate_signal_score(scoring_pairs[iid])
     return result

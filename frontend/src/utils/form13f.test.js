@@ -16,3 +16,8 @@ test('missing shares or current price cannot produce a flow estimate', () => {
   expect(holderFlow({ shares: 100, shares_prev: null, value: 1000 })).toBeNull();
   expect(holderFlow({ shares: 100, shares_prev: 100, value: NaN })).toBeNull();
 });
+
+test.each([100, 2500, null])('closed flow uses prior value with adjusted shares %s', (adjusted) => {
+  expect(holderFlow({ shares: 0, value: 0, shares_prev: 100, shares_prev_adjusted: adjusted, value_prev: 10000 }))
+    .toBe(-10000);
+});

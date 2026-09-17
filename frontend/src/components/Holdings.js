@@ -172,7 +172,7 @@ function buildHolderTooltip(h) {
     lines.push(`Value: ${valueStr}${reason}`);
   }
   const flow = holderFlow(h);
-  if (flow != null && flow !== 0) lines.push(`Flow: ${formatNetFlow(flow)}`);
+  if (flow != null && flow !== 0) lines.push(`${h.shares === 0 ? 'Exit estimate at previous-quarter value' : 'Flow estimate'}: ${formatNetFlow(flow)}; not actual proceeds`);
   return lines.join('\n');
 }
 
@@ -1410,8 +1410,8 @@ const Holdings = () => {
         row => {
           const holders = row.form13f_holders;
           if (!holders || holders.length === 0) return null;
-          // Sum (shares_change × price_now) per manager — matches the highlights
-          // endpoint. Skips holders where shares or shares_prev are unknown.
+          // Share-change estimate; closed positions use prior-quarter value.
+          // Unknown quantities/values are omitted.
           let total = 0;
           let hasData = false;
           for (const h of holders) {
@@ -1426,7 +1426,7 @@ const Holdings = () => {
         {
           id: 'form13f_net_flow',
           header: () => (
-            <span title={'Net change in institutional holdings vs prior quarter.\n∑ (shares_change × price at report date) across all tracked managers.\nPositive = net institutional buying; negative = net selling.'}>
+            <span title={'Net change in institutional holdings vs prior quarter.\nShare changes valued at current-quarter prices; exits use previous-quarter value.\nNot actual cash spent or received.'}>
               Net Flow
             </span>
           ),

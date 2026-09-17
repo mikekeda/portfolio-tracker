@@ -1,5 +1,5 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
-import { markdownToHtml, formatGuidance } from '../utils/reportFormatting';
+import { markdownToHtml, formatGuidance, selectGuidance } from '../utils/reportFormatting';
 import { holderFlow } from '../utils/form13f';
 import PropTypes from 'prop-types';
 import {Link, useNavigate, useParams} from 'react-router-dom';
@@ -1725,7 +1725,7 @@ const Stock = () => {
                   {sellCount > 0 && <span className="form13f-summary-sell">{sellCount} selling</span>}
                   <span className="form13f-summary-hold">{holdings.length - buyCount - sellCount} unchanged</span>
                   {netFlow !== 0 && (
-                    <span className={`form13f-summary-flow ${netFlow > 0 ? 'positive' : 'negative'}`}>
+                    <span title="Share-change estimate; exits use previous-quarter value. Not actual cash flows." className={`form13f-summary-flow ${netFlow > 0 ? 'positive' : 'negative'}`}>
                       {formatFlow(netFlow)} estimated net flow
                     </span>
                   )}
@@ -1745,7 +1745,7 @@ const Stock = () => {
                       tooltipParts.push(`Previous shares on current split basis: ${h.shares_prev_adjusted.toLocaleString()}`);
                     if (h.report_date_prev) tooltipParts.push(`Prev report: ${h.report_date_prev}`);
                     if (!scored && h.score_reason) tooltipParts.push(`Not scored: ${h.score_reason}`);
-                    if (flow != null && flow !== 0) tooltipParts.push(`Estimated flow at quarter-end price: ${formatFlow(flow)}`);
+                    if (flow != null && flow !== 0) tooltipParts.push(`${h.shares === 0 ? 'Exit estimate at previous-quarter value' : 'Estimated flow at current-quarter price'}: ${formatFlow(flow)}; not actual proceeds`);
 
                     const valueDisplay = h.pct_of_portfolio != null
                       ? `$${formatShort(h.value)} (${h.pct_of_portfolio}%)`
@@ -2324,8 +2324,7 @@ const Stock = () => {
             if (typeof v === 'object') return Object.values(v).some(hasValues);
             return true;
           };
-          const guidanceFromPR = !hasValues(metrics.guidance) && hasValues(metrics.pr_guidance);
-          const guidance = (guidanceFromPR ? metrics.pr_guidance : metrics.guidance) || {};
+          const { guidance, guidanceFromPR } = selectGuidance(metrics);
           const consensusFromPR = !hasValues(metrics.consensus_comparison) && hasValues(metrics.pr_consensus_comparison);
           const consensus = (consensusFromPR ? metrics.pr_consensus_comparison : metrics.consensus_comparison) || {};
           const epsGuidance = guidance.eps_guidance || {};

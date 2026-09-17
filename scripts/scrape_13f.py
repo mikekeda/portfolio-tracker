@@ -147,6 +147,7 @@ ISIN_TO_CUSIP_OVERRIDES: dict[str, str] = {
 # Q1'26 filings) would otherwise stay unmatched. Aliases here map additional CUSIPs to
 # the ISIN whose instrument they should resolve to.
 EXTRA_CUSIP_TO_ISIN_ALIASES: dict[str, str] = {
+    "438516205": "US4385161066",  # HON June 2026 CUSIP transition; keep the older line mapped too.
     "G0593M107": "GB0009895292",  # AstraZeneca PLC ordinary shares -> same instrument as ADR line
     # 2026-08-20 — second lines for instruments that already match on another CUSIP.
     "904767704": "GB00BVZK7T90",  # Unilever PLC — older ADR line alongside 904767803

@@ -1,4 +1,4 @@
-import { markdownToHtml, formatGuidance } from './reportFormatting';
+import { markdownToHtml, formatGuidance, selectGuidance, hasGuidance } from './reportFormatting';
 
 test('report HTML stays inert in paragraphs, headings, lists and bold text', () => {
   const payload = '# <img src=x onerror="alert(1)">\n## <svg onload="alert(1)">\n### <script>alert(1)</script>\n- **<iframe srcdoc="bad">**\n<img src=x> &lt;img src=x&gt;';
@@ -31,4 +31,18 @@ test('legacy guidance never acquires an invented dollar currency', () => {
   expect(formatGuidance(44000, null, true)).toBe('44.00B (currency not recorded)');
   expect(formatGuidance(178.5, undefined)).toBe('178.50 (unit not recorded)');
   expect(formatGuidance(null, 'USD')).toBe('—');
+});
+
+test('unit-only SEC guidance cannot suppress same-day PR guidance', () => {
+  const pr = { revenue_guidance: { next_year: 44000, currency: 'EUR' } };
+  expect(selectGuidance({ guidance: { eps_guidance: { unit: 'USD' }, revenue_guidance: { currency: 'EUR' } }, pr_guidance: pr }))
+    .toEqual({ guidance: pr, guidanceFromPR: true });
+  const zero = { eps_guidance: { next_year: 0, unit: 'USD' } };
+  expect(selectGuidance({ guidance: zero, pr_guidance: pr })).toEqual({ guidance: zero, guidanceFromPR: false });
+});
+
+test('blank outlook is empty; margin-only and qualitative guidance are meaningful', () => {
+  expect(hasGuidance({ outlook_commentary: '  ', revenue_guidance: { currency: 'GBP' } })).toBe(false);
+  expect(hasGuidance({ operating_margin_guidance: 0 })).toBe(true);
+  expect(hasGuidance({ outlook_commentary: 'Demand expected to improve' })).toBe(true);
 });

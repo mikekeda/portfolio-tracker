@@ -123,3 +123,46 @@ def test_corporate_actions_in_real_queries(symbol, old_cusip, new_cusip, old_sha
                 assert highlights["most_bought"] == highlights["most_sold"] == []
 
     asyncio.run(check())
+
+
+def test_closed_and_reentered_holdings_match_stock_detail():
+    from backend.views.instrument import get_instrument
+
+    async def check():
+        async with postgres_database() as factory:
+            async with factory.begin() as session:
+                for iid, symbol in [(7, 'EXIT'), (8, 'OLD'), (9, 'REENTER')]:
+                    session.add(Instrument(id=iid, t212_code=symbol, yahoo_symbol=symbol, name=symbol,
+                                           currency='GBP', created_at=datetime(2026, 9, 16), updated_at=datetime(2026, 9, 16)))
+                session.add(Form13FManager(id=1, name='Manager', cik='1', created_at=datetime(2026, 9, 16)))
+                session.add(Form13FManager(id=2, name='Buyer', cik='2', created_at=datetime(2026, 9, 16)))
+                await session.flush()
+                for fid, period in [(1, date(2025, 12, 31)), (2, date(2026, 3, 31)), (3, date(2026, 6, 30))]:
+                    session.add(Form13FFiling(id=fid, manager_id=1, report_date=period, form='13F-HR',
+                                             accession_number=str(fid), total_value=1000000, created_at=datetime(2026, 9, 16)))
+                for fid, period in [(4, date(2026, 3, 31)), (5, date(2026, 6, 30))]:
+                    session.add(Form13FFiling(id=fid, manager_id=2, report_date=period, form='13F-HR',
+                                             accession_number=str(fid), total_value=1000000, created_at=datetime(2026, 9, 16)))
+                await session.flush()
+                session.add(Form13FHolding(filing_id=5, instrument_id=7, issuer='EXIT', cusip='7', shares=1, value=1000))
+                for fid, iid, qty in [(1, 7, 1), (2, 7, 100), (1, 8, 100), (1, 9, 1), (3, 9, 100)]:
+                    session.add(Form13FHolding(filing_id=fid, instrument_id=iid, issuer=str(iid),
+                                               cusip=str(iid), shares=qty, value=qty * 1000))
+            async with factory() as session:
+                holdings = await _get_form13f_for_instruments(session, [7, 8, 9])
+                assert 8 not in holdings  # Absence in both recent quarters, not an eternal exit.
+                assert holdings[7]['score'] == -2
+                assert holdings[9]['holders'][0]['change'] == 'New'
+                for iid, symbol in [(7, 'EXIT'), (8, 'OLD'), (9, 'REENTER')]:
+                    stock = await get_instrument(symbol, session=session)
+                    expected = holdings.get(iid, {'score': None, 'holders': []})
+                    assert stock['form13f_score'] == expected['score']
+                    assert stock['form13f_holdings'] == expected['holders']
+                # The $100k exit sorts before the $1k new buy, despite zero current value.
+                closed = holdings[7]['holders'][0]
+                assert closed['report_date'] == '2026-06-30' and closed['shares'] == 0
+                assert closed['report_date_prev'] == '2026-03-31' and closed['shares_prev'] == 100
+                detail = await get_form13f_manager_detail(1, session=session)
+                assert detail['moves']['closed_positions'][0]['shares_prev'] == closed['shares_prev']
+
+    asyncio.run(check())

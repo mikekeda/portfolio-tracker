@@ -24,7 +24,7 @@ from typing import Any, Literal
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.utils.llm_json import undo_double_escapes
 from config import GEMINI_API_KEY, logger
@@ -110,6 +110,14 @@ class Guidance(BaseModel):
         None,
         description="1-2 sentence summary of management's qualitative forward outlook (only if no specific numbers are provided above)",
     )
+
+
+    @field_validator("eps_guidance", "revenue_guidance")
+    @classmethod
+    def ignore_unit_only_guidance(cls, value):
+        if value is not None and all(getattr(value, key) is None for key in ("next_quarter", "next_year", "growth_pct")):
+            return None
+        return value
 
 
 class ConsensusComparison(BaseModel):

@@ -1,4 +1,3 @@
-from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -13,30 +12,16 @@ from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.etf_aggregates import MIN_COVERAGE
 from backend.utils.fcf import trailing_fcf
-from backend.utils.form13f import (
-    Form13FFilingRow,
-    split_adjusted_shares,
-    resolved_holding_instrument_id,
-    _build_sec_13f_url,
-    _compute_form13f_change,
-    _compute_form13f_signal_score,
-    _score_reason,
-    aggregate_signal_score,
-    current_manager_ids,
-)
+from backend.utils.form13f import _get_form13f_for_instruments, estimated_holder_flow
 from backend.utils.pe_history import basis_matches, harmonic_mean_pe, pe_series
 from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.roic import get_roic
 from backend.views._etf_overlay import apply_derived_to_instrument, fund_derived_metrics
 from backend.views._shared import get_rates, statement_to_quote_factor
 from config import BENCHES, PRICE_FIELD, TIMEZONE
-from backend.utils.form13f_actions import quantity_split_history
 from models import (
     EtfHolding,
     FeaturesDaily,
-    Form13FFiling,
-    Form13FHolding,
-    Form13FManager,
     SecCompanyFacts,
     HoldingDaily,
     Instrument,
@@ -355,130 +340,20 @@ async def get_instrument(
         else None,
     }
 
-    # 13F institutional holders: match by instrument_id (set from Form13FHolding.cusip vs Instrument.isin)
-    form13f_holdings: list[dict[str, str | int | float | None]] = []
-    holdings_result = await session.execute(
-        select(Form13FHolding, Form13FFiling, Form13FManager)
-        .join(Form13FFiling, Form13FHolding.filing_id == Form13FFiling.id)
-        .join(Form13FManager, Form13FFiling.manager_id == Form13FManager.id)
-        .where(resolved_holding_instrument_id() == instrument.id)
+    # Same period selection, absence handling and conviction weighting as Holdings.
+    form13f = (await _get_form13f_for_instruments(session, [instrument.id])).get(
+        instrument.id, {"holders": [], "score": None}
     )
-    rows = holdings_result.all()
-
-    # Aggregate by (manager_id, filing_id): sum value + shares across share classes
-    by_manager_filing: dict[tuple[int, int], Form13FFilingRow] = {}
-    for holding, filing, manager in rows:
-        key = (manager.id, filing.id)
-        if key not in by_manager_filing:
-            by_manager_filing[key] = {
-                "manager_name": manager.name,
-                "manager_id": manager.id,
-                "manager_cik": manager.cik,
-                "report_date": filing.report_date,
-                "accession_number": filing.accession_number,
-                "value": 0,
-                "shares": 0,
-                "filing_total_value": filing.total_value,
-            }
-        by_manager_filing[key]["value"] += holding.value
-        by_manager_filing[key]["shares"] += holding.shares
-
-    # Separates "first filing ever" from "filed before but didn't hold this" (= New). Covers
-    # every manager, not just this instrument's holders, so the consensus quarter is the global one.
-    manager_filing_dates: dict[int, list[date]] = defaultdict(list)
-    filing_date_rows = await session.execute(
-        select(Form13FFiling.manager_id, Form13FFiling.report_date).order_by(
-            Form13FFiling.manager_id, Form13FFiling.report_date.desc()
-        )
-    )
-    for mid, rdate in filing_date_rows.all():
-        manager_filing_dates[mid].append(rdate)
-
-    current_ids, _ = current_manager_ids({mid: dates[0] for mid, dates in manager_filing_dates.items()})
-
-    # Per manager: latest and prev filing for this instrument, compute change
-    by_manager: dict[int, list[Form13FFilingRow]] = {}
-    for (mid, fid), data in by_manager_filing.items():
-        by_manager.setdefault(mid, []).append(data)
-
-    # (score, conviction) pairs fed to the shared aggregate_signal_score, so this
-    # view and the holdings list cannot drift apart again.
-    scoring_pairs: list[tuple[float, float]] = []
-
-    for mid, filings_list in by_manager.items():
-        filings_list.sort(key=lambda x: x["report_date"], reverse=True)
-        latest = filings_list[0]
-        prev = filings_list[1] if len(filings_list) > 1 else None
-
-        if prev is not None:
-            shares_prev: int | None = prev["shares"]
-            value_prev_h: int | None = prev["value"]
-        elif len(manager_filing_dates.get(mid, [])) >= 2:
-            # Manager filed before but didn't hold this instrument → new position
-            shares_prev = 0
-            value_prev_h = 0
-        else:
-            # Manager has only one filing total → no comparison possible
-            shares_prev = None
-            value_prev_h = None
-
-        shares_prev_reported = shares_prev
-        shares_prev = split_adjusted_shares(
-            shares_prev,
-            quantity_split_history(instrument.yahoo.splits if instrument.yahoo else {}, instrument.yahoo_symbol),
-            prev["report_date"] if prev else None,
-            latest["report_date"],
-        )
-        change = _compute_form13f_change(latest['shares'], shares_prev)
-        report_date_prev = prev["report_date"].isoformat() if prev else None
-        filing_total = latest.get("filing_total_value") or 0
-        pct_of_portfolio = (latest["value"] / filing_total * 100) if filing_total > 0 else None
-        score = _compute_form13f_signal_score(
-            latest["shares"],
-            shares_prev,
-            value=latest["value"],
-            value_prev=value_prev_h,
-            filing_total_value=filing_total,
-        )
-        is_stale = mid not in current_ids
-        if score != 0 and not is_stale:
-            scoring_pairs.append((score, latest["value"] / filing_total if filing_total > 0 else 0.0))
-
-        form13f_holdings.append(
-            {
-                "manager_id": latest["manager_id"],
-                "manager_name": latest["manager_name"],
-                "value": latest["value"],
-                "value_prev": value_prev_h,
-                "pct_of_portfolio": round(pct_of_portfolio, 2) if pct_of_portfolio is not None else None,
-                "shares": latest["shares"],
-                "shares_prev": shares_prev_reported,
-                "shares_prev_adjusted": shares_prev,
-                "report_date": latest["report_date"].isoformat(),
-                "report_date_prev": report_date_prev,
-                "change": change,
-                "scored": score != 0 and not is_stale,
-                "score_reason": _score_reason(score, change, latest["value"], filing_total or None, stale=is_stale),
-                "sec_filing_url": _build_sec_13f_url(latest.get("manager_cik"), latest.get("accession_number")),
-            }
-        )
+    form13f_holdings = form13f["holders"]
+    form13f_score = form13f["score"]
 
     # Sort: scored holders first (by absolute flow to surface biggest moves),
     # then unscored holders by current value descending.
-    def _abs_flow(h: dict) -> float:
-        shares = h.get("shares") or 0
-        shares_prev = h.get("shares_prev_adjusted")
-        value = h.get("value") or 0
-        if shares_prev is None:
-            return 0.0
-        price = value / shares if shares > 0 else 0.0
-        return abs((shares - shares_prev) * price)
-
-    form13f_holdings.sort(key=lambda h: (0 if h.get("scored") else 1, -_abs_flow(h), -(h.get("value") or 0)))
+    form13f_holdings.sort(
+        key=lambda h: (0 if h.get("scored") else 1, -abs(estimated_holder_flow(h) or 0), -(h.get("value") or 0))
+    )
 
     form13f_as_of = max((h["report_date"] for h in form13f_holdings), default=None)
-
-    form13f_score = aggregate_signal_score(scoring_pairs)
 
     # User's position (if held): portfolio_pct, market_value, profit, return_pct
     my_position: dict[str, Any] | None = None
