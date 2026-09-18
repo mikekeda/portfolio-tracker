@@ -11,6 +11,7 @@ calibrated on conventional unlevered FCF margin. `utils/dcf.py` does deduct it,
 because dilution matters when discounting to a per-share value.
 """
 
+from datetime import date
 from typing import Any, NamedTuple, Optional
 
 QUARTERS_PER_YEAR = 4
@@ -77,18 +78,27 @@ def _period_revenue(row: dict[str, Any]) -> Optional[float]:
 def _ttm(
     quarterly_cashflow: Optional[dict[str, Any]], quarterly_income_stmt: Optional[dict[str, Any]]
 ) -> Optional[TrailingFcf]:
-    """Sums over the four most recent quarters present in both statements.
+    """Sums over the four most recent quarters present in both statements, when consecutive.
 
-    Both sides read the identical key set, so the ratio survives a hole in the
-    quarterly history (15 names) and needs no `info` field to be consistent with
-    the statements — Yahoo reports VALE and PBR revenue in BRL there while their
-    statements are in USD.
+    Both sides read the identical key set and need no `info` field to be
+    consistent with the statements — Yahoo reports VALE and PBR revenue in BRL
+    there while their statements are in USD. A gap in the quarters returns None.
     """
     cashflow_rows = _rows(quarterly_cashflow)
     income_rows = _rows(quarterly_income_stmt)
 
     quarters = sorted(cashflow_rows.keys() & income_rows.keys(), reverse=True)[:QUARTERS_PER_YEAR]
     if len(quarters) < QUARTERS_PER_YEAR:
+        return None
+    try:
+        dates = [date.fromisoformat(q) for q in quarters]
+    except (TypeError, ValueError):
+        return None
+    # Allow 52/53-week fiscal calendars, but not a missing quarter or duplicate
+    # period variants. Four quarter ends normally span about 273 days.
+    if (dates[0] - dates[-1]).days > 290 or any(
+        not 70 <= (newer - older).days <= 110 for newer, older in zip(dates, dates[1:])
+    ):
         return None
 
     fcf = [_period_fcf(cashflow_rows[quarter]) for quarter in quarters]

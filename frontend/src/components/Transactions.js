@@ -119,19 +119,36 @@ const Transactions = () => {
       .finally(() => setLoading(false));
   }, []);
 
+  // All summary panels share the same date window; search/type affect only the table.
+  const periodTransactions = useMemo(() => (data?.transactions || []).filter(t => (
+    (!yearFilter || t.date.startsWith(yearFilter))
+    && (!dateFrom || t.date.slice(0, 10) >= dateFrom)
+    && (!dateTo || t.date.slice(0, 10) <= dateTo)
+  )), [data, yearFilter, dateFrom, dateTo]);
+
+  const dividends = useMemo(() => {
+    const payers = new Map();
+    const months = new Map();
+    for (const t of periodTransactions) {
+      if (!t.action.startsWith('Dividend')) continue;
+      const month = t.date.slice(0, 7);
+      months.set(month, (months.get(month) || 0) + t.total);
+      if (!t.ticker) continue;
+      const payer = payers.get(t.ticker) || { ticker: t.ticker, name: t.name, total: 0, count: 0 };
+      payer.total += t.total;
+      payer.count += 1;
+      payers.set(t.ticker, payer);
+    }
+    return {
+      payers: [...payers.values()].sort((a, b) => b.total - a.total),
+      months: [...months].sort(([a], [b]) => a.localeCompare(b)).map(([month, amount]) => ({ month, amount })),
+    };
+  }, [periodTransactions]);
+
   // ── Filtered transaction list (client-side) ────────────────────────────────
   const filtered = useMemo(() => {
     if (!data) return [];
-    let txns = data.transactions;
-
-    if (yearFilter)
-      txns = txns.filter(t => t.date.startsWith(yearFilter));
-
-    // Date range: t.date is ISO string "YYYY-MM-DDTHH:mm:ss", inputs are "YYYY-MM-DD"
-    if (dateFrom)
-      txns = txns.filter(t => t.date.slice(0, 10) >= dateFrom);
-    if (dateTo)
-      txns = txns.filter(t => t.date.slice(0, 10) <= dateTo);
+    let txns = periodTransactions;
 
     if (typeFilter === 'dividends')
       txns = txns.filter(t => t.action.startsWith('Dividend'));
@@ -148,7 +165,7 @@ const Transactions = () => {
       );
     }
     return txns;
-  }, [data, yearFilter, typeFilter, search, dateFrom, dateTo]);
+  }, [data, periodTransactions, typeFilter, search]);
 
   const paginated  = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
@@ -158,12 +175,8 @@ const Transactions = () => {
     if (!data) return null;
     // No filters at all → use pre-computed backend summary
     if (!yearFilter && !dateFrom && !dateTo) return data.summary;
-    let txns = data.transactions;
-    if (yearFilter) txns = txns.filter(t => t.date.startsWith(yearFilter));
-    if (dateFrom)   txns = txns.filter(t => t.date.slice(0, 10) >= dateFrom);
-    if (dateTo)     txns = txns.filter(t => t.date.slice(0, 10) <= dateTo);
     let divs = 0, gains = 0, fees = 0, interest = 0, deposited = 0;
-    for (const t of txns) {
+    for (const t of periodTransactions) {
       fees += t.fees || 0;
       if (t.action.startsWith('Dividend'))               divs      += t.total;
       else if (t.action === 'Deposit')                   deposited += t.total;
@@ -174,7 +187,7 @@ const Transactions = () => {
       total_dividends: divs, total_realized_gains: gains,
       total_fees: fees, total_interest: interest, total_deposited: deposited,
     };
-  }, [data, yearFilter, dateFrom, dateTo]);
+  }, [data, yearFilter, dateFrom, dateTo, periodTransactions]);
 
   // ── ISA allowance for the relevant tax year ───────────────────────────────
   // ISA tax year = 6 Apr Y → 5 Apr Y+1.
@@ -210,11 +223,9 @@ const Transactions = () => {
   }, [data, yearFilter]);
 
   // ── Dividend chart clipped to last 24 months (or selected year) ───────────
-  const chartData = useMemo(() => {
-    if (!data) return [];
-    if (yearFilter) return data.dividends_chart.filter(d => d.month.startsWith(yearFilter));
-    return data.dividends_chart.slice(-24);
-  }, [data, yearFilter]);
+  const chartData = useMemo(() => (
+    yearFilter || dateFrom || dateTo ? dividends.months : dividends.months.slice(-24)
+  ), [dividends, yearFilter, dateFrom, dateTo]);
 
   // ── Average monthly dividend for reference line ───────────────────────────
   const avgMonthlyDividend = useMemo(() =>
@@ -300,7 +311,7 @@ const Transactions = () => {
           label="Dividends Received"
           value={fmtMoney(s.total_dividends, hideAmounts)}
           positive={s.total_dividends > 0}
-          sub={`${(data.top_dividend_payers || []).length} paying stocks`}
+          sub={`${dividends.payers.length} paying stocks`}
         />
         <SummaryCard
           label="Realized Gains"
@@ -338,7 +349,7 @@ const Transactions = () => {
 
         {/* Dividend income chart */}
         <div className="txn-panel txn-chart-panel">
-          <h3>Dividend Income — {yearFilter || 'Last 24 Months'}</h3>
+          <h3>Dividend Income — {dateFrom || dateTo ? 'Selected Period' : yearFilter || 'Last 24 Months'}</h3>
           {chartData.length > 0 ? (
             <div className="txn-chart-grow">
               <ResponsiveContainer width="100%" height={260}>
@@ -375,9 +386,9 @@ const Transactions = () => {
 
         {/* Top dividend payers */}
         <div className="txn-panel">
-          <h3>Top {Math.min(data.top_dividend_payers.length, 10)} Dividend Payers</h3>
+          <h3>Top {Math.min(dividends.payers.length, 10)} Dividend Payers</h3>
           <div className="txn-payers-list">
-            {data.top_dividend_payers.slice(0, 10).map(p => (
+            {dividends.payers.slice(0, 10).map(p => (
               <div key={p.ticker} className="txn-payer-row">
                 <div className="txn-payer-left">
                   <Link to={`/stock/${p.ticker}`} className="txn-payer-ticker">{p.ticker}</Link>
@@ -391,7 +402,7 @@ const Transactions = () => {
                 </div>
               </div>
             ))}
-            {data.top_dividend_payers.length === 0 && (
+            {dividends.payers.length === 0 && (
               <div className="txn-empty">No dividends recorded</div>
             )}
           </div>

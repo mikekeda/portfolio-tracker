@@ -45,14 +45,13 @@ def test_ttm_reads_both_sides_from_the_same_statements():
     assert (result.fcf, result.revenue) == (100, 100)
 
 
-def test_ttm_ratio_survives_a_hole_in_the_quarterly_history():
-    # 15 names skip a quarter, so the newest four common keys span 15 months.
-    # Both sides read that key set, so the ratio still spans four real quarters.
+def test_four_common_keys_are_not_ttm_when_a_quarter_is_missing():
+    # Matching numerators/denominators do not make a 15-month window TTM.
     gapped = ("2026-06-30", "2026-03-31", "2025-09-30", "2025-06-30")
     cashflow = {quarter: {"Free Cash Flow": 25.0} for quarter in gapped}
     income = {quarter: {"Total Revenue": 100.0} for quarter in gapped}
     result = trailing_fcf(cashflow, income, {}, {})
-    assert result.fcf / result.revenue == 0.25
+    assert result is None
 
 
 def test_ttm_derives_fcf_from_operating_cashflow_and_capex():
@@ -162,3 +161,23 @@ def test_ocf_alias_preserves_zero_and_reported_fcf():
     row["Free Cash Flow"] = 80
     assert trailing_fcf({}, {}, cf, income).fcf == 80
     assert _extract_trailing_fcf(cf)[0] == 80
+
+
+@pytest.mark.parametrize("periods", [
+    ["2026-06-30", "2026-03-31", "2025-12-31", "2025-06-30"],
+    ["2026-06-30", "2026-06-29", "2026-03-31", "2025-12-31"],
+    ["not-a-date", "2026-03-31", "2025-12-31", "2025-09-30"],
+])
+def test_gapped_or_invalid_quarters_fall_back_to_annual(periods):
+    cf = {p: {"Free Cash Flow": 10} for p in periods}
+    income = {p: {"Total Revenue": 100} for p in periods}
+    assert trailing_fcf(cf, income, {}, {}) is None
+    result = trailing_fcf(cf, income, {"2025-12-31": {"Free Cash Flow": 99}},
+                          {"2025-12-31": {"Total Revenue": 500}})
+    assert result == (99, 500)
+
+
+def test_53_week_quarter_dates_are_valid_ttm():
+    periods = ["2026-07-04", "2026-03-28", "2025-12-27", "2025-09-27"]
+    assert trailing_fcf({p: {"Free Cash Flow": 10} for p in periods},
+                        {p: {"Total Revenue": 100} for p in periods}, {}, {}) == (40, 400)

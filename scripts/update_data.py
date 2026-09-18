@@ -148,6 +148,7 @@ QUARTER_MATCH_TOLERANCE_DAYS = 15
 # Yahoo has no weekend/holiday FX bars; a week spans any long weekend, so the
 # batch always carries a usable close forward into the non-trading days.
 FX_LOOKBACK_DAYS = 7
+PRICE_OVERLAP_DAYS = 7
 
 # PostgreSQL caps a statement at 65535 bind parameters and a price row binds 9,
 # so anything past ~7200 rows per INSERT is rejected outright.
@@ -433,10 +434,12 @@ def update_holdings() -> list[HoldingDaily]:
         fetch_ids = [iid for iid, sym in id_to_yahoo_symbol.items() if sym in symbols_seen]
         # The cutoff comparison stays in SQL: the column is a naive `timestamp`,
         # so an aware cutoff can only be compared server-side.
-        for inst_id, quarterly_keys, est_due in session.execute(
+        for inst_id, income, cashflow, balance, est_due in session.execute(
             select(
                 InstrumentYahoo.instrument_id,
                 InstrumentYahoo.quarterly_income_stmt,
+                InstrumentYahoo.quarterly_cashflow,
+                InstrumentYahoo.quarterly_balance_sheet,
                 or_(
                     InstrumentYahoo.estimates_fetched_at.is_(None),
                     InstrumentYahoo.estimates_fetched_at < estimates_cutoff,
@@ -446,7 +449,7 @@ def update_holdings() -> list[HoldingDaily]:
             sym = id_to_yahoo_symbol.get(inst_id)
             if not sym:
                 continue
-            stored_quarters[sym] = _newest_period(quarterly_keys)
+            stored_quarters[sym] = _oldest_statement_period(income, cashflow, balance)
             if est_due:
                 estimates_due.add(sym)
 
@@ -730,6 +733,7 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> set[str
     df = yf.download(
         tickers=tickers,
         start=start.strftime("%Y-%m-%d"),
+        end=now.astimezone(timezone.utc).date().isoformat(),  # exclusive: never store today's partial bar
         interval="1d",
         group_by="ticker",
         auto_adjust=False,
@@ -744,6 +748,7 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> set[str
         # Yahoo pads non-traded days on thin lines with NaN prices but Volume=0,
         # so dropna(how="all") let them through and stored NaN closes.
         tdf = df[ticker].dropna(subset=["Close", "Adj_Close"])
+        tdf = tdf.loc[[dt.date() < now.astimezone(timezone.utc).date() for dt in tdf.index]]
         if not tdf.empty:
             stored.add(ticker)
         for dt, row in tdf.iterrows():
@@ -790,10 +795,63 @@ def _update_prices(session: Session, tickers: list[str], start: date) -> set[str
     return stored
 
 
+def _price_fetch_start(latest: date, refreshed: Optional[datetime], today: date) -> Optional[date]:
+    """Choose a daily overlap or a missing-completed-session catch-up."""
+    if refreshed is None or refreshed.date() < today:
+        return min(latest, today - timedelta(days=PRICE_OVERLAP_DAYS))
+    last_weekday = today - timedelta(days=[3, 1, 1, 1, 1, 1, 2][today.weekday()])
+    start = latest + timedelta(days=1)
+    return start if start <= last_weekday else None
+
+
+def _split_stale_history(splits: Optional[dict[str, Any]], first_date: date, oldest_write: datetime) -> Optional[str]:
+    """Find an elapsed split that may leave stored history on an older scale.
+
+    Check the oldest write anywhere in the history, not just the first row's write.
+    A write on the ex-date may precede the adjustment, so allow one further refresh.
+    """
+    for stamp, factor in sorted((splits or {}).items()):
+        try:
+            split_date = date.fromisoformat(str(stamp)[:10])
+        except ValueError:
+            continue
+        if factor and first_date < split_date <= datetime.now(timezone.utc).date() and oldest_write.date() <= split_date:
+            return str(stamp)[:10]
+    return None
+
+
+def _full_history_starts(session: Session, symbols: list[str]) -> dict[str, date]:
+    """Earliest stored date for symbols whose stored history predates a later split."""
+    if not symbols:
+        return {}
+    splits_by_symbol = dict(
+        session.execute(
+            select(Instrument.yahoo_symbol, InstrumentYahoo.splits)
+            .join(InstrumentYahoo, InstrumentYahoo.instrument_id == Instrument.id)
+            .where(Instrument.yahoo_symbol.in_(symbols))
+        ).all()
+    )
+    candidates = [s for s in symbols if splits_by_symbol.get(s)]
+    if not candidates:
+        return {}
+    history = session.execute(
+        select(PricesDaily.symbol, func.min(PricesDaily.date), func.min(PricesDaily.updated_at))
+        .where(PricesDaily.symbol.in_(candidates))
+        .group_by(PricesDaily.symbol)
+    ).all()
+    starts = {}
+    for symbol, first_date, oldest_write in history:
+        split = _split_stale_history(splits_by_symbol[symbol], first_date, oldest_write)
+        if split:
+            logger.warning("%s: stored prices predate the %s split; refetching from %s", symbol, split, first_date)
+            starts[symbol] = first_date
+    return starts
+
+
 def update_prices(tickers_to_add: set[str]) -> None:
     """Get and update price data for all tickers."""
 
-    today = datetime.now(TIMEZONE).date()
+    today = datetime.now(timezone.utc).date()
 
     with get_session() as session:
         tickers = {
@@ -805,6 +863,7 @@ def update_prices(tickers_to_add: set[str]) -> None:
             session.query(
                 PricesDaily.symbol,
                 func.max(PricesDaily.date).label("max_date"),
+                func.max(PricesDaily.updated_at).filter(PricesDaily.date < today).label("refreshed_at"),
             )
             .where(PricesDaily.symbol.notin_(STOCKS_DELISTED))
             .group_by(PricesDaily.symbol)
@@ -812,17 +871,28 @@ def update_prices(tickers_to_add: set[str]) -> None:
             .all()
         )
 
-        # Get prices for existing tickers. Commit per batch so a later batch
-        # failing (and triggering the rollback in _update_prices) doesn't
-        # discard prices already upserted in earlier batches.
-        for i in range(0, len(existing_prices), BATCH_SIZE_YF):
-            sub = existing_prices[i : i + BATCH_SIZE_YF]
-            start = min([row.max_date for row in sub]) + timedelta(days=1)
-            if start > (today - timedelta(days=[3, 1, 1, 1, 1, 1, 2][today.weekday()])):
-                break
-            existing_tickers: list[str] = [row.symbol for row in sub]
-            _update_prices(session, existing_tickers, start)
-            session.commit()
+        # Checked on the daily pass only, so a row Yahoo no longer serves cannot trigger a refetch every run.
+        full_history = _full_history_starts(
+            session, [row.symbol for row in existing_prices if row.refreshed_at is None or row.refreshed_at.date() < today]
+        )
+        pending: dict[date, list[str]] = defaultdict(list)
+        for row in existing_prices:
+            start = full_history.get(row.symbol) or _price_fetch_start(row.max_date, row.refreshed_at, today)
+            if start is not None:
+                pending[start].append(row.symbol)
+        logger.info(
+            "Prices due for %d/%d stored symbols (daily overlap, catch-up or split refetch)",
+            sum(len(symbols) for symbols in pending.values()),
+            len(existing_prices),
+        )
+
+        # Batch by start date so a lagging or split symbol cannot pull current neighbours into a longer download.
+        # Commit each batch so failed batches remain due without replaying successful ones.
+        for start in sorted(pending):
+            symbols = pending[start]
+            for i in range(0, len(symbols), BATCH_SIZE_YF):
+                _update_prices(session, symbols[i : i + BATCH_SIZE_YF], start)
+                session.commit()
 
         # Get prices for new tickers
         new_tickers = list((tickers_to_add | tickers) - {row.symbol for row in existing_prices})
@@ -874,6 +944,17 @@ def _newest_period(statement: Optional[dict[str, Any]]) -> Optional[date]:
         return max(date.fromisoformat(k[:10]) for k in statement)
     except ValueError:
         return None
+
+
+def _oldest_statement_period(*statements: Optional[dict[str, Any]]) -> Optional[date]:
+    """A current income statement cannot hide a lagging cash-flow/balance sheet.
+
+    Ignore structurally unavailable modules (e.g. some financial companies).
+    All-empty or malformed non-empty payloads force a retry at the normal
+    profile refresh cadence. Per-module support tracking remains separate.
+    """
+    periods = [_newest_period(statement) for statement in statements if statement]
+    return min(periods) if periods and all(periods) else None
 
 
 def _quarterly_due(stored_quarter: Optional[date], latest_quarter: Optional[date]) -> bool:
@@ -942,9 +1023,11 @@ def fetch_profile_for_ticker(
         stored_quarter = (stored_quarters or {}).get(ticker.ticker)
         latest_quarter = most_recent_quarter(yahoo_data["info"])
         if _quarterly_due(stored_quarter, latest_quarter):
-            yahoo_data["quarterly_cashflow"] = scrub_for_json(ticker.quarterly_cashflow.to_dict())
-            yahoo_data["quarterly_balance_sheet"] = scrub_for_json(ticker.quarterly_balance_sheet.to_dict())
-            yahoo_data["quarterly_income_stmt"] = scrub_for_json(ticker.quarterly_income_stmt.to_dict())
+            for module in ("quarterly_cashflow", "quarterly_balance_sheet", "quarterly_income_stmt"):
+                try:
+                    yahoo_data[module] = scrub_for_json(getattr(ticker, module).to_dict())
+                except Exception as exc:
+                    logger.warning("Failed %s for %s; keeping cached statement: %s", module, ticker.ticker, exc)
 
         # Estimates move weekly at most; same reasoning, separate gate.
         if estimates_due is None or ticker.ticker in estimates_due:
@@ -1300,30 +1383,30 @@ def update_data():
     """Update all data in the database."""
     logger.info("Starting data update process")
 
-    # 1. Update rates
-    update_currency_rates(CURRENCIES)
+    try:
+        # 1. Update rates
+        update_currency_rates(CURRENCIES)
 
-    # 2. Update instruments
-    # _isins_to_add: (isin, currencyCode) must match Trading 212 equity metadata exactly
-    # (see update_instruments: same ISIN can list twice with different currencies).
-    # LSE stocks quoted in pence (UI shows "p…") use currencyCode "GBX", not "GBP".
-    _isins_to_add: set[tuple[str, str]] = set()
-    update_instruments(_isins_to_add)
+        # 2. Update instruments
+        # _isins_to_add: (isin, currencyCode) must match Trading 212 equity metadata exactly
+        # (see update_instruments: same ISIN can list twice with different currencies).
+        # LSE stocks quoted in pence (UI shows "p…") use currencyCode "GBX", not "GBP".
+        _isins_to_add: set[tuple[str, str]] = set()
+        update_instruments(_isins_to_add)
 
-    # 3. Update holdings
-    update_holdings()
+        # 3. Update holdings
+        update_holdings()
 
-    # 4. Update prices
-    # Index members feed the breadth/SMA200 metrics even without a T212 instrument;
-    # any member with no price history yet gets seeded (10y backfill, once).
-    _tickers_to_add: set[str] = (set(SP500) | set(QQQ)) - STOCKS_DELISTED
-    update_prices(_tickers_to_add)
+        # 4. Update prices
+        # Index members feed the breadth/SMA200 metrics even without a T212 instrument;
+        # any member with no price history yet gets seeded (10y backfill, once).
+        _tickers_to_add: set[str] = (set(SP500) | set(QQQ)) - STOCKS_DELISTED
+        update_prices(_tickers_to_add)
 
-    # 5. Update portfolio
-    update_portfolio()
-
-    # 6. Clear caches
-    fetch_holdings.cache_clear()
+        # 5. Update portfolio
+        update_portfolio()
+    finally:
+        fetch_holdings.cache_clear()
 
 
 if __name__ == "__main__":

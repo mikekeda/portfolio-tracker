@@ -138,13 +138,11 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=0, hour=7),
         "args": (),
     },
-    # Point-in-time feature snapshot: Daily at 22:30 UTC, 30 min after the last
-    # weekday update_data run (22:00), so screener/DCF/thesis features are
-    # captured from a Yahoo cache that reflects the US close. Idempotent upsert
-    # by (instrument, date) — a re-run the same day just refreshes the row.
+    # Refresh again before the 07:00 agent: completed price bars arrive after midnight.
+    # Keep the evening snapshot; the morning run records a new day's inputs without backdating them.
     "update_features_nightly": {
         "task": "celery_tasks.tasks.update_features_task",
-        "schedule": crontab(minute=30, hour=22),
+        "schedule": crontab(minute=30, hour="6,22"),
         "args": (),
     },
     # SEC companyfacts → sec_features_daily: Daily at 5:30 AM UTC after earnings

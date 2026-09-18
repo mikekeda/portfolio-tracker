@@ -203,3 +203,101 @@ def test_investor_ciks_defaults_to_the_primary():
 
 def test_normalize_cusip():
     assert normalize_cusip(" 48251w104 ") == "48251W104"
+
+
+def test_complete_repetition_keeps_multiplicity_and_uses_amendment_source():
+    a, b = _holding("A", 10, 100), _holding("B", 20, 200)
+    base = _filing("1", "2026-06-30", [a, a, b])
+    amended = _filing("1", "2026-06-30", [a, a, b, _holding("C", 1, 10)],
+                      form="13F-HR/A", accession="complete-amendment")
+    result = merge_new_holdings(base, amended)
+    assert result["holdingsCount"] == 4
+    assert result["totalValue"] == 410
+    assert result["accessionNumber"] == "complete-amendment"
+    assert base["holdingsCount"] == 3
+
+
+def test_partial_overlap_fails_instead_of_guessing():
+    import pytest
+    a, b = _holding("A", 10, 100), _holding("B", 20, 200)
+    with pytest.raises(ValueError, match="Ambiguous partial"):
+        merge_new_holdings(_filing("1", "2026-06-30", [a, b]),
+                           _filing("1", "2026-06-30", [a, _holding("C", 1, 10)]))
+
+
+def test_source_identity_preserves_manager_and_voting_dimensions():
+    from scripts.scrape_13f import parse_13f_xml
+    def parsed(manager, votes):
+        return parse_13f_xml(f"""<informationTable xmlns="urn:sec"><infoTable>
+          <nameOfIssuer>X</nameOfIssuer><titleOfClass>COM</titleOfClass><cusip>A</cusip>
+          <value>100</value><shrsOrPrnAmt><sshPrnamt>10</sshPrnamt><sshPrnamtType>SH</sshPrnamtType></shrsOrPrnAmt>
+          <investmentDiscretion>SOLE</investmentDiscretion><otherManager>{manager}</otherManager>
+          <votingAuthority><Sole>{votes}</Sole><Shared>0</Shared><None>0</None></votingAuthority>
+        </infoTable></informationTable>""")
+    original = parsed("1", 10)
+    for different in [parsed("2", 10), parsed("1", 9)]:
+        result = merge_new_holdings(_filing("1", "2026-06-30", original),
+                                    _filing("1", "2026-06-30", different))
+        assert result["holdingsCount"] == 2
+        assert result["totalValue"] == 200
+
+
+def test_failed_manager_preserves_other_results_and_reports_failure(monkeypatch):
+    from contextlib import contextmanager
+    from unittest.mock import Mock
+
+    import pytest
+    from scripts import scrape_13f as module
+
+    session = Mock()
+    completed = []
+
+    @contextmanager
+    def db():
+        yield session
+        completed.append(True)
+
+    good = _filing("2", "2026-06-30", [_holding("A", 1, 10)])
+    monkeypatch.setattr(module, "get_session", db)
+    monkeypatch.setattr(module, "INVESTORS", [{"name": "Bad", "cik": "1"}, {"name": "Good", "cik": "2"}])
+    monkeypatch.setattr(module, "_get_existing_report_dates", Mock(return_value=[]))
+    monkeypatch.setattr(module, "scrape_investor", Mock(side_effect=[ValueError("Ambiguous partial"), [good]]))
+    save = Mock()
+    monkeypatch.setattr(module, "_save_to_db", save)
+    with pytest.raises(RuntimeError, match="existing data retained for: Bad"):
+        module.main()
+    save.assert_called_once_with(session, [good])
+    assert completed == [True]
+
+
+def test_failed_amendment_download_cannot_replace_complete_stored_filing(monkeypatch):
+    import pytest
+    from unittest.mock import Mock
+    from scripts import scrape_13f as module
+
+    metadata = [{"reportDate": "2026-06-30", "form": form, "accessionNumber": accession,
+                 "primaryDocument": "primary_doc.xml"}
+                for form, accession in [("13F-HR/A", "amendment"), ("13F-HR", "original")]]
+    monkeypatch.setattr(module, "sleep", lambda _: None)
+    monkeypatch.setattr(module, "get_recent_13f_filings", Mock(return_value=metadata))
+    monkeypatch.setattr(module, "_fetch_amendment_type", Mock(return_value="NEW HOLDINGS"))
+    monkeypatch.setattr(module, "_fetch_filing", Mock(side_effect=[
+        _filing("1", "2026-06-30", [_holding("A", 1, 100)]), None,
+    ]))
+    with pytest.raises(RuntimeError, match="incomplete download for amendment"):
+        module._scrape_cik("Test", "1", 1, ["1"])
+
+
+def test_unreadable_amendment_type_fails_the_manager_refresh(monkeypatch):
+    import pytest
+    from unittest.mock import Mock
+    from scripts import scrape_13f as module
+
+    monkeypatch.setattr(module, "sleep", lambda _: None)
+    monkeypatch.setattr(module, "get_recent_13f_filings", Mock(return_value=[{
+        "reportDate": "2026-06-30", "form": "13F-HR/A", "accessionNumber": "amendment",
+        "primaryDocument": "primary_doc.xml",
+    }]))
+    monkeypatch.setattr(module, "_fetch_amendment_type", Mock(return_value=""))
+    with pytest.raises(RuntimeError, match="cannot classify amendment"):
+        module._scrape_cik("Test", "1", 1, ["1"])

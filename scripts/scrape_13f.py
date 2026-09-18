@@ -17,9 +17,10 @@ Pre-2023 filings may report value in thousands.
 SEC requires User-Agent: "CompanyName admin@example.com"
 """
 
+from collections import Counter
 from datetime import date
 from time import sleep
-from typing import Optional, TypedDict
+from typing import NotRequired, Optional, TypedDict
 
 import requests
 from lxml import etree
@@ -173,6 +174,9 @@ class ParsedHolding(TypedDict):
     titleOfClass: str
     value: int
     shares: int
+    # Full source row, including discretion/otherManager/voting authority. Used
+    # during amendment reconciliation; never deduplicate merely by CUSIP.
+    source_identity: NotRequired[tuple[tuple[str, str], ...]]
 
 
 class ScrapedFiling(TypedDict):
@@ -395,6 +399,21 @@ def _parse_xml(xml_content: str) -> Optional[etree._Element]:
         return None
 
 
+def _source_row_identity(row) -> tuple[tuple[str, str], ...]:
+    """Namespace-independent leaf paths preserve every reported lot dimension."""
+    leaves = []
+    for element in row.iter():
+        if len(element) or not isinstance(element.tag, str):
+            continue
+        path = [etree.QName(element).localname]
+        parent = element.getparent()
+        while parent is not None and parent is not row:
+            path.append(etree.QName(parent).localname)
+            parent = parent.getparent()
+        leaves.append(("/".join(reversed(path)), " ".join((element.text or "").split())))
+    return tuple(sorted(leaves))
+
+
 def parse_13f_xml(xml_content: str) -> list[ParsedHolding]:
     """
     Parses 13F information table XML and extracts holdings.
@@ -455,6 +474,7 @@ def parse_13f_xml(xml_content: str) -> list[ParsedHolding]:
                     "titleOfClass": title,
                     "value": value,
                     "shares": shares,
+                    "source_identity": _source_row_identity(it),
                 }
             )
 
@@ -522,11 +542,26 @@ def merge_new_holdings(base: ScrapedFiling, amendment: ScrapedFiling) -> Scraped
     """
     Add a NEW HOLDINGS amendment's rows to the original filing.
 
-    Rows are appended, never deduplicated by CUSIP: an amendment can report a further lot of a
-    CUSIP the original already carries, and duplicate CUSIP rows per filing are expected anyway
-    (share classes, otherManager splits). Keeps the original's form and accession so the row
-    still identifies as the full filing.
+    Distinct source rows are appended, preserving separate lots of a CUSIP. An
+    amendment that repeats the whole base table is a complete filing despite its
+    NEW HOLDINGS label and replaces it. Raises ValueError on a partial overlap.
     """
+    def identity(row):
+        return row.get("source_identity") or tuple(sorted(row.items()))
+
+    original = Counter(identity(h) for h in base["holdings"])
+    incoming = Counter(identity(h) for h in amendment["holdings"])
+    overlap = original & incoming
+    if overlap:
+        if original - incoming:
+            # A partial overlap could be either a correction or an extra lot.
+            # Do not silently add it or erase previously reported positions.
+            raise ValueError(f"Ambiguous partial amendment overlap: {amendment['accessionNumber']}")
+        logger.warning("Amendment %s repeats all %d original rows; using its complete table",
+                       amendment["accessionNumber"], sum(original.values()))
+        return {**amendment, "holdingsCount": len(amendment["holdings"]),
+                "totalValue": sum(h["value"] for h in amendment["holdings"])}
+
     holdings = base["holdings"] + amendment["holdings"]
     return {
         **base,
@@ -672,33 +707,27 @@ def _scrape_cik(name: str, cik: str, fetch_count: int, known_ciks: list[str]) ->
             amendment_type = _fetch_amendment_type(cik, metadata) if metadata["form"] == "13F-HR/A" else ""
             disposition = amendment_disposition(metadata["form"], amendment_type)
             if disposition == "skip":
-                logger.error(
-                    "%s %s: cannot classify amendment %s (amendmentType %r) — keeping the original, "
-                    "since a NEW HOLDINGS delta would otherwise replace the full filing",
-                    name,
-                    report_date,
-                    metadata["accessionNumber"],
-                    amendment_type,
+                raise RuntimeError(
+                    f"{name} {report_date}: cannot classify amendment {metadata['accessionNumber']}; "
+                    "existing stored filing must be retained"
                 )
-                continue
 
             parsed = _fetch_filing(name, cik, metadata, is_partial=disposition == "merge")
             if parsed is None:
-                continue
+                raise RuntimeError(f"{name} {report_date}: incomplete download for {metadata['accessionNumber']}")
 
             if disposition == "replace":
                 filing = parsed
             elif filing is None:
-                logger.error(
-                    "%s %s: NEW HOLDINGS amendment %s has no readable original — skipping, "
-                    "storing the delta alone would look like the whole quarter",
-                    name,
-                    report_date,
-                    metadata["accessionNumber"],
+                raise RuntimeError(
+                    f"{name} {report_date}: NEW HOLDINGS amendment {metadata['accessionNumber']} "
+                    "has no readable original"
                 )
             else:
+                previous_count = filing["holdingsCount"]
                 filing = merge_new_holdings(filing, parsed)
-                logger.info("  %s: %s amendment added %d holding(s)", name, report_date, parsed["holdingsCount"])
+                logger.info("  %s: %s amendment added %d holding(s)", name, report_date,
+                            filing["holdingsCount"] - previous_count)
 
         if filing is None:
             continue
@@ -917,6 +946,7 @@ def main(limit: Optional[int] = None, default_quarters: int = 4) -> None:
     """
     investors = INVESTORS[:limit] if limit else INVESTORS
     results: list[ScrapedFiling] = []
+    failed: list[str] = []
 
     with get_session() as session:
         for inv in investors:
@@ -926,12 +956,15 @@ def main(limit: Optional[int] = None, default_quarters: int = 4) -> None:
                 results.extend(data_list)
             except Exception as e:
                 logger.exception("Error scraping %s: %s", inv["name"], e)
+                failed.append(str(inv["name"]))
 
         if results:
             _save_to_db(session, results)
             logger.info("Saved %d filings to database", len(results))
         else:
             logger.warning("No new 13F data scraped.")
+    if failed:
+        raise RuntimeError("13F refresh incomplete; existing data retained for: " + ", ".join(failed))
 
 
 if __name__ == "__main__":

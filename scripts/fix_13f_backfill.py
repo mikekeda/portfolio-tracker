@@ -47,28 +47,39 @@ def _damaged_manager_names(session) -> set[str]:
 
 
 def fix_13f_backfill(only: str | None = None, quarters: int = DEFAULT_QUARTERS, dry_run: bool = False) -> int:
-    """Re-scrape and rewrite damaged or multi-CIK 13F quarters. Returns filings saved."""
+    """Re-scrape and rewrite 13F quarters. Returns filings saved.
+
+    Without `only`, targets damaged or multi-CIK managers; a named investor is always
+    re-scraped, which covers damage the detector cannot see (e.g. a duplicated table).
+    """
     with get_session() as session:
-        damaged = _damaged_manager_names(session)
-        targets = [
-            inv
-            for inv in INVESTORS
-            if (only is None or inv["name"] == only) and (str(inv["name"]) in damaged or len(investor_ciks(inv)) > 1)
-        ]
+        if only:
+            targets = [inv for inv in INVESTORS if inv["name"] == only]
+        else:
+            damaged = _damaged_manager_names(session)
+            targets = [inv for inv in INVESTORS if str(inv["name"]) in damaged or len(investor_ciks(inv)) > 1]
         if only and not targets:
-            raise SystemExit(f"'{only}' is not a tracked investor, or needs no repair.")
+            raise SystemExit(f"'{only}' is not a tracked investor.")
         if not targets:
             logger.info("Nothing to repair.")
             return 0
 
         logger.info("Repairing %d investor(s): %s", len(targets), ", ".join(str(t["name"]) for t in targets))
         results: list[ScrapedFiling] = []
+        failed = []
         for inv in targets:
             try:
                 # Empty existing_dates forces the full window instead of the latest quarter only.
-                results.extend(scrape_investor(inv, existing_dates=set(), default_quarters=quarters))
+                filings = scrape_investor(inv, existing_dates=set(), default_quarters=quarters)
+                if not filings:
+                    raise RuntimeError("No filings returned for the requested repair")
+                results.extend(filings)
             except Exception as e:
                 logger.exception("Error scraping %s: %s", inv["name"], e)
+                failed.append(str(inv["name"]))
+
+        if failed:
+            raise RuntimeError("13F repair incomplete; no changes saved. Failed investors: " + ", ".join(failed))
 
         if dry_run:
             for r in results:
@@ -89,7 +100,7 @@ def fix_13f_backfill(only: str | None = None, quarters: int = DEFAULT_QUARTERS, 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Repair damaged or multi-CIK 13F quarters")
-    parser.add_argument("--investor", help="Repair a single investor by name", default=None)
+    parser.add_argument("--investor", help="Re-scrape a single investor by name, even if no damage is detected", default=None)
     parser.add_argument(
         "--quarters", type=int, default=DEFAULT_QUARTERS, help=f"Quarters to fetch (default: {DEFAULT_QUARTERS})"
     )

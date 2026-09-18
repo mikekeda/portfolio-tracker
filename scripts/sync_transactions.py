@@ -24,7 +24,7 @@ import argparse
 import logging
 import requests
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from config import TRADING212_API_BASE, TRADING212_API_KEY, logger
@@ -97,11 +97,11 @@ _MIN_DEPOSIT_GBP = 1.0
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _get(url: str) -> Optional[dict]:
+def _get(url: str) -> dict:
     """GET a T212 URL with retry on 429 rate-limit.
 
-    Returns None on 404 (expired/invalid cursor — treated as end of
-    pagination). Raises on all other HTTP errors.
+    Every HTTP failure, including an expired pagination cursor, is an error.
+    Only a successful response without nextPagePath ends pagination.
     """
     for attempt in range(4):
         r = requests.get(url, headers=_HEADERS, timeout=_TIMEOUT)
@@ -110,9 +110,6 @@ def _get(url: str) -> Optional[dict]:
             logger.warning("T212 rate limited — waiting %ds before retry %d/4", wait, attempt + 1)
             time.sleep(wait)
             continue
-        if r.status_code == 404:
-            logger.warning("T212 404 for %s — cursor expired, stopping pagination", url)
-            return None
         r.raise_for_status()
         return r.json()
     raise requests.HTTPError(f"Still rate-limited after 4 attempts: {url}")
@@ -258,8 +255,8 @@ def _fetch_all_pages(path: str, stop_before: Optional[datetime] = None) -> list[
             time.sleep(_PAGE_DELAY)
 
         data = _get(current_url)
-        if data is None:
-            break  # 404 — cursor expired, stop gracefully
+        if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+            raise ValueError(f"Invalid history response from {path}, page {page_num}")
 
         page_items = data.get("items") or []
         logger.debug("%s page %d: %d items", path, page_num, len(page_items))
@@ -671,9 +668,9 @@ def sync_transactions(
         stop_before_cash = since
         stop_before_divs = since
     else:
-        stop_before_orders = latest_orders_ts
-        stop_before_cash = latest_cash_ts
-        stop_before_divs = latest_div_ts
+        stop_before_orders = latest_orders_ts - timedelta(days=7) if latest_orders_ts else None
+        stop_before_cash = latest_cash_ts - timedelta(days=7) if latest_cash_ts else None
+        stop_before_divs = latest_div_ts - timedelta(days=7) if latest_div_ts else None
         logger.info(
             "Most recent DB records — orders: %s | cash: %s | dividends: %s",
             latest_orders_ts,
@@ -698,7 +695,7 @@ def sync_transactions(
             return items
         except Exception as exc:
             logger.error("Failed to fetch %s: %s", path, exc)
-            return []
+            raise
 
     raw_orders = _fetch("orders", "/api/v0/equity/history/orders", stop_before_orders)
     raw_cash = _fetch("cash", "/api/v0/equity/history/transactions", stop_before_cash)
@@ -725,16 +722,33 @@ def sync_transactions(
         )
         return stats
 
-    with get_session() as session:
-        _import_orders(raw_orders, existing_ids, t212_to_yahoo, t212_to_currency, session, stats)
-        _import_cash(raw_cash, existing_ids, session, stats)
-        _import_dividends(raw_divs, existing_ids, t212_to_yahoo, t212_to_currency, session, stats)
-        session.commit()
+    failed_feeds = []
+    for label, raw, importer, extra_args in (
+        ("orders", raw_orders, _import_orders, (t212_to_yahoo, t212_to_currency)),
+        ("cash", raw_cash, _import_cash, ()),
+        ("dividends", raw_divs, _import_dividends, (t212_to_yahoo, t212_to_currency)),
+    ):
+        before = stats.copy()
+        batch_ids = existing_ids.copy()
+        try:
+            # Keep each feed's cursor behind rejected items without blocking unrelated feeds.
+            with get_session() as session:
+                importer(raw, batch_ids, *extra_args, session, stats)
+                if stats["errors"] > before["errors"]:
+                    raise RuntimeError(f"{label}: {stats['errors'] - before['errors']} rejected item(s)")
+                session.commit()
+            existing_ids.update(batch_ids)
+        except Exception:
+            errors = max(1, stats["errors"] - before["errors"])
+            stats.update(before)
+            stats["errors"] += errors
+            failed_feeds.append(label)
+            logger.exception("Rolled back %s feed; continuing independent feeds", label)
 
     total_imported = stats["order_imported"] + stats["cash_imported"] + stats["div_imported"]
     total_skipped = stats["order_skipped"] + stats["cash_skipped"] + stats["div_skipped"]
     logger.info(
-        "T212 sync complete — imported: %d (orders: %d, cash: %d, divs: %d) | skipped: %d | dedup-skipped: %d | errors: %d",
+        "T212 sync import results — imported: %d (orders: %d, cash: %d, divs: %d) | skipped: %d | dedup-skipped: %d | errors: %d",
         total_imported,
         stats["order_imported"],
         stats["cash_imported"],
@@ -743,6 +757,11 @@ def sync_transactions(
         stats["dedup_skipped"],
         stats["errors"],
     )
+    if failed_feeds:
+        raise RuntimeError(
+            "Transaction sync incomplete: " + ", ".join(failed_feeds)
+            + " rolled back; successful feeds committed. Fix rejected items before retrying."
+        )
     return stats
 
 
