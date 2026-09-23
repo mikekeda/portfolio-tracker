@@ -127,10 +127,14 @@ STOCKS_DELISTED: set[str] = {  # updated 2026-08-21, event-driven
     "ALCC1",  # AltC Acquisition - merged into Oklo (OKLO)
     "BSAQ",  # Black Spade Acquisition - SPAC, no longer trading
     "CRH.L",  # CRH cancelled its LSE line Apr 2026; NYSE-only now (USD line is a separate instrument)
+    "AVB",  # AvalonBay - merged with Equity Residential into Vivmark (VMRK), Aug 2026
     "CTRA",  # Coterra Energy - merged into Devon Energy (DVN), May 2026
     "DEAC",  # Diamond Eagle Acquisition - merged into DraftKings (DKNG)
     "DMYQ",  # dMY Squared Technology - SPAC, no longer trading
     "EA",  # Electronic Arts - taken private by PIF/Silver Lake/Affinity, Aug 2026
+    "EQR",  # Equity Residential - renamed Vivmark (VMRK) on the AvalonBay merger, Aug 2026
+    "FLTR.L",  # Flutter - LSE line cancelled, NYSE-only now (FLUT)
+    "GIG",  # retired SPAC ticker; its stored series is a trust price, not the BigBear.ai line T212 names
     "HOLX",  # Hologic - taken private by Blackstone/TPG, Apr 2026
     "HYUDl_EQ",  # raw T212 code (rejected by convert_ticker, filtered in fetch_holdings)
     "MASI",  # Masimo - acquired by Danaher, Jun 2026
@@ -197,7 +201,6 @@ SP500 = [  # updated 2026-08-21, review quarterly
     "ADSK",
     "ADP",
     "AZO",
-    "AVB",
     "AVY",
     "AXON",
     "BKR",
@@ -315,7 +318,8 @@ SP500 = [  # updated 2026-08-21, review quarterly
     "EQT",
     "EFX",
     "EQIX",
-    "EQR",
+    "VMRK",
+    "RDDT",
     "ERIE",
     "ESS",
     "EL",
