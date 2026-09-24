@@ -26,9 +26,10 @@ def test_no_action_rerun_and_failed_replacement_are_transactional(monkeypatch):
                 gbp_prices=pd.DataFrame({"TEST": [100.0]}, index=[d]), currencies={}, tags={}, etf_symbols=set()
             )
             monkeypatch.setattr(runner, "load_market_data", AsyncMock(return_value=md))
-            monkeypatch.setattr(runner, "tradable_universe", lambda *args: ["TEST"])
-            monkeypatch.setattr(runner, "features_for_date", lambda *args, **kwargs: pd.DataFrame(index=["TEST"]))
+            monkeypatch.setattr(runner, "tradable_universe", lambda md, d: list(md.gbp_prices.columns))
+            monkeypatch.setattr(runner, "features_for_date", lambda md, d, symbols, **kwargs: pd.DataFrame({"mom_6m": 1.0}, index=symbols))
             monkeypatch.setattr(runner, "risk_columns", lambda *args: pd.DataFrame(index=["TEST"]))
+            monkeypatch.setattr(runner, "composite_score", lambda frame: pd.Series(1.0, index=frame.index))
             monkeypatch.setattr(runner.RulesStrategy, "propose", lambda *args: [])
             async with factory.begin() as session:
                 session.add_all(

@@ -12,18 +12,21 @@ into trade_suggestions. Run from project root:
 """
 
 import asyncio
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from math import isfinite
 
+import pandas as pd
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.agent.backtest.data import features_for_date, load_market_data, risk_columns, tradable_universe
 from backend.agent.constraints import apply_constraints
-from backend.agent.rules_strategy import RulesStrategy
+from backend.agent.rules_strategy import RulesStrategy, composite_score
 from backend.agent.types import AgentLimits, PortfolioState
 from backend.app import get_session
 from config import logger
+from data import STOCKS_DELISTED
 from models import HoldingDaily, Instrument, PortfolioDaily, TradeAgentRun, TradeSuggestion
 
 # Price history window: enough for 252d technicals + 504d risk window with slack.
@@ -48,8 +51,8 @@ def _positive(value) -> bool:
 def _valuation_prices(prices, symbols, decision_date):
     """Latest valid GBP valuation per holding, bounded in calendar days.
 
-    This does not manufacture candles or technical signals. Holdings with no
-    observed decision-day price remain outside the strategy's tradable universe.
+    This does not manufacture candles. Strategy features use the same observed
+    dates, separately from this valuation lookup.
     """
     window = prices.loc[
         (prices.index <= decision_date)
@@ -67,6 +70,28 @@ def _valuation_prices(prices, symbols, decision_date):
         if valid.index[-1] != decision_date:
             carried[symbol] = valid.index[-1]
     return values, carried
+
+
+def _strategy_features(md, decision_date, today, held):
+    """Build live features at each symbol's bounded last observed price date."""
+    prices, carried = _valuation_prices(md.gbp_prices, md.gbp_prices.columns, decision_date)
+    groups = defaultdict(list)
+    for symbol in prices:
+        if symbol not in STOCKS_DELISTED:
+            groups[carried.get(symbol, decision_date)].append(symbol)
+    frames = []
+    for observed, symbols in sorted(groups.items()):
+        eligible = set(tradable_universe(md, observed)) | set(held)
+        symbols = [s for s in symbols if s in eligible]
+        if not symbols:
+            continue
+        frame = features_for_date(md, observed, symbols, fundamentals_as_of=today).reindex(symbols)
+        frame["price_as_of"] = observed
+        # Keep stale observations in the ranking, but don't open a new position on one.
+        frame["entry_allowed"] = observed == decision_date
+        frames.append(frame)
+    features = pd.concat(frames).sort_index() if frames else pd.DataFrame()
+    return features, prices
 
 
 async def run_trade_agent() -> None:
@@ -163,8 +188,20 @@ async def _generate_suggestions(session, limits: AgentLimits, run: dict) -> None
         run["reason"] = reason[:200]
     weights = {s: v / total_value for s, v in values.items()}
 
-    universe = tradable_universe(md, d)
-    features = features_for_date(md, d, universe, fundamentals_as_of=today).join(risk_columns(md, d, weights))
+    features, decision_prices = _strategy_features(md, d, today, quantities)
+    features = features.join(risk_columns(md, d, weights))
+    scores = composite_score(features)
+    unevaluated = [s for s in quantities if not isfinite(scores.get(s, float("nan")))]
+    if unevaluated:
+        _skip(run, f"Incomplete strategy coverage: {len(unevaluated)}/{len(quantities)} holdings lack usable features: "
+              + ", ".join(sorted(unevaluated)))
+        return
+    carried_count = (features["price_as_of"] < d).sum()
+    run["reason"] = (
+        f"Evaluated {len(quantities)}/{len(quantities)} holdings; {len(carried)} held / "
+        f"{carried_count} universe symbols use earlier observations (up to {MAX_VALUATION_PRICE_AGE_DAYS} days)."
+    )
+    logger.info("Trade-agent: %s", run["reason"])
     state = PortfolioState(
         date=d,
         total_value_gbp=total_value,
@@ -192,7 +229,6 @@ async def _generate_suggestions(session, limits: AgentLimits, run: dict) -> None
         run.update(status="success", order_count=0, executable_count=0)
         logger.info("Trade-agent: no intents for %s — nothing to suggest", d)
         return
-    decision_prices = {s: float(md.gbp_prices.loc[d, s]) for s in {i.symbol for i in intents}}
     orders = apply_constraints(intents, state, decision_prices, limits)
     run.update(order_count=len(orders), executable_count=sum(1 for o in orders if o.executable))
 
@@ -209,7 +245,7 @@ async def _generate_suggestions(session, limits: AgentLimits, run: dict) -> None
             "weight_after": o.weight_after,
             "score": o.score,
             "fee_gbp": o.fee_gbp,
-            "rationale": o.rationale,
+            "rationale": {**o.rationale, "price_as_of": features.loc[o.symbol, "price_as_of"].isoformat()},
             "constraint_adjustments": list(o.adjustments),
             "status": "proposed",
         }

@@ -99,3 +99,10 @@ def test_deploy_still_opens_ordinary_equities():
     strategy = RulesStrategy(LIMITS)
     symbols = {i.symbol for i in strategy._deploy(FEATURES, COMP, _state(0.90))}
     assert symbols == {"QDVE.DE", "ACME"}
+
+
+def test_carried_candidates_cannot_open_positions_on_either_buy_path():
+    strategy = RulesStrategy(LIMITS)
+    features = FEATURES.assign(entry_allowed=[False, True])
+    assert {i.symbol for i in strategy._new_buys(features, COMP, PCTL, set())} == {'ACME'}
+    assert {i.symbol for i in strategy._deploy(features, COMP, _state(.9))} == {'ACME'}

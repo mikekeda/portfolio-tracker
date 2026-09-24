@@ -162,6 +162,8 @@ class RulesStrategy:
         for sym in features.index:
             if sym in held or np.isnan(comp.get(sym, np.nan)):
                 continue
+            if not bool(features.loc[sym].get("entry_allowed", True)):
+                continue
             # _quality_ok passes funds open (no fundamentals to object with), so
             # momentum alone could open one. That is an allocation decision.
             if is_fund(sym, etf_symbols):
@@ -192,6 +194,8 @@ class RulesStrategy:
         """Build toward an equal-weight book of the top-ranked quality names."""
         ranked = []
         for sym in comp.dropna().sort_values(ascending=False).index:
+            if state.quantities.get(sym, 0) <= 0 and not bool(features.loc[sym].get("entry_allowed", True)):
+                continue
             if is_fund(sym, state.etf_symbols):
                 continue
             row = features.loc[sym]

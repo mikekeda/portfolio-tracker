@@ -90,9 +90,10 @@ def agent_inputs(monkeypatch):
         gbp_prices=pd.DataFrame({"TEST": [100.0]}, index=[d]), currencies={}, tags={}, etf_symbols=set()
     )
     monkeypatch.setattr(runner, "load_market_data", AsyncMock(return_value=md))
-    monkeypatch.setattr(runner, "tradable_universe", lambda *args: ["TEST"])
-    monkeypatch.setattr(runner, "features_for_date", lambda *args, **kwargs: pd.DataFrame(index=["TEST"]))
+    monkeypatch.setattr(runner, "tradable_universe", lambda md, d: list(md.gbp_prices.columns))
+    monkeypatch.setattr(runner, "features_for_date", lambda md, d, symbols, **kwargs: pd.DataFrame({"mom_6m": 1.0}, index=symbols))
     monkeypatch.setattr(runner, "risk_columns", lambda *args: pd.DataFrame(index=["TEST"]))
+    monkeypatch.setattr(runner, "composite_score", lambda frame: pd.Series(1.0, index=frame.index))
     monkeypatch.setattr(runner.RulesStrategy, "propose", lambda *args: [])
     return runner, md
 
@@ -302,6 +303,90 @@ def test_carried_holding_counts_in_full_account_but_is_not_given_a_fresh_candle(
     ])
     run = {'ran_at': datetime(2026, 9, 16, 7, tzinfo=timezone.utc)}
     asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
-    assert run['status'] == 'success' and 'HOLIDAY (2026-09-12)' in run['reason']
+    assert run['status'] == 'success' and '1 held / 1 universe' in run['reason']
     assert observed[0].total_value_gbp == 1000 and observed[0].weights['HOLIDAY'] == .9
     assert pd.isna(md.gbp_prices.loc[d, 'HOLIDAY'])
+
+
+def live_market():
+    from backend.agent.backtest.data import MarketData, compute_technicals
+    days = pd.bdate_range(end='2026-09-23', periods=280).date
+    n = len(days)
+    prices = pd.DataFrame({
+        'HELD': [100 + j * .2 for j in range(n)],
+        'FRESH': [80 + j * .1 + (j % 7) for j in range(n)],
+        'OLD_ENTRY': [40 + j * .3 for j in range(n)],
+        'AVB': [70.] * n,
+    }, index=days)
+    prices.loc[date(2026, 9, 22):, ['HELD', 'OLD_ENTRY']] = float('nan')
+    # Future observations must not become either valuation prices or technical inputs.
+    prices.loc[date(2026, 9, 23), 'HELD'] = 9999.
+    fund = pd.DataFrame([dict(date=date(2026, 9, 23), symbol=s, roic=20 + j,
+                              thesis_sell_fired=s == 'HELD', thesis_sell_streak=8,
+                              thesis_sell_reasons='Confirmed thesis break')
+                         for j, s in enumerate(prices.columns)])
+    return MarketData(prices, {s: 'USD' for s in prices}, {}, frozenset(), compute_technicals(prices), fund)
+
+
+def test_live_features_carry_observed_technicals_and_current_thesis_without_changing_backtest():
+    from scripts import run_trade_agent as runner
+    from backend.agent.backtest.data import tradable_universe
+    md = live_market()
+    original = md.gbp_prices.copy(deep=True)
+    d = date(2026, 9, 22)
+    features, prices = runner._strategy_features(md, d, date(2026, 9, 23), {'HELD'})
+    assert 'HELD' in features.index and 'OLD_ENTRY' in features.index
+    assert 'AVB' not in features.index
+    assert features.loc['HELD', 'price_as_of'] == date(2026, 9, 21)
+    assert features.loc['HELD', 'mom_6m'] == md.technicals['mom_6m'].loc[date(2026, 9, 21), 'HELD']
+    assert features.loc['HELD', 'thesis_sell_fired']
+    assert not features.loc['OLD_ENTRY', 'entry_allowed']
+    assert features.loc['FRESH', 'entry_allowed']
+    assert prices['HELD'] == md.gbp_prices.loc[date(2026, 9, 21), 'HELD']
+    assert 'HELD' not in tradable_universe(md, d)
+    pd.testing.assert_frame_equal(md.gbp_prices, original)
+
+
+def test_carried_holding_reaches_real_strategy_and_order_sizing(monkeypatch):
+    from scripts import run_trade_agent as runner
+    md = live_market()
+    monkeypatch.setattr(runner, 'load_market_data', AsyncMock(return_value=md))
+    monkeypatch.setattr(runner, 'risk_columns', lambda *a: pd.DataFrame())
+    price = md.gbp_prices.loc[date(2026, 9, 21), 'HELD']
+    session = make_session([
+        Result(date(2026, 9, 23)), Result(rows=[SimpleNamespace(id=1, yahoo_symbol='HELD', quantity=10)]),
+        Result(SimpleNamespace(date=date(2026, 9, 23), cash=0, value=price * 10)),
+        Result(), Result(rows=[('HELD', 1), ('FRESH', 2), ('OLD_ENTRY', 3)]), Result(),
+    ])
+    constraints = Mock(wraps=runner.apply_constraints)
+    monkeypatch.setattr(runner, 'apply_constraints', constraints)
+    run = {'ran_at': datetime(2026, 9, 23, 7, tzinfo=timezone.utc)}
+    asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
+    assert run['status'] == 'success'
+    intents, _, prices, _ = constraints.call_args.args
+    assert any(i.symbol == 'HELD' and i.action == 'exit' for i in intents)
+    assert not any(i.symbol == 'OLD_ENTRY' for i in intents)
+    assert prices['HELD'] == price
+    params = session.execute.call_args_list[-1].args[0].compile().params
+    held_index = next(k.removeprefix('instrument_id_m') for k, v in params.items()
+                      if k.startswith('instrument_id_m') and v == 1)
+    assert params[f'rationale_m{held_index}']['price_as_of'] == '2026-09-21'
+
+
+@pytest.mark.parametrize('problem', ['no_features', 'inactive'])
+def test_unevaluated_holding_cannot_be_successful_no_action(monkeypatch, agent_inputs, problem):
+    runner, md = agent_inputs
+    symbol = 'AVB' if problem == 'inactive' else 'TEST'
+    md.gbp_prices.columns = [symbol]
+    if problem == 'no_features':
+        monkeypatch.setattr(runner, 'composite_score', lambda f: pd.Series(float('nan'), index=f.index))
+    propose = Mock()
+    monkeypatch.setattr(runner.RulesStrategy, 'propose', propose)
+    d = md.gbp_prices.index[-1]
+    session = make_session([Result(d), Result(rows=[SimpleNamespace(id=1, yahoo_symbol=symbol, quantity=1)]),
+                            Result(SimpleNamespace(date=d, cash=0, value=100))])
+    run = {'ran_at': datetime(2026, 9, 16, 7, tzinfo=timezone.utc)}
+    asyncio.run(runner._generate_suggestions(session, runner.AgentLimits.from_config(), run))
+    assert run['status'] == 'skipped' and 'Incomplete strategy coverage' in run['reason']
+    propose.assert_not_called()
+    assert all('DELETE' not in str(c.args[0]) for c in session.execute.call_args_list)
