@@ -134,16 +134,16 @@ def _f_score_split_safe(
     return int(result["score"]) if result and result["available"] else None
 
 
-def _should_fetch(session: Session, instrument_id: int, force: bool) -> bool:
+def _should_fetch(session: Session, instrument_id: int, cik: str, force: bool) -> bool:
     """Whether to re-pull companyfacts, decided locally — no SEC request.
 
     The 04:00 earnings job already records when a filing landed, so a newer
-    EarningsReport row is the refresh trigger.
+    EarningsReport row is the refresh trigger. A corrected CIK always refetches.
     """
     if force:
         return True
     row = session.get(SecCompanyFacts, instrument_id)
-    if row is None:
+    if row is None or row.cik != pad_cik(cik):
         return True
 
     fetched = row.fetched_at
@@ -286,7 +286,7 @@ def update_sec_features(
             if not symbol or not cik:
                 continue
             try:
-                refreshed = _should_fetch(session, instrument_id, force_fetch)
+                refreshed = _should_fetch(session, instrument_id, cik, force_fetch)
                 if refreshed:
                     facts = rate_limited_get(cik)
                     upsert_companyfacts(session, instrument_id, cik, facts)
