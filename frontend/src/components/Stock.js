@@ -22,7 +22,7 @@ import {
 import { renderCountryWithFlag } from '../utils/countryUtils';
 import { ytdDays } from '../utils/dates';
 import { useHideAmounts, MASK } from '../context/HideAmountsContext';
-import { getPbThresholds, getPsThresholds } from '../utils/valuationUtils';
+import { getPsThresholds } from '../utils/valuationUtils';
 import { computeComposite, compositeTooltip, screenerRatio } from '../utils/compositeScore';
 import './Stock.css';
 
@@ -923,7 +923,7 @@ const Stock = () => {
   // Backend-supplied (own statements, or constituent aggregate for a fund): the
   // FX conversion marketCap/freeCashflow needs isn't available here.
   const fcfYield = f.fcfYield ?? null;
-  const priceToFcf = fcfYield ? 100 / fcfYield : null;
+  const priceToFcf = fcfYield != null && fcfYield !== 0 ? 100 / fcfYield : null;
 
   // The backend always sets both keys, so a missing figure is null, never
   // undefined — `!== undefined` passed and rendered a fabricated net debt of 0.
@@ -931,7 +931,6 @@ const Stock = () => {
     ? f.totalDebt - f.totalCash : null;
 
   const sector = i.sector || '';
-  const pbThresholds = getPbThresholds(sector);
   const psThresholds = getPsThresholds(sector);
 
   const dcfDiff = data.dcf_diff;
@@ -1126,15 +1125,15 @@ const Stock = () => {
         : '',
       tooltip: kpiTooltips['Beta'],
     },
-    { label: 'Debt', value: formatShort(f.totalDebt), tooltip: kpiTooltips['Debt'] },
-    { label: 'Cash', value: formatShort(f.totalCash), tooltip: kpiTooltips['Cash'] },
+    { label: 'Debt', value: formatShort(f.totalDebt), tooltip: (f.totalDebt == null && f.valuationIssues?.totalDebt) || kpiTooltips['Debt'] },
+    { label: 'Cash', value: formatShort(f.totalCash), tooltip: (f.totalCash == null && f.valuationIssues?.totalCash) || kpiTooltips['Cash'] },
     {
       label: 'FCF Yield',
       value: fcfYield != null ? `${fcfYield.toFixed(2)}%` : '-',
       className: fcfYield != null
         ? (fcfYield > 6 ? 'positive' : fcfYield < 2 ? 'negative' : '')
         : '',
-      tooltip: kpiTooltips['FCF Yield'],
+      tooltip: (fcfYield == null && f.valuationIssues?.fcfYield) || kpiTooltips['FCF Yield'],
     },
     ...(() => {
       if (data.f_score == null) return [];
@@ -1250,9 +1249,6 @@ const Stock = () => {
     'P/S (TTM)': psThresholds
       ? `Price-to-sales (TTM) · Green < ${psThresholds[0]}, Red > ${psThresholds[1]} (${sectorLabel})`
       : `Price-to-sales (TTM) · Not color-coded for ${sectorLabel} sector`,
-    'P/B': pbThresholds
-      ? `Price-to-book · Green < ${pbThresholds[0]}, Red > ${pbThresholds[1]} (${sectorLabel})`
-      : `Price-to-book · Not color-coded for ${sectorLabel} (intangibles-heavy sector)`,
     'Net Debt': 'Total debt minus cash · Green = net cash position',
     'Net Debt/EBITDA': 'Net debt to EBITDA (leverage) · Green ≤ 1, Red > 3',
     'Price/FCF': 'Price to free cash flow · Green < 20, Red > 40',
@@ -1289,16 +1285,6 @@ const Stock = () => {
       tooltip: valuationTooltips['P/S (TTM)'],
     },
     {
-      label: 'P/B',
-      value: formatRatio(f.priceToBook),
-      className: (() => {
-        if (f.priceToBook == null || pbThresholds === null) return '';
-        return f.priceToBook < pbThresholds[0] ? 'positive'
-          : f.priceToBook > pbThresholds[1] ? 'negative' : '';
-      })(),
-      tooltip: valuationTooltips['P/B'],
-    },
-    {
       label: 'Net Debt',
       value: netDebt != null ? formatShort(netDebt) : '-',
       className: netDebt != null ? (netDebt < 0 ? 'positive' : '') : '',
@@ -1306,27 +1292,32 @@ const Stock = () => {
     },
     {
       label: 'Net Debt/EBITDA',
-      value: (f.ebitda && f.ebitda !== 0 && netDebt != null) ? formatRatio(netDebt / f.ebitda) : '-',
+      value: formatRatio(f.netDebtToEbitda),
       className: (() => {
-        if (netDebt == null || !f.ebitda || f.ebitda === 0) return '';
-        const r = netDebt / f.ebitda;
+        if (f.netDebtToEbitda == null) return '';
+        const r = f.netDebtToEbitda;
         return r <= 1 ? 'positive' : r > 3 ? 'negative' : '';
       })(),
       tooltip: valuationTooltips['Net Debt/EBITDA'],
     },
     {
       label: 'Price/FCF',
-      value: priceToFcf != null ? formatRatio(priceToFcf) : '-',
+      value: fcfYield === 0 ? 'N/M' : priceToFcf != null ? formatRatio(priceToFcf) : '-',
       className: (() => {
         if (priceToFcf == null) return '';
         return priceToFcf < 0 ? 'negative' : priceToFcf < 20 ? 'positive' : priceToFcf > 40 ? 'negative' : '';
       })(),
-      tooltip: valuationTooltips['Price/FCF'],
+      tooltip: fcfYield === 0 ? 'Price/FCF is undefined because free cash flow is zero.' : valuationTooltips['Price/FCF'],
     },
   ];
 
   // Yahoo margins/growth are fractions; ROIC and Rule of 40 are already percent
   const fmtPct = (v, digits = 1) => (v != null ? `${(v * 100).toFixed(digits)}%` : '-');
+  const valuationFields = {
+    EV: 'enterpriseValue', 'EV/EBITDA': 'enterpriseToEbitda', 'EV/Sales': 'enterpriseToRevenue',
+    'P/S (TTM)': 'priceToSalesTtm', 'Net Debt': 'netDebt', 'Net Debt/EBITDA': 'netDebtToEbitda',
+    'Price/FCF': 'fcfYield',
+  };
   // Per metric, not per instrument: a figure the fund reports itself is not a
   // constituent aggregate, so only what the overlay actually supplied says so.
   const lookThrough = (tip, metrics, approximate = false) => (
@@ -1551,9 +1542,11 @@ const Stock = () => {
       <div className="stock-panels">
         {!inactive && <div className="panel" id="sec-valuation">
           <h3>Valuation Multiples</h3>
+          {f.valuationCurrency && <p>Amounts in {f.valuationCurrency}; debt, cash and earnings are converted to the same currency.</p>}
+          {data.dcf_unavailable_reason && <p>DCF unavailable: {data.dcf_unavailable_reason}</p>}
           <div className="valuation-grid">
             {valuation.map(v => (
-              <div key={v.label} className="kpi" title={v.tooltip}>
+              <div key={v.label} className="kpi" title={v.value === '-' ? (f.valuationIssues?.[valuationFields[v.label]] || v.tooltip) : v.tooltip}>
                 <div className="kpi-label">{v.label}</div>
                 <div className={`kpi-value${v.className ? ` ${v.className}` : ''}`}>{v.value}</div>
               </div>
@@ -2768,5 +2761,3 @@ const Stock = () => {
 };
 
 export default Stock;
-
-

@@ -4,7 +4,6 @@ currency rate lookup, historical trend calculation, and the PRICE_COLUMN constan
 """
 
 from datetime import datetime
-from typing import Optional
 
 import numpy as np
 from dateutil.relativedelta import relativedelta
@@ -17,34 +16,6 @@ from models import HoldingDaily, PricesDaily
 
 # SQLAlchemy column expression for the configured price field (used in chart and portfolio queries)
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
-
-# Yahoo quotes GBp/GBX listings in pence but reports their marketCap in pounds.
-_PENCE_QUOTE_CURRENCIES = frozenset({"GBp", "GBX"})
-
-
-def statement_to_quote_factor(info: dict, rates: dict[str, float]) -> Optional[float]:
-    """Multiplier converting `financialCurrency` amounts into marketCap's currency.
-
-    Yahoo reports marketCap in the quote currency but freeCashflow, totalRevenue
-    and ebitda in the reporting currency; dividing them without this is wrong for
-    ~22% of the universe. None when either rate is unavailable.
-    """
-    quote = info.get("currency")
-    statement = info.get("financialCurrency")
-    if not quote or not statement:
-        return None
-
-    if quote in _PENCE_QUOTE_CURRENCIES:
-        quote = "GBP"
-    if quote == statement:
-        return 1.0
-
-    statement_rate = rates.get(statement)
-    quote_rate = rates.get(quote)
-    if not statement_rate or not quote_rate:
-        return None
-    return statement_rate / quote_rate
-
 
 async def get_rates(session: AsyncSession) -> dict[str, float]:
     """Latest available exchange rate into GBP per currency, including pence units.

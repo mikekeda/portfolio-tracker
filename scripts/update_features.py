@@ -92,7 +92,11 @@ def _row_from_holding(h: dict, instrument_id: int) -> dict:
         "screener_score_max": _num(h.get("screener_score_max")),
         "passed_screeners": h.get("passedScreeners") or [],
         "thesis_rule_eval": h.get("thesis_rule_eval"),
-        "extras": {"dcf_implied_growth_status": h.get("dcf_implied_growth_status")},
+        "extras": {
+            "dcf_implied_growth_status": h.get("dcf_implied_growth_status"),
+            "dcf_unavailable_reason": h.get("dcf_unavailable_reason"),
+            "valuation_issues": h.get("valuation_issues"),
+        },
         # Column is timestamp without time zone; asyncpg rejects aware datetimes
         "updated_at": datetime.now(TIMEZONE).replace(tzinfo=None),
     }

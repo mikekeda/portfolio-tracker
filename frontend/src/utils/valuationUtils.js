@@ -1,19 +1,3 @@
-// Sector-aware P/B thresholds [greenMax, redMin]
-// null = don't color-code (metric unreliable for the sector)
-export const PB_THRESHOLDS = {
-  'Financial Services':     [1.2,  2.5],  // banks: book value is meaningful
-  'Real Estate':            [1.0,  2.0],  // REITs trade near NAV
-  'Utilities':              [1.5,  3.0],
-  'Industrials':            [2.0,  5.0],
-  'Consumer Defensive':     [2.0,  5.0],
-  'Consumer Cyclical':      [2.0,  6.0],
-  'Energy':                 [1.5,  4.0],
-  'Basic Materials':        [1.5,  4.0],
-  'Technology':             null,          // intangibles dominate — book value is misleading
-  'Healthcare':             null,
-  'Communication Services': null,
-};
-
 // Sector-aware P/S thresholds [greenMax, redMin]
 // null = don't color-code (revenue definition varies or ratio is not standard)
 export const PS_THRESHOLDS = {
@@ -29,15 +13,6 @@ export const PS_THRESHOLDS = {
   'Financial Services':     null,          // revenue = interest income, not comparable
   'Real Estate':            null,          // use FFO multiples instead
 };
-
-/**
- * Returns the P/B threshold pair for a sector, or a generic fallback.
- * Returns null if the metric should not be color-coded for that sector.
- */
-export const getPbThresholds = (sector) =>
-  Object.prototype.hasOwnProperty.call(PB_THRESHOLDS, sector)
-    ? PB_THRESHOLDS[sector]
-    : [3.0, 8.0];
 
 /**
  * Returns the P/S threshold pair for a sector, or a generic fallback.

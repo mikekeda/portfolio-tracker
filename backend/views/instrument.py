@@ -15,9 +15,10 @@ from backend.utils.fcf import trailing_fcf
 from backend.utils.form13f import _get_form13f_for_instruments, estimated_holder_flow
 from backend.utils.pe_history import basis_matches, harmonic_mean_pe, pe_series
 from backend.utils.piotroski import get_piotroski_f_score
+from backend.utils.valuation import valuation_metrics
 from backend.utils.roic import get_roic
 from backend.views._etf_overlay import apply_derived_to_instrument, fund_derived_metrics
-from backend.views._shared import get_rates, statement_to_quote_factor
+from backend.views._shared import get_rates
 from config import BENCHES, PRICE_FIELD, TIMEZONE
 from data import STOCKS_DELISTED
 from models import (
@@ -50,7 +51,7 @@ def _apply_inactive_status(detail: dict) -> None:
         "screener_score", "screener_score_max", "form13f_score", "thesis_rule_eval",
         "thesis_sell_streak", "agent_suggestion", "position_review", "f_score", "f_score_details",
         "dcf_price", "dcf_diff", "dcf_low", "dcf_high", "dcf_implied_growth",
-        "dcf_implied_growth_status", "roic_yahoo_marker",
+        "dcf_implied_growth_status", "dcf_unavailable_reason", "roic_yahoo_marker",
     ):
         detail[key] = None
 
@@ -307,40 +308,21 @@ async def get_instrument(
         else None
     )
     currency_rates = await get_rates(session)
-    # marketCap is in the quote currency and the statements in `financialCurrency`;
-    # dividing them without this is wrong for ~21% of the universe.
-    statement_fx = statement_to_quote_factor(yd, currency_rates)
-    fcf_quote = fcf.fcf * statement_fx if (fcf and statement_fx) else None
-
     fundamentals = {
-        "marketCap": yd.get("marketCap"),
+        **valuation_metrics(instrument.yahoo_symbol, yd, currency_rates, fcf),
         "peRatio": yd.get("trailingPE"),
         "forwardPE": yd.get("forwardPE"),
         "pegRatio": yd.get("trailingPegRatio"),
         # Funds report beta3Year instead of beta; same quantity, 3y rather than 5y window.
         "beta": yd.get("beta") if yd.get("beta") is not None else yd.get("beta3Year"),
         "dividendYield": yd.get("dividendYield"),
-        "totalDebt": yd.get("totalDebt"),
-        "totalCash": yd.get("totalCash"),
         "sharesOutstanding": yd.get("sharesOutstanding") or yd.get("impliedSharesOutstanding"),
-        "freeCashflow": fcf.fcf if fcf else None,
-        # Computed here, not on the frontend, which has no FX rates. Same expression
-        # as free_cashflow_yield in portfolio.py so both pages agree.
-        "fcfYield": fcf_quote / yd["marketCap"] * 100 if (fcf_quote is not None and yd.get("marketCap")) else None,
         "operatingCashflow": yd.get("operatingCashflow"),
-        "totalRevenue": yd.get("totalRevenue"),
         "revenuePerShare": yd.get("revenuePerShare"),
         "revenueGrowth": yd.get("revenueGrowth"),
         "profitMargins": yd.get("profitMargins"),
         "returnOnAssets": yd.get("returnOnAssets"),
         "returnOnEquity": yd.get("returnOnEquity"),
-        # Additional valuation fields
-        "enterpriseValue": yd.get("enterpriseValue"),
-        "enterpriseToEbitda": yd.get("enterpriseToEbitda"),
-        "enterpriseToRevenue": yd.get("enterpriseToRevenue"),
-        "priceToSalesTtm": yd.get("priceToSalesTrailing12Months"),
-        "priceToBook": yd.get("priceToBook"),
-        "ebitda": yd.get("ebitda"),
         # Rounded to match portfolio.py so the composite score is identical on both pages
         "recommendationMean": round(yd["recommendationMean"], 2) if yd.get("recommendationMean") else None,
         "recommendationKey": yd.get("recommendationKey"),
@@ -509,7 +491,7 @@ async def get_instrument(
     ).all()
     features_row = features_rows[0] if features_rows else None
     # Consecutive newest snapshots with a sell rule fired — the agent's EXIT
-    # counter. Not sell_signal: that also covers above-band, which only trims.
+    # counter. Not sell_signal: older snapshots also set it for above-band positions.
     thesis_sell_streak = 0
     for r in features_rows:
         if not (r.thesis_rule_eval or {}).get("sell_rules_met"):
@@ -654,6 +636,7 @@ async def get_instrument(
         "dcf_high": dcf_high,
         "dcf_implied_growth": dcf_analysis["implied_growth"],
         "dcf_implied_growth_status": dcf_analysis["implied_growth_status"],
+        "dcf_unavailable_reason": dcf_analysis.get("unavailable_reason"),
         "position_review": position_review,
         "f_score": f_score_result["score"] if f_score_result else None,
         "f_score_details": f_score_result["details"] if f_score_result else None,

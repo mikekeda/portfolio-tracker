@@ -14,6 +14,7 @@ from backend.app import get_db_session
 from backend.utils.dcf import get_dcf_analyses, get_effective_betas
 from backend.utils.drawdown import compute_max_drawdown, underwater_series
 from backend.utils.fcf import trailing_fcf
+from backend.utils.valuation import valuation_metrics
 from backend.utils.form13f import _get_form13f_for_instruments
 from backend.utils.market_breadth import compute_live_rolling_breadth
 from utils.market_data import (
@@ -44,7 +45,6 @@ from backend.views._shared import (
     PRICE_COLUMN,
     calculate_historical_trends,
     get_rates,
-    statement_to_quote_factor,
 )
 from config import BENCHES, DAYS_PER_YEAR, TAG_CLUSTER_SOFT_CAPS, TIMEZONE, VIX
 from data import QUICK_RATIO_THRESHOLDS
@@ -456,22 +456,12 @@ async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict
         if holding.instrument.thesis:
             thesis_by_symbol[holding.instrument.yahoo_symbol] = holding.instrument.thesis
 
-        # marketCap is quoted in `currency` but the statements are in
-        # `financialCurrency`; mixing the two is wrong for ~22% of the universe.
-        fx = statement_to_quote_factor(info, currency_rates)
-        market_cap = info.get("marketCap")
-        total_revenue = info.get("totalRevenue")
-        ebitda = info.get("ebitda")
-        total_debt = info.get("totalDebt")
-        total_cash = info.get("totalCash")
-        revenue_quote = total_revenue * fx if (total_revenue is not None and fx) else None
-
         # Quarterly statements are the only multi-period fundamentals available.
         # roic_ttm sums four quarters, so it is comparable with `roic` above.
         quarterly_income_stmt = yh.quarterly_income_stmt if yh else None
         # info["freeCashflow"] is levered and understates the statements — see utils/fcf.py.
         fcf = trailing_fcf(yh.quarterly_cashflow, quarterly_income_stmt, yh.cashflow, yh.income_stmt) if yh else None
-        fcf_quote = fcf.fcf * fx if (fcf and fx) else None
+        valuation = valuation_metrics(holding.instrument.yahoo_symbol, info, currency_rates, fcf)
         roic_ttm_series = (
             get_roic_ttm_series(yh.quarterly_balance_sheet, quarterly_income_stmt) if yh else []
         )
@@ -497,16 +487,17 @@ async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict
                 "dcf_high": dcf_high,
                 "dcf_implied_growth": dcf_analysis["implied_growth"],
                 "dcf_implied_growth_status": dcf_analysis["implied_growth_status"],
+                "dcf_unavailable_reason": dcf_analysis.get("unavailable_reason"),
                 "ppl": holding.ppl,
                 "fx_ppl": holding.fx_ppl,
-                "market_cap": info.get("marketCap"),
+                "market_cap": valuation["marketCap"],
                 "pe_ratio": info.get("trailingPE"),
                 "forward_pe_ratio": info.get("forwardPE"),
                 "trailing_eps": info.get("trailingEps"),
                 "forward_eps": info.get("forwardEps"),
                 # Yahoo's own priceToSalesTrailing12Months carries the currency
                 # mismatch, so recompute it rather than reading the field.
-                "ps_ratio": market_cap / revenue_quote if (market_cap and revenue_quote) else None,
+                "ps_ratio": valuation["priceToSalesTtm"],
                 # Funds report beta3Year instead of beta; same quantity, shorter window.
                 "beta": info.get("beta") if info.get("beta") is not None else info.get("beta3Year"),
                 "date": holding.date.isoformat() if hasattr(holding.date, "isoformat") else str(holding.date),
@@ -530,7 +521,7 @@ async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict
                 if info.get("operatingMargins") is not None
                 else None,
                 "revenue_growth": info["revenueGrowth"] * 100.0 if info.get("revenueGrowth") is not None else None,
-                "total_revenue": revenue_quote,
+                "total_revenue": valuation["totalRevenue"],
                 "return_on_assets": info["returnOnAssets"] * 100.0 if info.get("returnOnAssets") is not None else None,
                 "return_on_equity": info["returnOnEquity"] * 100.0 if info.get("returnOnEquity") is not None else None,
                 "roic": get_roic(info, yh.balance_sheet, yh.income_stmt) if yh else None,
@@ -546,15 +537,14 @@ async def build_portfolio(session: AsyncSession, show_all: bool = False) -> dict
                 "eps_next_q_growth": eps_next_quarter_growth(yh.estimates) if yh else None,
                 "f_score": f_score_result["score"] if f_score_result else None,
                 "f_score_details": f_score_result["details"] if f_score_result else None,
-                "free_cashflow_yield": fcf_quote / market_cap * 100 if (fcf_quote is not None and market_cap) else None,
+                "free_cashflow_yield": valuation["fcfYield"],
                 # Both terms are in the reporting currency and span the same periods.
                 "fcf_margin": fcf.fcf / fcf.revenue * 100 if fcf else None,
                 "quickRatio": info.get("quickRatio") if info.get("sector") != "Financial Services" else None,
                 "debtToEquity": info.get("debtToEquity"),
-                "net_cash": total_cash > total_debt if (total_cash is not None and total_debt is not None) else None,
-                "net_debt_to_ebitda": (total_debt - total_cash) / ebitda
-                if (total_debt is not None and total_cash is not None and ebitda and ebitda > 0)
-                else None,
+                "net_cash": valuation["netCash"],
+                "net_debt_to_ebitda": valuation["netDebtToEbitda"],
+                "valuation_issues": valuation["valuationIssues"],
                 "recommendation_mean": round(info["recommendationMean"], 2) if info.get("recommendationMean") else None,
                 "recommendation_key": info.get("recommendationKey"),
                 "number_of_analyst_opinions": info.get("numberOfAnalystOpinions"),

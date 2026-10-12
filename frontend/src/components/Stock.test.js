@@ -46,3 +46,62 @@ test('active page retains its current valuation panels', async () => {
   expect(screen.getByRole('heading', { name: 'Fair Value vs Price' })).toBeInTheDocument();
   expect(screen.queryByText(/Inactive price feed/)).not.toBeInTheDocument();
 });
+
+test('valuation currency and withheld DCF are explained without raw P/B', async () => {
+  const data = payload(true);
+  data.fundamentals.valuationCurrency = 'USD';
+  data.fundamentals.priceToBook = 1342;
+  data.dcf_price = null;
+  data.dcf_diff = null;
+  data.dcf_unavailable_reason = 'Statement and summary currencies differ.';
+  portfolioAPI.getInstrument.mockResolvedValue(data);
+  render(<Stock />);
+  expect(await screen.findByText(/Amounts in USD/)).toBeInTheDocument();
+  expect(screen.getByText(/DCF unavailable: Statement and summary currencies differ/)).toBeInTheDocument();
+  expect(screen.queryByText('P/B', { exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByText('1342')).not.toBeInTheDocument();
+});
+
+test('zero FCF yield is measured but Price/FCF is undefined', async () => {
+  const data = payload(true);
+  data.fundamentals.fcfYield = 0;
+  data.fundamentals.valuationIssues = {};
+  portfolioAPI.getInstrument.mockResolvedValue(data);
+  render(<Stock />);
+  const yieldTile = (await screen.findByText('FCF Yield', { exact: true })).closest('.kpi');
+  const multipleTile = screen.getByText('Price/FCF', { exact: true }).closest('.kpi');
+  expect(yieldTile.querySelector('.kpi-value')).toHaveTextContent('0.00%');
+  expect(multipleTile.querySelector('.kpi-value')).toHaveTextContent('N/M');
+  expect(multipleTile).toHaveAttribute('title', 'Price/FCF is undefined because free cash flow is zero.');
+});
+
+test('missing debt, cash and FCF explain their unavailable inputs', async () => {
+  const data = payload(true);
+  data.fundamentals = {
+    ...data.fundamentals, totalDebt: null, totalCash: null, fcfYield: null,
+    valuationIssues: {
+      totalDebt: 'Unavailable: debt is missing.',
+      totalCash: 'Unavailable: currency or exchange rate is missing.',
+      fcfYield: 'Unavailable: cash flow is missing.',
+    },
+  };
+  portfolioAPI.getInstrument.mockResolvedValue(data);
+  render(<Stock />);
+  await screen.findByText('FCF Yield', { exact: true });
+  for (const [label, key] of [['Debt', 'totalDebt'], ['Cash', 'totalCash'], ['FCF Yield', 'fcfYield'], ['Price/FCF', 'fcfYield']]) {
+    const tile = screen.getByText(label, { exact: true }).closest('.kpi');
+    expect(tile.querySelector('.kpi-value')).toHaveTextContent('-');
+    expect(tile).toHaveAttribute('title', data.fundamentals.valuationIssues[key]);
+  }
+});
+
+test.each([10, -10])('nonzero FCF yield %s retains a finite signed multiple', async (yieldValue) => {
+  const data = payload(true);
+  data.fundamentals.fcfYield = yieldValue;
+  portfolioAPI.getInstrument.mockResolvedValue(data);
+  render(<Stock />);
+  const tile = (await screen.findByText('Price/FCF', { exact: true })).closest('.kpi');
+  const value = tile.querySelector('.kpi-value');
+  expect(parseFloat(value.textContent)).toBe(100 / yieldValue);
+  expect(value).toHaveClass(yieldValue < 0 ? 'negative' : 'positive');
+});

@@ -13,6 +13,7 @@ from utils.market_data import get_risk_free_rates
 from backend.utils.fcf import operating_cashflow
 from backend.utils.fx import latest_rates_to_gbp
 from backend.utils.technical import PRICE_COLUMN
+from backend.utils.valuation import PENCE_CURRENCIES, currency_factor, market_cap_currency, statement_currency
 
 # --- Constants ---
 # Plateau + fade projection: the first N years run at the initial growth rate,
@@ -36,11 +37,6 @@ IMPLIED_GROWTH_TOLERANCE = 1e-4
 # Sectors where FCF-based DCF is meaningless. Banks' "free cash flow" is not
 # comparable to an industrial company's; use P/BV or DDM for these instead.
 SECTORS_WITHOUT_DCF: frozenset[str] = frozenset({"Financial Services"})
-
-# Yahoo quotes UK listings in pence ("GBp"/"GBX") while marketCap and financial
-# statements are in pounds; all internal math runs in major units and converts
-# back to pence at the output so dcf_price stays comparable to the quote.
-_PENCE_CURRENCIES: frozenset[str] = frozenset({"GBp", "GBX"})
 
 # Effective beta for CAPM.
 # Reported Yahoo beta is the regression slope against the S&P 500 — the wrong
@@ -127,6 +123,7 @@ class DcfAnalysis(TypedDict):
     high: Optional[float]  # optimistic (lower WACC, higher g0)
     implied_growth: Optional[float]  # g0 that solves price == current market price
     implied_growth_status: str
+    unavailable_reason: Optional[str]
 
 
 def _clamp(x: float, lo: float, hi: float) -> float:
@@ -331,7 +328,7 @@ def _estimate_dcf_inputs(
 
     `fx_price_to_fin` converts price-currency amounts (marketCap) into the
     reporting currency so WACC capital-structure weights compare like with
-    like; `pence_factor` is 100 for GBp/GBX listings (see _PENCE_CURRENCIES).
+    like; `pence_factor` is 100 for GBp/GBX listings (see PENCE_CURRENCIES).
     """
     if instrument.yahoo is None:
         return {
@@ -520,13 +517,14 @@ def _solve_implied_growth(
     return 0.5 * (lo + hi), "ok"
 
 
-def _empty_analysis() -> DcfAnalysis:
+def _empty_analysis(reason: Optional[str] = None) -> DcfAnalysis:
     return {
         "price": None,
         "low": None,
         "high": None,
         "implied_growth": None,
         "implied_growth_status": "unavailable",
+        "unavailable_reason": reason,
     }
 
 
@@ -556,21 +554,14 @@ def _compute_dcf_full(
 
     # ADRs and cross-listed names (AZN.L, ASML, SAABY) report financials in a
     # different currency than the share price is quoted in.
-    price_ccy = info.get("currency") or "USD"
-    pence_factor = 100.0 if price_ccy in _PENCE_CURRENCIES else 1.0
-    if pence_factor != 1.0:
-        price_ccy = "GBP"
-    fin_ccy = info.get("financialCurrency") or price_ccy
-
-    if fin_ccy != price_ccy:
-        gbp_fin, gbp_price = fx_to_gbp.get(fin_ccy), fx_to_gbp.get(price_ccy)
-        if gbp_fin is None or gbp_price is None:
-            # No FX rate (e.g. SEK/DKK ADRs): a valuation off by the exchange
-            # rate is worse than none.
-            return _empty_analysis()
-        fx_fin_to_price = gbp_fin / gbp_price
-    else:
-        fx_fin_to_price = 1.0
+    price_ccy = market_cap_currency(info)
+    pence_factor = 100.0 if info.get("currency") in PENCE_CURRENCIES else 1.0
+    fin_ccy = statement_currency(instrument.yahoo_symbol, info)
+    if fin_ccy != info.get("financialCurrency"):
+        return _empty_analysis("Statement and summary currencies differ; DCF is withheld until its cash/debt and share basis are validated.")
+    fx_fin_to_price = currency_factor(fin_ccy, price_ccy, fx_to_gbp)
+    if fx_fin_to_price is None:
+        return _empty_analysis("DCF currency or exchange rate is unavailable.")
     # fin-ccy per-share value → quoted price units (pence for GBp listings)
     to_price_units = fx_fin_to_price * pence_factor
 
@@ -635,6 +626,7 @@ def _compute_dcf_full(
         "high": pos_or_none(high),
         "implied_growth": implied,
         "implied_growth_status": implied_status,
+        "unavailable_reason": None,
     }
 
 
@@ -785,7 +777,7 @@ async def get_effective_betas(
 
     result: dict[str, float] = {}
     for inst in eligible:
-        if inst.currency == "GBP" or inst.currency in _PENCE_CURRENCIES:
+        if inst.currency == "GBP" or inst.currency in PENCE_CURRENCIES:
             fx_dates, fx_rates = None, None
         elif inst.currency in fx_series:
             fx_dates, fx_rates = fx_series[inst.currency]
