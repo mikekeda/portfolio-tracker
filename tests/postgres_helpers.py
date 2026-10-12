@@ -1,6 +1,8 @@
 """Opt-in integration tests against an isolated local PostgreSQL instance.
 
-Set T212_TEST_POSTGRES_URL to postgresql+asyncpg://review_test@/postgres?host=/tmp&port=55439.
+Set T212_TEST_POSTGRES_URL to
+postgresql+asyncpg://test_trading212_admin@localhost:5432/test_trading212.
+The temporary review_test server on /tmp:55439 is also supported.
 Each case creates and removes its own schema. No application DB configuration is used.
 """
 
@@ -19,14 +21,32 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from models import Base, TradeAgentRun
 
 
+def _validate_test_database_url(url: str) -> None:
+    parsed = make_url(url)
+    local_test_db = (
+        parsed.username == "test_trading212_admin"
+        and parsed.database == "test_trading212"
+        and parsed.host in {"localhost", "127.0.0.1", "::1"}
+        and parsed.port in {None, 5432}
+        and not parsed.query
+    )
+    temporary_test_db = (
+        parsed.username == "review_test"
+        and parsed.database == "postgres"
+        and parsed.host is None
+        and parsed.port is None
+        and dict(parsed.query) == {"host": "/tmp", "port": "55439"}
+    )
+    if parsed.drivername != "postgresql+asyncpg" or not (local_test_db or temporary_test_db):
+        raise ValueError("Integration tests require an explicitly allowed local test database")
+
+
 @asynccontextmanager
 async def postgres_database():
     url = os.getenv("T212_TEST_POSTGRES_URL")
     if not url:
         pytest.skip("set T212_TEST_POSTGRES_URL for local PostgreSQL integration tests")
-    parsed = make_url(url)
-    if parsed.username != "review_test" or parsed.query.get("host") != "/tmp":
-        raise ValueError("Integration tests require the isolated review_test server on /tmp")
+    _validate_test_database_url(url)
     schema = "test_" + uuid4().hex
     admin = create_async_engine(url)
     engine = create_async_engine(url, connect_args={"server_settings": {"search_path": schema}})

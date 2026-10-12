@@ -848,8 +848,11 @@ def _full_history_starts(session: Session, symbols: list[str]) -> dict[str, date
     return starts
 
 
-def update_prices(tickers_to_add: set[str]) -> None:
-    """Get and update price data for all tickers."""
+def update_prices(tickers_to_add: Optional[set[str]] = None) -> None:
+    """Update stored/instrument prices and seed index members by default."""
+
+    if tickers_to_add is None:
+        tickers_to_add = set(SP500) | set(QQQ)
 
     today = datetime.now(timezone.utc).date()
 
@@ -1403,10 +1406,7 @@ def update_data():
         update_holdings()
 
         # 4. Update prices
-        # Index members feed the breadth/SMA200 metrics even without a T212 instrument;
-        # any member with no price history yet gets seeded (10y backfill, once).
-        _tickers_to_add: set[str] = (set(SP500) | set(QQQ)) - STOCKS_DELISTED
-        update_prices(_tickers_to_add)
+        update_prices()
 
         # 5. Update portfolio
         update_portfolio()

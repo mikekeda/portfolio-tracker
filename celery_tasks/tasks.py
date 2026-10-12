@@ -1,7 +1,6 @@
 import asyncio
 from backend.app import dispose_engine
 from celery_tasks.celery_app import app
-from data import QQQ, SP500, STOCKS_DELISTED
 from scripts.update_returns import update_returns
 from scripts.fix_split_prices import fix_split_prices
 from scripts.get_earnings_reports import get_earnings_reports
@@ -50,7 +49,7 @@ def update_data_task():
 @app.task
 def catch_up_prices_task():
     """Refresh prices before the morning features and agent."""
-    update_prices((set(SP500) | set(QQQ)) - STOCKS_DELISTED)
+    update_prices()
 
 
 @app.task

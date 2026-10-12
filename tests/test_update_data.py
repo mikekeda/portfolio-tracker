@@ -302,14 +302,14 @@ def test_morning_then_eight_preserves_daily_overlap_and_split_checks(monkeypatch
     monkeypatch.setattr(module, "_update_prices", download)
     # Exercise the actual task entry point, with broker/Yahoo/DB work isolated.
     monkeypatch.setattr(tasks, "update_prices", module.update_prices)
-    monkeypatch.setattr(tasks, "SP500", [])
-    monkeypatch.setattr(tasks, "QQQ", [])
+    monkeypatch.setattr(module, "SP500", [])
+    monkeypatch.setattr(module, "QQQ", [])
 
     if midnight != "missed":
         module.update_prices(set())
     download.reset_mock()
     split_check.reset_mock()
-    run_at = run_at.replace(hour=6)
+    run_at = run_at.replace(hour=5, minute=45)
     tasks.catch_up_prices_task.run()
     calls = {symbol: call.args[2] for call in download.call_args_list for symbol in call.args[1]}
     if midnight == "missed":
@@ -324,7 +324,7 @@ def test_morning_then_eight_preserves_daily_overlap_and_split_checks(monkeypatch
         assert split_check.call_args.args[1] == []
 
     download.reset_mock()
-    run_at = run_at.replace(hour=8)
+    run_at = run_at.replace(hour=8, minute=0)
     module.update_prices(set())
     download.assert_called_once_with(session, ["LATE"], completed)
     assert split_check.call_args.args[1] == []
@@ -332,23 +332,28 @@ def test_morning_then_eight_preserves_daily_overlap_and_split_checks(monkeypatch
     assert download.call_count == 1
 
 
-def test_new_index_symbol_without_instrument_is_batched_retried_and_failure_logged(monkeypatch, caplog):
-    monkeypatch.setattr(module, 'datetime', Clock)
-    monkeypatch.setattr(module, 'BATCH_SIZE_YF', 1)
+@pytest.mark.parametrize("tickers", [None, {"VMRK", "RDDT", "AVB"}])
+def test_new_symbols_batch_retry_and_warn(monkeypatch, caplog, tickers):
+    monkeypatch.setattr(module, "datetime", Clock)
+    monkeypatch.setattr(module, "BATCH_SIZE_YF", 1)
+    monkeypatch.setattr(module, "SP500", ["VMRK", "AVB"])
+    monkeypatch.setattr(module, "QQQ", ["RDDT", "VMRK"])
     session = Mock()
-    session.scalars.return_value.all.return_value = ['AVB']
+    session.scalars.return_value.all.return_value = ["AVB"]
     session.query.return_value.where.return_value.group_by.return_value.order_by.return_value.all.return_value = []
+
     @contextmanager
     def db():
         yield session
-    monkeypatch.setattr(module, 'get_session', db)
-    download = Mock(side_effect=lambda session, symbols, start: set(symbols) - {'VMRK'})
-    monkeypatch.setattr(module, '_update_prices', download)
+
+    monkeypatch.setattr(module, "get_session", db)
+    download = Mock(side_effect=lambda session, symbols, start: set(symbols) - {"VMRK"})
+    monkeypatch.setattr(module, "_update_prices", download)
     # No VMRK broker instrument exists, and a caller accidentally includes a retired line.
-    module.update_prices({'VMRK', 'RDDT', 'AVB'})
-    assert [c.args[1] for c in download.call_args_list] == [['RDDT'], ['VMRK']]
+    module.update_prices(tickers)
+    assert [c.args[1] for c in download.call_args_list] == [["RDDT"], ["VMRK"]]
     assert session.commit.call_count == 2
-    assert 'No price history stored for new symbols' in caplog.text and 'VMRK' in caplog.text
+    assert "No price history stored for new symbols" in caplog.text and "VMRK" in caplog.text
     download.reset_mock()
-    module.update_prices({'VMRK'})
-    assert download.call_args.args[1] == ['VMRK']
+    module.update_prices({"VMRK"})
+    assert download.call_args.args[1] == ["VMRK"]
