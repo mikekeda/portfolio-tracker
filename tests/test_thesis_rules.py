@@ -120,6 +120,21 @@ def test_schema_rejects_malformed_groups():
             raise AssertionError(f"expected ValidationError for {bad}")
 
 
+def test_above_band_max_starves_instead_of_trimming():
+    t = InstrumentThesisSchema.model_validate({**BASE, "buy_rules": [
+        {"field": "revenue_growth", "operator": ">=", "value": 0, "description": "cheap"},
+    ]})
+    assert evaluate_thesis_rules(HOLDING, t)["buy_signal"]
+    ev = evaluate_thesis_rules({**HOLDING, "portfolio_pct": 6.0}, t)
+    assert ev["allocation_status"] == "above_max"
+    assert not ev["sell_signal"] and not ev["buy_signal"], ev
+
+
+def test_below_band_min_still_signals_a_buy():
+    ev = evaluate_thesis_rules({**HOLDING, "portfolio_pct": 0.5}, thesis([]))
+    assert ev["buy_signal"] and not ev["sell_signal"], ev
+
+
 def test_sell_streak_is_backward_only():
     from backend.agent.backtest.data import MarketData  # noqa: F401  (import path check only)
 

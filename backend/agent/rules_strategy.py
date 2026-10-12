@@ -14,6 +14,9 @@ Intent rules (all thresholds are class attributes, tunable via backtest):
   BUY   non-held, top decile composite, uptrend, quality gate when Tier B known
   DEPLOY when cash > 30% of the book (backtest start / large deposit): buy the
          top-ranked quality names toward an equal-weight book
+
+No add or opening buy ever lifts a position past its thesis band max, and a position
+above it is starved rather than trimmed (STRATEGY.md R2).
 """
 
 from datetime import date
@@ -117,15 +120,6 @@ class RulesStrategy:
                 intents.append(TradeIntent(sym, "exit", None, score=float(comp[sym]) - 1.0, rationale=rationale))
                 continue
 
-            # Above the thesis allocation band → trim back to the band max, not exit.
-            if bool(row.get("thesis_above_max", False)):
-                band_max = row.get("thesis_target_max", np.nan)
-                target = float(band_max) / 100.0 if not np.isnan(band_max) else w - self.STEP_WEIGHT
-                if target < w - 0.001:
-                    rationale["trigger"] = f"weight {w:.1%} above thesis band max → trim to {target:.1%}"
-                    intents.append(TradeIntent(sym, "trim", target, score=float(comp[sym]), rationale=rationale))
-                continue
-
             hrp = row.get("hrp_weight", np.nan)
             rc = row.get("risk_contribution", np.nan)
             if not np.isnan(hrp) and not np.isnan(rc):
@@ -140,7 +134,7 @@ class RulesStrategy:
                         intents.append(TradeIntent(sym, "trim", target, score=float(comp[sym]), rationale=rationale))
                     continue
                 if pctl[sym] >= self.ADD_PCTL and w < hrp_target - 0.005:
-                    target = min(hrp_target, w + self.STEP_WEIGHT, self.limits.max_position_weight)
+                    target = min(hrp_target, w + self.STEP_WEIGHT, self.limits.max_position_weight, self._band_cap(row))
                     if target > w:
                         rationale["trigger"] = "top quintile, underweight vs HRP target"
                         intents.append(TradeIntent(sym, "add", target, score=float(comp[sym]), rationale=rationale))
@@ -148,6 +142,12 @@ class RulesStrategy:
         buys = self._new_buys(features, comp, pctl, set(held), state.etf_symbols)
         intents.extend(buys)
         return intents
+
+    @staticmethod
+    def _band_cap(row: pd.Series) -> float:
+        """Thesis band max as a weight fraction; unbounded when there is no thesis."""
+        band_max = row.get("thesis_target_max")
+        return float(band_max) / 100.0 if pd.notna(band_max) else float("inf")
 
     def _quality_ok(self, row: pd.Series) -> bool:
         """Tier-B quality gate; passes open when fundamentals are unknown."""
@@ -171,7 +171,7 @@ class RulesStrategy:
             row = features.loc[sym]
             if pctl[sym] < self.BUY_PCTL or not bool(row.get("dist_sma200", np.nan) > 0):
                 continue
-            if not self._quality_ok(row):
+            if not self._quality_ok(row) or self._band_cap(row) <= 0:
                 continue
             candidates.append(sym)
         candidates.sort(key=lambda s: (-comp[s], s))
@@ -179,7 +179,7 @@ class RulesStrategy:
             TradeIntent(
                 sym,
                 "buy",
-                self.NEW_POSITION_WEIGHT,
+                min(self.NEW_POSITION_WEIGHT, self._band_cap(features.loc[sym])),
                 score=float(comp[sym]),
                 rationale={
                     "composite": round(float(comp[sym]), 3),
@@ -199,7 +199,7 @@ class RulesStrategy:
             if is_fund(sym, state.etf_symbols):
                 continue
             row = features.loc[sym]
-            if bool(row.get("dist_sma200", np.nan) > 0) and self._quality_ok(row):
+            if bool(row.get("dist_sma200", np.nan) > 0) and self._quality_ok(row) and self._band_cap(row) > 0:
                 ranked.append(sym)
             if len(ranked) >= self.DEPLOY_POSITIONS:
                 break
@@ -209,13 +209,14 @@ class RulesStrategy:
         intents = []
         for sym in ranked:
             w = state.weights.get(sym, 0.0)
-            if target > w:
+            sym_target = min(target, self._band_cap(features.loc[sym]))
+            if sym_target > w:
                 action = "add" if state.quantities.get(sym, 0) > 0 else "buy"
                 intents.append(
                     TradeIntent(
                         sym,
                         action,
-                        target,
+                        sym_target,
                         score=float(comp[sym]),
                         rationale={"composite": round(float(comp[sym]), 3), "trigger": "cash deployment"},
                     )

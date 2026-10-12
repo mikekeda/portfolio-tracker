@@ -3,7 +3,8 @@ Evaluate thesis buy_rules / sell_rules against holdings data.
 
 Buy/sell signals use OR semantics within each rule list. Allocation band
 (target_weight_min/max_pct vs portfolio_pct) also contributes: below min → buy,
-above max → sell. When both sides fire, conflict is true and both signals show.
+above max → no buy. Above max never signals a sell: positions are capped by
+starvation, not trimmed (STRATEGY.md R2). When both sides fire, conflict is true.
 """
 
 from typing import Any
@@ -89,10 +90,7 @@ def _buy_reasons(ev: dict[str, Any]) -> list[str]:
 
 
 def _sell_reasons(ev: dict[str, Any]) -> list[str]:
-    reasons = [r["description"] for r in ev["sell_rules_met"]]
-    if ev["allocation_status"] == "above_max":
-        reasons.append(ev["allocation_reason"])
-    return reasons
+    return [r["description"] for r in ev["sell_rules_met"]]
 
 
 def evaluate_thesis_rules(
@@ -110,8 +108,8 @@ def evaluate_thesis_rules(
     allocation_status = _allocation_status(eval_holding, thesis)
     allocation_reason = _allocation_reason(eval_holding, thesis, allocation_status)
 
-    buy_signal = bool(buy_rules_met) or allocation_status == "below_min"
-    sell_signal = bool(sell_rules_met) or allocation_status == "above_max"
+    buy_signal = allocation_status == "below_min" or (bool(buy_rules_met) and allocation_status != "above_max")
+    sell_signal = bool(sell_rules_met)
     return {
         "buy_signal": buy_signal,
         "sell_signal": sell_signal,
@@ -120,8 +118,8 @@ def evaluate_thesis_rules(
         "sell_rules_met": sell_rules_met,
         "allocation_status": allocation_status,
         "allocation_reason": allocation_reason,
-        # Band bounds so consumers (trade agent) can trim to the band instead
-        # of guessing; persisted into FeaturesDaily.thesis_rule_eval.
+        # Band bounds so the trade agent can cap adds and new buys at the band max;
+        # persisted into FeaturesDaily.thesis_rule_eval.
         "target_weight_min_pct": thesis.target_weight_min_pct,
         "target_weight_max_pct": thesis.target_weight_max_pct,
     }

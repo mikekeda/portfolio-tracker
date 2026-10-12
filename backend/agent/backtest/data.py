@@ -223,11 +223,9 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
         if rec["screener_score"] is not None:
             rec["screener_score"] = rec["screener_score"] / (rec["screener_score_max"] or SCORE_NORMALIZER)
         eval_ = f.thesis_rule_eval or {}
-        # sell_signal conflates "a sell rule fired" with "above allocation band";
-        # the strategy exits on the former but only trims to the band on the latter.
+        # Exits key on fired sell rules; the band max only caps adds (R2).
         rec["thesis_sell_fired"] = bool(eval_.get("sell_rules_met"))
         rec["thesis_buy_fired"] = bool(eval_.get("buy_rules_met"))
-        rec["thesis_above_max"] = eval_.get("allocation_status") == "above_max"
         rec["thesis_target_max"] = eval_.get("target_weight_max_pct")  # percent or None
         rec["thesis_sell_reasons"] = "; ".join(
             r.get("description") or r.get("reason", "") for r in (eval_.get("sell_rules_met") or [])
@@ -252,7 +250,6 @@ async def load_market_data(session: AsyncSession, start: date, end: date | None 
             rec[col] = getattr(f, col, None) if col in SEC_FUNDAMENTAL_COLUMNS else None
         rec["thesis_sell_fired"] = False
         rec["thesis_buy_fired"] = False
-        rec["thesis_above_max"] = False
         rec["thesis_target_max"] = None
         rec["thesis_sell_reasons"] = ""
         records.append(rec)
@@ -381,7 +378,7 @@ def features_for_date(
     out = cross.join(latest.reindex(universe))
     # Boolean flags must never be NaN: bool(NaN) is True, and a missing thesis
     # evaluation must read as "no signal", not as a fired sell rule.
-    for col in ("thesis_sell_fired", "thesis_buy_fired", "thesis_above_max"):
+    for col in ("thesis_sell_fired", "thesis_buy_fired"):
         if col in out.columns:
             out[col] = out[col].fillna(False).astype(bool)
     if "thesis_sell_reasons" in out.columns:

@@ -62,9 +62,6 @@ function thesisRuleTooltip(eval_, side) {
   }
   if (side === 'sell') {
     eval_.sell_rules_met.forEach((r) => lines.push(r.description));
-    if (eval_.allocation_status === 'above_max') {
-      lines.push(eval_.allocation_reason);
-    }
   }
   return lines.join('\n');
 }
