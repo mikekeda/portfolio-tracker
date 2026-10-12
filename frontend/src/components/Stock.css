@@ -1680,3 +1680,11 @@
   overflow-y: auto;
   padding-right: 4px;
 }
+
+.inactive-instrument-notice {
+  padding: 12px;
+  color: #713f12;
+  background: #fef9c3;
+  border: 1px solid #eab308;
+  border-radius: 6px;
+}

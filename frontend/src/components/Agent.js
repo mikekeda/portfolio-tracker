@@ -110,6 +110,9 @@ const Agent = () => {
                 {s.score != null && ` — budget priority ${s.score.toFixed(2)}`}
               </div>
             )}
+            {s.rationale?.price_as_of && (
+              <div className="agent-detail-line">Price and technical observations as of {s.rationale.price_as_of}</div>
+            )}
             {s.constraint_adjustments.length > 0 && (
               <div className="agent-detail-line agent-adjustments">
                 {s.constraint_adjustments.map((a, i) => (

@@ -19,6 +19,7 @@ from backend.utils.roic import get_roic
 from backend.views._etf_overlay import apply_derived_to_instrument, fund_derived_metrics
 from backend.views._shared import get_rates, statement_to_quote_factor
 from config import BENCHES, PRICE_FIELD, TIMEZONE
+from data import STOCKS_DELISTED
 from models import (
     EtfHolding,
     FeaturesDaily,
@@ -34,6 +35,24 @@ from models import (
 )
 
 router = APIRouter()
+
+
+def _apply_inactive_status(detail: dict) -> None:
+    """Withhold current signals for retired or unsupported price feeds."""
+    active = detail["instrument"]["symbol"] not in STOCKS_DELISTED
+    detail["instrument"]["is_active"] = active
+    if active:
+        return
+    detail["fundamentals"] = {}
+    detail["analyst_price_targets"] = {}
+    detail["passed_screeners"] = []
+    for key in (
+        "screener_score", "screener_score_max", "form13f_score", "thesis_rule_eval",
+        "thesis_sell_streak", "agent_suggestion", "position_review", "f_score", "f_score_details",
+        "dcf_price", "dcf_diff", "dcf_low", "dcf_high", "dcf_implied_growth",
+        "dcf_implied_growth_status", "roic_yahoo_marker",
+    ):
+        detail[key] = None
 
 
 async def _build_etf_holdings(instrument, session: AsyncSession) -> dict | None:
@@ -648,4 +667,5 @@ async def get_instrument(
     derived = (await fund_derived_metrics(session, [instrument.yahoo_symbol])).get(instrument.yahoo_symbol)
     if derived:
         apply_derived_to_instrument(detail, derived)
+    _apply_inactive_status(detail)
     return detail

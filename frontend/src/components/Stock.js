@@ -915,6 +915,7 @@ const Stock = () => {
   if (!data) return null;
 
   const i = data.instrument;
+  const inactive = i.is_active === false;
   const f = data.fundamentals || {};
 
   const thesisSummary = i?.thesis?.summary ?? null;
@@ -1034,7 +1035,7 @@ const Stock = () => {
     look_through_n: data.look_through_n,
     look_through_as_of: data.look_through_as_of,
   };
-  const compositeScore = computeComposite(compositeInput);
+  const compositeScore = inactive ? null : computeComposite(compositeInput);
 
   const passedScreeners = data.passed_screeners || [];
   // A fund passes no gates of its own: "No screeners passed" would read as a
@@ -1388,8 +1389,8 @@ const Stock = () => {
   ];
 
   const sections = [
-    { id: 'sec-valuation', label: 'Valuation' },
-    { id: 'sec-quality', label: 'Quality' },
+    ...(!inactive ? [{ id: 'sec-valuation', label: 'Valuation' },
+      { id: 'sec-quality', label: 'Quality' }] : []),
     ...(data.etf_holdings ? [{ id: 'sec-holdings', label: 'Holdings' }] : []),
     { id: 'sec-13f', label: '13F' },
     ...((thesisSummary || data.thesis_rule_eval) ? [{ id: 'sec-thesis', label: 'Thesis' }] : []),
@@ -1413,6 +1414,13 @@ const Stock = () => {
       </nav>
       <div className="stock-header">
         <h2>{i.symbol} — {i.name}</h2>
+        {inactive && (
+          <p className="inactive-instrument-notice" role="status">
+            Inactive price feed — this symbol is retired or its price source is unsupported.
+            Current valuations, scores and trade signals are unavailable.
+            Charts and reports below are historical and may use different share bases.
+          </p>
+        )}
         {data.my_position && (
           <div className="my-position-card">
             <h4>Your Position</h4>
@@ -1477,19 +1485,19 @@ const Stock = () => {
             </div>
           </div>
         )}
-        <div className="stock-kpis">
+        {!inactive && <div className="stock-kpis">
           {kpis.map(k => (
             <div key={k.label} className={`kpi${k.itemClassName ? ` ${k.itemClassName}` : ''}`} title={k.tooltip}>
               <div className="kpi-label">{k.label}</div>
               <div className={`kpi-value${k.className ? ` ${k.className}` : ''}`}>{k.value}</div>
             </div>
           ))}
-        </div>
-        <FiftyTwoWeekBar
+        </div>}
+        {!inactive && <FiftyTwoWeekBar
           low={f.fiftyTwoWeekLow}
           high={f.fiftyTwoWeekHigh}
           current={f.currentPrice ?? (priceData.length > 0 ? priceData[priceData.length - 1].value : null)}
-        />
+        />}
         <div className="stock-meta">
           {i.sector && <span className="stock-meta-tag stock-meta-sector">{i.sector}</span>}
           {i.country && (
@@ -1541,7 +1549,7 @@ const Stock = () => {
       </nav>
 
       <div className="stock-panels">
-        <div className="panel" id="sec-valuation">
+        {!inactive && <div className="panel" id="sec-valuation">
           <h3>Valuation Multiples</h3>
           <div className="valuation-grid">
             {valuation.map(v => (
@@ -1574,8 +1582,8 @@ const Stock = () => {
               </p>
             </div>
           )}
-        </div>
-        <div className="panel" id="sec-quality">
+        </div>}
+        {!inactive && <div className="panel" id="sec-quality">
           <h3>Quality</h3>
           <div className="valuation-grid">
             {quality.map(q => (
@@ -1585,7 +1593,7 @@ const Stock = () => {
               </div>
             ))}
           </div>
-        </div>
+        </div>}
 
         {/* Lights up automatically once FeaturesDaily has enough snapshots */}
         {qualityTrend.length >= 5 && (
@@ -2280,7 +2288,7 @@ const Stock = () => {
         </div>
 
         <div className="panel" id="sec-analysts">
-          <h3>Analyst Recommendations</h3>
+          <h3>{inactive ? 'Historical Analyst Recommendations' : 'Analyst Recommendations'}</h3>
           <PanelSpan span={recsSpan} note={eventRangeFloored ? '1Y minimum for monthly data' : null} />
           {recsInRange.length > 0 ? (
             <ResponsiveContainer width="100%" height={320}>
@@ -2387,7 +2395,7 @@ const Stock = () => {
             <div className="panel" id="sec-reports">
               <div className="earnings-panel-header">
                 <div>
-                  <h3>Earnings Reports</h3>
+                  <h3>{inactive ? 'Historical Earnings Reports' : 'Earnings Reports'}</h3>
                   <p className="earnings-panel-dates">
                     Period ends {periodFmt}
                     {announcedFmt && <> · Announced {announcedFmt}</>}

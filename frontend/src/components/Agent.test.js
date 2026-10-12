@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import Agent from './Agent';
 import { portfolioAPI } from '../services/api';
@@ -46,4 +46,16 @@ test('successful run discloses carried valuation prices', async () => {
   portfolioAPI.getAgentSuggestionsHistory.mockResolvedValue({ suggestions: [] });
   render(<Agent />);
   expect(await screen.findByText(run.reason)).toBeInTheDocument();
+});
+
+
+test('suggestion details expose the carried observation date', async () => {
+  const suggestion = { id: 7, symbol: 'TEST', name: 'Test', date: '2026-09-22', action: 'trim',
+    value_gbp: 500, weight_before: .2, weight_after: .15, score: 1, status: 'proposed',
+    constraint_adjustments: [], rationale: { trigger: 'thesis band', price_as_of: '2026-09-21' } };
+  portfolioAPI.getAgentSuggestions.mockResolvedValue({ date: '2026-09-22', suggestions: [suggestion] });
+  portfolioAPI.getAgentSuggestionsHistory.mockResolvedValue({ suggestions: [] });
+  render(<Agent />);
+  fireEvent.click(await screen.findByText('thesis band'));
+  expect(screen.getByText('Price and technical observations as of 2026-09-21')).toBeInTheDocument();
 });
