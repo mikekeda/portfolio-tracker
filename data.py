@@ -26,7 +26,7 @@ STOCKS_SUFFIX: dict[str, str] = {  # updated 2026-04-11, event-driven
 
 # Maps the *core* symbol from Trading212 (before _US_EQ / exchange tag) → Yahoo ticker.
 # Applied in convert_ticker() after stripping the T212 suffix, e.g. JEC_US_EQ → sym JEC → "J".
-STOCKS_ALIASES: dict[str, str] = {  # updated 2026-08-01, event-driven
+STOCKS_ALIASES: dict[str, str] = {  # updated 2026-10-12, event-driven
     "3LBA1": "3LBA",
     "AAXN": "AXON",
     "ABC": "COR",
@@ -78,6 +78,7 @@ STOCKS_ALIASES: dict[str, str] = {  # updated 2026-08-01, event-driven
     "LSE": "LSEG",
     "MMC": "MRSH",
     "MYL": "VTRS",
+    "NHIC": "EVLV",  # NewHold SPAC → Evolv; Yahoo NHIC now quotes the unrelated NewHold III
     "NPA": "ASTS",
     "OAC": "HIMS",
     "PALAF1": "PALAF",
@@ -115,7 +116,7 @@ STOCKS_ALIASES: dict[str, str] = {  # updated 2026-08-01, event-driven
 # • Yahoo symbols (e.g. YNDX) — update_prices / backfill skip Instruments with that yahoo_symbol.
 # Prefer STOCKS_ALIASES for simple renames so new syncs get a live Yahoo symbol; use this for
 # halted shells, SPACs that no longer trade under the old symbol, or bad T212 lines to hide.
-STOCKS_DELISTED: set[str] = {  # updated 2026-08-21, event-driven
+STOCKS_DELISTED: set[str] = {  # updated 2026-10-12, event-driven
     "11C.DE",  # 11 bit studios - Xetra line dead on Yahoo; primary 11B.WA is PLN (unsupported)
     "8GC.DE",  # legacy Xetra entry, no Yahoo price feed
     "AGR.L",  # Assura - delisted from LSE after PHP takeover, Oct 2025
@@ -124,6 +125,7 @@ STOCKS_DELISTED: set[str] = {  # updated 2026-08-21, event-driven
     "KEE.DE",  # Keyence - Xetra line dead on Yahoo; primary 6861.T is JPY (unsupported)
     "KGHA.DE",  # KGHM Polska Miedz - Xetra line dead on Yahoo; primary KGH.WA is PLN (unsupported)
     "PJXC.DE",  # Petrobras - Xetra line frozen on Yahoo (corrupt adj_close); primary PBR is the NYSE ADR
+    "SDR.L",  # Schroders - taken private by Nuveen, LSE listing cancelled Oct 2026
     "ALCC1",  # AltC Acquisition - merged into Oklo (OKLO)
     "BSAQ",  # Black Spade Acquisition - SPAC, no longer trading
     "CRH.L",  # CRH cancelled its LSE line Apr 2026; NYSE-only now (USD line is a separate instrument)
@@ -138,6 +140,7 @@ STOCKS_DELISTED: set[str] = {  # updated 2026-08-21, event-driven
     "HOLX",  # Hologic - taken private by Blackstone/TPG, Apr 2026
     "HYUDl_EQ",  # raw T212 code (rejected by convert_ticker, filtered in fetch_holdings)
     "MASI",  # Masimo - acquired by Danaher, Jun 2026
+    "WBD",  # Warner Bros. Discovery - acquired by Paramount Skydance, Nasdaq delisted Oct 2026
 }
 
 # Live tickers whose Wisesheets page currently has no PE block. Skipped by the nightly
@@ -148,7 +151,7 @@ WISESHEETS_NO_PE: set[str] = {  # updated 2026-07-22, auto re-probed weekly
     "SWMR",  # Swarmer - 2025 IPO, not yet covered by Wisesheets
 }
 
-SP500 = [  # updated 2026-08-21, review quarterly
+SP500 = [  # updated 2026-10-12, review quarterly
     "MMM",
     "AOS",
     "ABT",
@@ -619,7 +622,6 @@ SP500 = [  # updated 2026-08-21, review quarterly
     "WAB",
     "WMT",
     "DIS",
-    "WBD",
     "WM",
     "WAT",
     "WEC",
@@ -656,7 +658,7 @@ SP500 = [  # updated 2026-08-21, review quarterly
     "VRT",
 ]
 
-QQQ = [  # updated 2026-08-21, review quarterly
+QQQ = [  # updated 2026-10-12, review quarterly
     "ADBE",
     "AMD",
     "ABNB",
@@ -746,7 +748,6 @@ QQQ = [  # updated 2026-08-21, review quarterly
     "TRI",
     "VRTX",
     "WMT",
-    "WBD",
     "WDC",
     "WDAY",
     "XEL",
@@ -763,7 +764,7 @@ QQQ = [  # updated 2026-08-21, review quarterly
     "TER",
 ]
 
-FTSE_100 = [  # updated 2026-07-22, review quarterly
+FTSE_100 = [  # updated 2026-10-12, review quarterly
     "III.L",
     "ADM.L",
     "AAF.L",
@@ -842,7 +843,6 @@ FTSE_100 = [  # updated 2026-07-22, review quarterly
     "RR.L",
     "SGE.L",
     "SBRY.L",
-    "SDR.L",
     "SMT.L",
     "SGRO.L",
     "SVT.L",
