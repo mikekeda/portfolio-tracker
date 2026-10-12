@@ -1,6 +1,7 @@
 import asyncio
 from backend.app import dispose_engine
 from celery_tasks.celery_app import app
+from data import QQQ, SP500, STOCKS_DELISTED
 from scripts.update_returns import update_returns
 from scripts.fix_split_prices import fix_split_prices
 from scripts.get_earnings_reports import get_earnings_reports
@@ -10,7 +11,7 @@ from scripts.update_etf_holdings import refresh as refresh_etf_holdings
 from scripts.scrape_wisesheets_pe import update_pe_data
 from scripts.run_position_review import run_position_reviews
 from scripts.run_trade_agent import run_trade_agent
-from scripts.update_data import update_data
+from scripts.update_data import update_data, update_prices
 from scripts.update_features import update_features
 from scripts.update_market_metrics import update_market_metrics
 from scripts.update_pies import update_pies
@@ -44,6 +45,12 @@ def calculate_portfolio_returns_task():
 @app.task
 def update_data_task():
     update_data()
+
+
+@app.task
+def catch_up_prices_task():
+    """Refresh prices before the morning features and agent."""
+    update_prices((set(SP500) | set(QQQ)) - STOCKS_DELISTED)
 
 
 @app.task

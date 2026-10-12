@@ -895,10 +895,15 @@ def update_prices(tickers_to_add: set[str]) -> None:
                 session.commit()
 
         # Get prices for new tickers
-        new_tickers = list((tickers_to_add | tickers) - {row.symbol for row in existing_prices})
+        new_tickers = sorted((tickers_to_add | tickers) - STOCKS_DELISTED - {row.symbol for row in existing_prices})
         start = today - timedelta(days=HISTORY_YEARS * 366)  # 10 years of data
-        _update_prices(session, new_tickers, start)  # all new tickers at once
-        session.commit()
+        for i in range(0, len(new_tickers), BATCH_SIZE_YF):
+            batch = new_tickers[i : i + BATCH_SIZE_YF]
+            stored = _update_prices(session, batch, start)
+            session.commit()
+            missing = set(batch) - stored
+            if missing:
+                logger.warning("No price history stored for new symbols: %s; will retry next run", sorted(missing))
 
 
 def scrub_for_json(obj):

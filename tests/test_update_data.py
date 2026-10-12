@@ -1,6 +1,6 @@
 """Recent price repair, quarterly refresh and update-run cleanup."""
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -257,3 +257,98 @@ def test_pipeline_order_and_cache_cleanup_at_every_stage(monkeypatch, failed_sta
         module.update_data()
         expected = [name for name, _ in stages]
     assert calls == expected + ["clear"]
+
+
+@pytest.mark.parametrize("day", [17, 19])  # Thursday and Saturday's Friday close.
+@pytest.mark.parametrize("midnight", ["success", "partial", "missed"])
+def test_morning_then_eight_preserves_daily_overlap_and_split_checks(monkeypatch, day, midnight):
+    from celery_tasks import tasks
+
+    today = date(2026, 9, day)
+    completed = today - timedelta(days=1)
+    run_at = datetime(2026, 9, day, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(module, "datetime", SimpleNamespace(now=lambda tz: run_at.astimezone(tz)))
+    session = Mock()
+    rows = [SimpleNamespace(symbol=s, max_date=completed - timedelta(days=1),
+                            refreshed_at=run_at.replace(tzinfo=None) - timedelta(days=1))
+            for s in ("CURRENT", "SPLIT", "LATE")]
+    session.scalars.return_value.all.return_value = [r.symbol for r in rows]
+    session.query.return_value.where.return_value.group_by.return_value.order_by.return_value.all.return_value = rows
+
+    @contextmanager
+    def db():
+        yield session
+
+    def split_starts(session, symbols):
+        return {"SPLIT": date(2020, 1, 2)} if "SPLIT" in symbols else {}
+
+    def store(session, symbols, start):
+        stored = set()
+        for row in rows:
+            if row.symbol not in symbols:
+                continue
+            if run_at.hour == 0 and midnight == "partial" and row.symbol == "SPLIT":
+                continue
+            row.refreshed_at = run_at.replace(tzinfo=None)
+            if row.symbol != "LATE" or run_at.hour >= 8:
+                row.max_date = completed
+            stored.add(row.symbol)
+        return stored
+
+    monkeypatch.setattr(module, "get_session", db)
+    split_check = Mock(side_effect=split_starts)
+    monkeypatch.setattr(module, "_full_history_starts", split_check)
+    download = Mock(side_effect=store)
+    monkeypatch.setattr(module, "_update_prices", download)
+    # Exercise the actual task entry point, with broker/Yahoo/DB work isolated.
+    monkeypatch.setattr(tasks, "update_prices", module.update_prices)
+    monkeypatch.setattr(tasks, "SP500", [])
+    monkeypatch.setattr(tasks, "QQQ", [])
+
+    if midnight != "missed":
+        module.update_prices(set())
+    download.reset_mock()
+    split_check.reset_mock()
+    run_at = run_at.replace(hour=6)
+    tasks.catch_up_prices_task.run()
+    calls = {symbol: call.args[2] for call in download.call_args_list for symbol in call.args[1]}
+    if midnight == "missed":
+        assert calls == {"SPLIT": date(2020, 1, 2), "CURRENT": today - timedelta(days=7),
+                         "LATE": today - timedelta(days=7)}
+        assert set(split_check.call_args.args[1]) == {"CURRENT", "SPLIT", "LATE"}
+    elif midnight == "partial":
+        assert calls == {"SPLIT": date(2020, 1, 2), "LATE": completed}
+        assert split_check.call_args.args[1] == ["SPLIT"]
+    else:
+        assert calls == {"LATE": completed}
+        assert split_check.call_args.args[1] == []
+
+    download.reset_mock()
+    run_at = run_at.replace(hour=8)
+    module.update_prices(set())
+    download.assert_called_once_with(session, ["LATE"], completed)
+    assert split_check.call_args.args[1] == []
+    module.update_prices(set())
+    assert download.call_count == 1
+
+
+def test_new_index_symbol_without_instrument_is_batched_retried_and_failure_logged(monkeypatch, caplog):
+    monkeypatch.setattr(module, 'datetime', Clock)
+    monkeypatch.setattr(module, 'BATCH_SIZE_YF', 1)
+    session = Mock()
+    session.scalars.return_value.all.return_value = ['AVB']
+    session.query.return_value.where.return_value.group_by.return_value.order_by.return_value.all.return_value = []
+    @contextmanager
+    def db():
+        yield session
+    monkeypatch.setattr(module, 'get_session', db)
+    download = Mock(side_effect=lambda session, symbols, start: set(symbols) - {'VMRK'})
+    monkeypatch.setattr(module, '_update_prices', download)
+    # No VMRK broker instrument exists, and a caller accidentally includes a retired line.
+    module.update_prices({'VMRK', 'RDDT', 'AVB'})
+    assert [c.args[1] for c in download.call_args_list] == [['RDDT'], ['VMRK']]
+    assert session.commit.call_count == 2
+    assert 'No price history stored for new symbols' in caplog.text and 'VMRK' in caplog.text
+    download.reset_mock()
+    module.update_prices({'VMRK'})
+    assert download.call_args.args[1] == ['VMRK']

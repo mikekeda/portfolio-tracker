@@ -25,6 +25,11 @@ app.autodiscover_tasks(["celery_tasks"])
 # When schedules overlap, calculate_portfolio_returns runs 5 minutes after update_data
 
 app.conf.beat_schedule = {
+    # Uses the normal daily gates, including overlap/splits if midnight missed a symbol.
+    "catch_up_prices_before_agent": {
+        "task": "celery_tasks.tasks.catch_up_prices_task",
+        "schedule": crontab(minute=0, hour=6),
+    },
     # Update data during market hours (Mon-Fri): Every 2 hours + midnight to prevent missing data errors
     # Runs at 0:00, 8:00, 10:00, 12:00, 14:00, 16:00, 18:00, 20:00, 22:00
     "update_data_market_hours": {
