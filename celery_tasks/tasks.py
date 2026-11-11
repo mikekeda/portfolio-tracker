@@ -70,10 +70,9 @@ def update_market_metrics_task():
 
 @app.task(soft_time_limit=5400, time_limit=5700)
 def update_pe_data_task():
-    """Update PE ratio historical data from Macrotrends for instruments with oldest PE data.
+    """Refresh quarterly P/E history from Wisesheets.
 
-    Overrides the global time limit: ~19 s/ticker over 140 tickers is a ~45 min
-    run, and the retry-on-error path can push it further.
+    Overrides the global time limit to allow pacing between requests.
     """
     update_pe_data(limit=100)
 

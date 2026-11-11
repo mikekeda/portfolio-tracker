@@ -1,24 +1,16 @@
-"""
-Scrape Wisesheets PE ratio historical data for a given stock.
-"""
+"""Refresh historical quarterly P/E ratios from public Wisesheets pages."""
 
-import platform
-import sys
-from collections import defaultdict
-from contextlib import contextmanager
-from datetime import datetime
+import json
+import math
+from datetime import date, datetime
 from time import sleep
-from typing import Optional
+from typing import Any
 
+import requests
 from bs4 import BeautifulSoup  # type: ignore[import-untyped]
-from selenium import webdriver
-from selenium.webdriver.firefox.options import Options
-from selenium.webdriver.firefox.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 from sqlalchemy import func, or_, select, update
 from sqlalchemy import text as sql_text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
 from config import TIMEZONE, logger
@@ -26,214 +18,74 @@ from data import STOCKS_DELISTED, WISESHEETS_NO_PE
 from models import HoldingDaily, Instrument, InstrumentYahoo
 from scripts.update_data import get_session
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
-# driver.get() blocks forever by default; one wedged page would strand the whole
-# nightly chain behind this task.
-PAGE_LOAD_TIMEOUT = 30
-
-
-@contextmanager
-def init_webdriver():
-    browser_options = Options()
-    browser_options.add_argument("--headless")
-    browser_options.add_argument("--no-sandbox")
-    browser_options.add_argument("--disable-dev-shm-usage")
-    browser_options.add_argument("--disable-gpu")
-    browser_options.add_argument("--window-size=1920,1080")
-    browser_options.add_argument(f"--user-agent={HEADERS['User-Agent']}")
-
-    service = (
-        Service(executable_path="/usr/local/bin/geckodriver")
-        if sys.platform == "linux" and platform.machine() == "aarch64"
-        else None
-    )
-    driver = webdriver.Firefox(service=service, options=browser_options)
-    driver.set_page_load_timeout(PAGE_LOAD_TIMEOUT)
-    try:
-        yield driver
-    finally:
-        driver.quit()
-
 
 def build_url(ticker: str) -> str:
-    ticker = ticker.strip().upper()
-    return f"https://www.wisesheets.io/pe-ratio/{ticker}"
+    return f"https://www.wisesheets.io/pe-ratio/{ticker.strip().upper()}"
 
 
-def fetch_html(driver: webdriver.Firefox, url: str) -> str:
-    """Fetch HTML from Wisesheets, handling the Quarterly/Annual toggle."""
-    driver.get(url)
-
-    # Wait for the page to load and look for the Quarterly (TTM) toggle
-    wait = WebDriverWait(driver, 5)
-
-    # Try to find and click the "Quarterly (TTM)" button
-    selector = "//div[contains(text(), 'Quarterly (TTM)')]"
-
-    quarterly_button = wait.until(EC.element_to_be_clickable((By.XPATH, selector)))
-    quarterly_button.click()
-    # Wait a moment for the data to update
-    sleep(3)
-
-    # Get the updated HTML
-    return driver.page_source
-
-
-def _clean_number(value: str) -> Optional[float]:
-    s = value.strip()
-    if not s or s in {"-", "N/A", "NaN", ""}:
-        return None
-    s = s.replace(",", "").replace("$", "").replace("%", "")
-    # Handle negative shown with parentheses
-    if s.startswith("(") and s.endswith(")"):
-        s = f"-{s[1:-1]}"
+def parse_pe_data(html: str, ticker: str) -> dict[str, float]:
+    """Read the quarterly series the public page uses to render its table."""
+    script = BeautifulSoup(html, "html.parser").select_one("script#__NEXT_DATA__")
+    if script is None or not script.string:
+        raise ValueError("Wisesheets page is missing its embedded data")
     try:
-        return float(s)
-    except ValueError:
-        return None
+        page = json.loads(script.string)["props"]["pageProps"]
+        if page["symbol"].upper() != ticker.strip().upper():
+            raise ValueError("Wisesheets returned data for a different ticker")
+        quarterly = page["data"]["keyMetricsQuarterly"]
+        if not isinstance(quarterly, list):
+            raise ValueError("Wisesheets quarterly P/E history is not a list")
+
+        records: dict[str, float] = {}
+        for row in quarterly:
+            period_end = date.fromisoformat(row["date"]).isoformat()
+            ratio = row["peRatio"]
+            if ratio is None:
+                continue
+            if type(ratio) not in (int, float) or not math.isfinite(ratio):
+                raise ValueError("Wisesheets returned an invalid quarterly P/E ratio")
+            # The public table displays nonpositive P/E as not meaningful.
+            if ratio > 0:
+                records[period_end] = float(ratio)
+        return records
+    except (AttributeError, KeyError, TypeError) as exc:
+        raise ValueError("Wisesheets quarterly P/E payload has an unexpected structure") from exc
 
 
-def parse_pe_data(html: str) -> dict[str, Optional[float]]:
-    """Parse PE ratio data from Wisesheets HTML."""
-    soup = BeautifulSoup(html, "html.parser")
-    records: dict[str, Optional[float]] = {}
-
-    # Look for tables with Year and PE Ratio columns
-    tables = soup.find_all("table")
-
-    for table in tables:
-        headers = table.find_all("th")
-        header_texts = [h.get_text(strip=True) for h in headers]
-
-        # Look for the historical PE table (Year, PE Ratio, Change)
-        if "Year" in header_texts and "PE Ratio" in header_texts:
-            rows = table.find_all("tr")[1:]  # Skip header row
-
-            # Group rows by year to handle quarterly data
-            year_data: dict[int, list[float]] = defaultdict(list)
-            for row in rows:
-                cells = row.find_all(["td", "th"])
-                if len(cells) >= 2:
-                    year_text = cells[0].get_text(strip=True)
-                    pe_text = cells[1].get_text(strip=True)
-
-                    try:
-                        year = int(year_text)
-                        pe_value = _clean_number(pe_text)
-                        if pe_value is not None:
-                            year_data[year].append(pe_value)
-                    except ValueError:
-                        continue
-
-            # Convert grouped data to quarterly dates
-            for year, pe_values in year_data.items():
-                if len(pe_values) == 1:
-                    # Single value for the year - use end of year
-                    records[f"{year}-12-31"] = pe_values[0]
-                elif len(pe_values) == 4:
-                    # Four values - quarterly data
-                    quarters = [
-                        f"{year}-03-31",  # Q1
-                        f"{year}-06-30",  # Q2
-                        f"{year}-09-30",  # Q3
-                        f"{year}-12-31",  # Q4
-                    ]
-                    for i, pe_value in enumerate(pe_values):
-                        records[quarters[i]] = pe_value
-                else:
-                    # Other number of values - distribute evenly
-                    # For 2 values: Q2 and Q4
-                    # For 3 values: Q2, Q3, Q4
-                    if len(pe_values) == 2:
-                        quarters = [f"{year}-06-30", f"{year}-12-31"]
-                    elif len(pe_values) == 3:
-                        quarters = [f"{year}-06-30", f"{year}-09-30", f"{year}-12-31"]
-                    else:
-                        # More than 4 values - use monthly distribution
-                        months_per_value = 12 // len(pe_values)
-                        quarters = []
-                        for i in range(len(pe_values)):
-                            month = (i + 1) * months_per_value
-                            if month == 12:
-                                quarters.append(f"{year}-12-31")
-                            elif month in [3, 6, 9]:
-                                quarters.append(f"{year}-{month:02d}-30")
-                            else:
-                                quarters.append(f"{year}-{month:02d}-28")
-
-                    for i, pe_value in enumerate(pe_values):
-                        if i < len(quarters):
-                            records[quarters[i]] = pe_value
-
-            break  # Found the right table, no need to check others
-
-    if not records:
-        raise RuntimeError("Failed to locate PE ratio data on the Wisesheets page")
-
-    return records
+def fetch_pe_data(http: requests.Session, ticker: str) -> dict[str, float]:
+    response = http.get(build_url(ticker), timeout=(5, 20))
+    response.raise_for_status()
+    return parse_pe_data(response.text, ticker)
 
 
-def _parse_date(date_text: str) -> Optional[str]:
-    """Parse date text into ISO format string."""
-    date_text = date_text.strip()
+def _quarter(period_end: str) -> tuple[int, int]:
+    day = date.fromisoformat(period_end)
+    return day.year, (day.month - 1) // 3
 
-    # Try to parse as year only (e.g., "2024")
-    try:
-        year = int(date_text)
-        return f"{year}-12-31"  # Default to end of year
-    except ValueError:
-        pass
 
-    # Try to parse as year-month (e.g., "2024-03", "2024-Q1")
-    if "-" in date_text:
-        parts = date_text.split("-")
-        if len(parts) == 2:
-            try:
-                year = int(parts[0])
-                month_part = parts[1]
-
-                # Handle quarter format (Q1, Q2, Q3, Q4)
-                if month_part.startswith("Q"):
-                    quarter = int(month_part[1:])
-                    if quarter == 1:
-                        return f"{year}-03-31"
-                    elif quarter == 2:
-                        return f"{year}-06-30"
-                    elif quarter == 3:
-                        return f"{year}-09-30"
-                    elif quarter == 4:
-                        return f"{year}-12-31"
-
-                # Handle month format
-                month = int(month_part)
-                if 1 <= month <= 12:
-                    # Use end of month
-                    if month in [1, 3, 5, 7, 8, 10, 12]:
-                        return f"{year}-{month:02d}-31"
-                    elif month in [4, 6, 9, 11]:
-                        return f"{year}-{month:02d}-30"
-                    else:  # February
-                        return f"{year}-02-28"  # Assume non-leap year
-            except ValueError:
-                pass
-
-    # Try to parse as full date (e.g., "2024-03-15")
-    try:
-        dt = datetime.strptime(date_text, "%Y-%m-%d")
-        return dt.date().isoformat()
-    except ValueError:
-        pass
-
-    return None
+def merge_pe_history(cached: dict[str, Any], latest: dict[str, float], today: date) -> dict[str, Any]:
+    """Keep history while replacing old Wisesheets dates for refreshed quarters."""
+    today_iso = today.isoformat()
+    latest = {day: ratio for day, ratio in latest.items() if day <= today_iso}
+    refreshed_quarters = {_quarter(day) for day in latest}
+    merged = {}
+    for day, entry in cached.items():
+        if day > today_iso:
+            continue  # Previous estimates are not part of the new history.
+        # The old Wisesheets parser assigned calendar dates by row position.
+        # Remove its aliases in refreshed quarters, but keep other providers' data.
+        is_wisesheets = (
+            "stock_price" in entry and entry["stock_price"] is None
+            and "ttm_eps" in entry and entry["ttm_eps"] is None
+        )
+        if is_wisesheets and _quarter(day) in refreshed_quarters:
+            continue
+        merged[day] = entry
+    merged.update({
+        day: {"stock_price": None, "ttm_eps": None, "pe_ratio": ratio}
+        for day, ratio in latest.items()
+    })
+    return merged
 
 
 def update_pe_data(limit: int = 100, onboard_limit: int = 40) -> None:
@@ -296,60 +148,38 @@ def update_pe_data(limit: int = 100, onboard_limit: int = 40) -> None:
         tickers = [row.instrument.yahoo_symbol for row in rows][:10]
         logger.info("Found %s instruments to update: %s,...", len(rows), tickers)
 
-        with init_webdriver() as driver:
+        updated = no_data = failed = 0
+        with requests.Session() as http:
             for row in rows:
                 ticker = row.instrument.yahoo_symbol
-                url = build_url(ticker)
-
                 try:
-                    html = fetch_html(driver, url)
-                    pe_data = parse_pe_data(html)
-
-                    # Convert to the same format as Macrotrends scraper
-                    formatted_data = {}
-                    for date, pe_value in pe_data.items():
-                        formatted_data[date] = {
-                            "stock_price": None,  # Not available from Wisesheets
-                            "ttm_eps": None,  # Not available from Wisesheets
-                            "pe_ratio": pe_value,
-                        }
-
-                    # Merge, never replace: past keys are append-only history (a
-                    # short scrape response must not truncate years of data), while
-                    # future-dated keys are forward estimates that mirror only the
-                    # newest scrape — stale estimates drop out, and actuals
-                    # overwrite the estimate as soon as the period end passes.
+                    latest = fetch_pe_data(http, ticker)
                     now = datetime.now(TIMEZONE)
-                    today_iso = now.date().isoformat()
-                    merged = {k: v for k, v in (row.pes or {}).items() if k <= today_iso}
-                    merged.update(formatted_data)
-
-                    result = session.execute(
-                        update(InstrumentYahoo)
-                        .where(InstrumentYahoo.instrument_id == row.instrument_id)
-                        .values(pes=merged, updated_at=now)
-                    )
-                    session.commit()
-                    logger.info(
-                        "Updated %s: rowcount=%s, instrument_id=%s",
-                        ticker,
-                        result.rowcount,
-                        row.instrument_id,
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        "Error scraping %s (instrument_id=%s): %s",
-                        ticker,
-                        row.instrument_id,
-                        e,
-                        exc_info=True,
-                    )
+                    if not any(day <= now.date().isoformat() for day in latest):
+                        no_data += 1
+                        logger.info("No usable quarterly P/E for %s; keeping cached history", ticker)
+                    else:
+                        merged = merge_pe_history(row.pes or {}, latest, now.date())
+                        session.execute(
+                            update(InstrumentYahoo)
+                            .where(InstrumentYahoo.instrument_id == row.instrument_id)
+                            .values(pes=merged, updated_at=now)
+                        )
+                        session.commit()
+                        updated += 1
+                        logger.info("Updated %s: %d quarterly P/E observations", ticker, len(latest))
+                except (requests.RequestException, SQLAlchemyError, ValueError) as exc:
+                    failed += 1
+                    logger.error("Failed to refresh quarterly P/E for %s: %s", ticker, exc)
                     session.rollback()
                     sleep(20)
                     continue
 
-                sleep(15)  # Be respectful to the server
+                sleep(15)
+
+        logger.info("Wisesheets P/E refresh: %d updated, %d without data, %d failed", updated, no_data, failed)
+        if failed and not updated:
+            raise RuntimeError(f"Wisesheets P/E refresh updated no instruments ({failed} failures)")
 
 
 if __name__ == "__main__":
