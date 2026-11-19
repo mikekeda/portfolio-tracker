@@ -1,4 +1,4 @@
-python-dateutil==4.0.0
+python-dateutil==2.9.0.post0
 requests==2.34.2
 certifi==2026.10.23
 tabulate==0.10.0
