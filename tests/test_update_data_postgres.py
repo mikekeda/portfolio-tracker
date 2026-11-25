@@ -147,7 +147,7 @@ def test_quarter_refresh_preserves_failed_module_and_updates_broker_holding(monk
         payload = {key: {} for key in ("cashflow", "balance_sheet", "income_stmt", "earnings",
             "recommendations", "analyst_price_targets", "splits", "quarterly_cashflow",
             "quarterly_balance_sheet")}
-        payload.update(info={"quoteType": "EQUITY"}, news=[], estimates=None,
+        payload.update(info={"quoteType": "EQUITY"}, news=[], estimates=None, insider_transactions=None,
                        quarterly_income_stmt={"2026-09-30": {"Total Revenue": 110}})
         fetch = Mock(return_value={"TEST": payload})
         monkeypatch.setattr(module, "get_yahoo_ticker_data", fetch)

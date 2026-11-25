@@ -1,8 +1,8 @@
 """Opt-in integration tests against an isolated local PostgreSQL instance.
 
 Set T212_TEST_POSTGRES_URL to
-postgresql+asyncpg://test_trading212_admin@localhost:5432/test_trading212.
-The temporary review_test server on /tmp:55439 is also supported.
+postgresql+asyncpg://build_trading212_admin@localhost:5432/build_trading212 (the
+same database name on a dev machine and in the server's Jenkins job).
 Each case creates and removes its own schema. No application DB configuration is used.
 """
 
@@ -20,24 +20,20 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from models import Base, TradeAgentRun
 
+# The only role/database these tests may create schemas in; it owns nothing else.
+TEST_ROLE, TEST_DATABASE = "build_trading212_admin", "build_trading212"
+
 
 def _validate_test_database_url(url: str) -> None:
     parsed = make_url(url)
-    local_test_db = (
-        parsed.username == "test_trading212_admin"
-        and parsed.database == "test_trading212"
+    allowed = (
+        parsed.drivername == "postgresql+asyncpg"
+        and (parsed.username, parsed.database) == (TEST_ROLE, TEST_DATABASE)
         and parsed.host in {"localhost", "127.0.0.1", "::1"}
         and parsed.port in {None, 5432}
         and not parsed.query
     )
-    temporary_test_db = (
-        parsed.username == "review_test"
-        and parsed.database == "postgres"
-        and parsed.host is None
-        and parsed.port is None
-        and dict(parsed.query) == {"host": "/tmp", "port": "55439"}
-    )
-    if parsed.drivername != "postgresql+asyncpg" or not (local_test_db or temporary_test_db):
+    if not allowed:
         raise ValueError("Integration tests require an explicitly allowed local test database")
 
 

@@ -94,9 +94,9 @@ def test_db_session_is_read_only_and_never_commits(monkeypatch):
 
 
 def test_postgres_rejects_writes_through_the_api_session(monkeypatch):
+    from sqlalchemy import text
     from sqlalchemy.exc import DBAPIError
 
-    from models import CurrencyRateDaily
     from postgres_helpers import postgres_database
 
     async def check():
@@ -104,9 +104,10 @@ def test_postgres_rejects_writes_through_the_api_session(monkeypatch):
             monkeypatch.setattr(app_module, "_get_session_factory", lambda: factory)
             dependency = app_module.get_db_session()
             session = await dependency.__anext__()
-            session.add(CurrencyRateDaily(from_currency="USD", to_currency="GBP", rate=0.8, date=date(2026, 11, 25)))
+            insert = text("INSERT INTO currency_rates_daily (date, from_currency, to_currency, rate, updated_at) "
+                          "VALUES (:day, 'USD', 'GBP', 0.8, now())")
             with pytest.raises(DBAPIError, match="read-only transaction"):
-                await session.flush()
+                await session.execute(insert, {"day": date(2026, 11, 25)})
             await dependency.aclose()
 
     asyncio.run(check())
