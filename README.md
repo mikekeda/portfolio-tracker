@@ -2,6 +2,18 @@
 
 A comprehensive portfolio management application that integrates with Trading212 API and Yahoo Finance to provide real-time portfolio tracking, analysis, and screening capabilities.
 
+## Local Python setup
+
+Use Python 3.13 to match production. The pinned numerical packages require Python 3.12 or newer.
+
+```bash
+python3.13 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip check
+```
+
 ## Features
 
 - **Portfolio Tracking**: Real-time portfolio value, profit/loss, and performance metrics

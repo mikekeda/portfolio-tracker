@@ -101,17 +101,21 @@ def test_intraday_run_retries_only_failed_or_lagging_symbols(monkeypatch):
 
 
 @pytest.mark.parametrize("splits, first_date, first_written, expected", [
-    # AVB in production: oldest row written 2025-10-12, 2026-08-17 split, recent rows refetched on the new scale.
-    ({"2026-08-17": 2.793}, date(2015, 10, 5), datetime(2025, 10, 12, 9), "2026-08-17"),
+    # Oldest row written long before a recent split, recent rows refetched on the new scale.
+    ({"2026-09-10": 2.793}, date(2015, 10, 5), datetime(2025, 10, 12, 9), "2026-09-10"),
     # Already refetched after the split, or the split predates stored history.
-    ({"2026-08-17": 2.793}, date(2015, 10, 5), datetime(2026, 8, 18, 0, 5), None),
+    ({"2026-09-10": 2.793}, date(2015, 10, 5), datetime(2026, 9, 11, 0, 5), None),
     ({"2024-06-10": 10.0}, date(2024, 7, 1), datetime(2024, 7, 2), None),
     # Written on the ex-date may predate Yahoo's rescale: refetch once more.
     ({"2026-09-14": 2.0}, date(2016, 1, 4), datetime(2026, 9, 14, 0, 1), "2026-09-14"),
     ({"not-a-date": 2.0, "2026-09-14": None}, date(2016, 1, 4), datetime(2020, 1, 1), None),
     (None, date(2016, 1, 4), datetime(2020, 1, 1), None),
+    # TOELY in production: Yahoo stopped serving the line at the split, so refetches never restate it.
+    ({"2026-09-03": 5.0}, date(2010, 1, 5), datetime(2026, 9, 1, 22), "2026-09-03"),
+    ({"2026-09-02": 5.0}, date(2010, 1, 5), datetime(2026, 9, 1, 22), None),
 ])
-def test_split_after_oldest_write_requires_full_history(splits, first_date, first_written, expected):
+def test_split_after_oldest_write_requires_full_history(monkeypatch, splits, first_date, first_written, expected):
+    monkeypatch.setattr(module, "datetime", Clock)
     assert module._split_stale_history(splits, first_date, first_written) == expected
 
 

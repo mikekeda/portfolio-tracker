@@ -149,6 +149,8 @@ QUARTER_MATCH_TOLERANCE_DAYS = 15
 # batch always carries a usable close forward into the non-trading days.
 FX_LOOKBACK_DAYS = 7
 PRICE_OVERLAP_DAYS = 7
+# Rows a refetch hasn't restated by then never will be, so stop the daily full-history download.
+SPLIT_REFETCH_DAYS = 14
 
 # PostgreSQL caps a statement at 65535 bind parameters and a price row binds 9,
 # so anything past ~7200 rows per INSERT is rejected outright.
@@ -805,17 +807,21 @@ def _price_fetch_start(latest: date, refreshed: Optional[datetime], today: date)
 
 
 def _split_stale_history(splits: Optional[dict[str, Any]], first_date: date, oldest_write: datetime) -> Optional[str]:
-    """Find an elapsed split that may leave stored history on an older scale.
+    """Find a recent split that may leave stored history on an older scale.
 
     Check the oldest write anywhere in the history, not just the first row's write.
     A write on the ex-date may precede the adjustment, so allow one further refresh.
+    Splits older than SPLIT_REFETCH_DAYS are ignored; history still unrestated
+    by then needs a manual repair (scripts/fix_*.sql).
     """
+    today = datetime.now(timezone.utc).date()
     for stamp, factor in sorted((splits or {}).items()):
         try:
             split_date = date.fromisoformat(str(stamp)[:10])
         except ValueError:
             continue
-        if factor and first_date < split_date <= datetime.now(timezone.utc).date() and oldest_write.date() <= split_date:
+        recent = today - timedelta(days=SPLIT_REFETCH_DAYS) <= split_date <= today
+        if factor and recent and first_date < split_date and oldest_write.date() <= split_date:
             return str(stamp)[:10]
     return None
 

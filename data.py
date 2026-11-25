@@ -116,7 +116,7 @@ STOCKS_ALIASES: dict[str, str] = {  # updated 2026-10-12, event-driven
 # • Yahoo symbols (e.g. YNDX) — update_prices / backfill skip Instruments with that yahoo_symbol.
 # Prefer STOCKS_ALIASES for simple renames so new syncs get a live Yahoo symbol; use this for
 # halted shells, SPACs that no longer trade under the old symbol, or bad T212 lines to hide.
-STOCKS_DELISTED: set[str] = {  # updated 2026-10-12, event-driven
+STOCKS_DELISTED: set[str] = {  # updated 2026-11-25, event-driven
     "11C.DE",  # 11 bit studios - Xetra line dead on Yahoo; primary 11B.WA is PLN (unsupported)
     "8GC.DE",  # legacy Xetra entry, no Yahoo price feed
     "AGR.L",  # Assura - delisted from LSE after PHP takeover, Oct 2025
@@ -140,6 +140,7 @@ STOCKS_DELISTED: set[str] = {  # updated 2026-10-12, event-driven
     "HOLX",  # Hologic - taken private by Blackstone/TPG, Apr 2026
     "HYUDl_EQ",  # raw T212 code (rejected by convert_ticker, filtered in fetch_holdings)
     "MASI",  # Masimo - acquired by Danaher, Jun 2026
+    "TOELY",  # Tokyo Electron ADR - Yahoo line dead since the 5:1 split, Oct 2026; primary 8035.T is JPY (unsupported)
     "WBD",  # Warner Bros. Discovery - acquired by Paramount Skydance, Nasdaq delisted Oct 2026
 }
 

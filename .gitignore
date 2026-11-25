@@ -3,6 +3,7 @@ celerybeat*
 .DS_Store
 
 .idea/
+.venv/
 __pycache__/
 node_modules/
 csv/
