@@ -88,8 +88,6 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    print(configuration)
-
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
 
