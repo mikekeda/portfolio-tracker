@@ -15,7 +15,6 @@ this endpoint only returns the inputs.
 import time
 from typing import Any, Optional
 
-import aiohttp
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +29,7 @@ from config import (
     logger,
 )
 from models import PortfolioDaily
-from utils.market_data import SSL_CONTEXT, UA
+from utils.market_data import UA, market_http_session
 
 router = APIRouter()
 
@@ -60,13 +59,9 @@ async def _get_cpi_observations() -> Optional[list[dict[str, Any]]]:
 
     obs = None
     try:
-        connector = aiohttp.TCPConnector(ssl=SSL_CONTEXT)
-        async with aiohttp.ClientSession(connector=connector) as http_session:
+        async with market_http_session() as http_session:
             async with http_session.get(ONS_CPI_URL, headers={"User-Agent": UA}) as resp:
-                if resp.status == 200:
-                    obs = parse_ons_csv(await resp.text())
-                else:
-                    logger.warning("ONS CPI fetch failed: HTTP %s", resp.status)
+                obs = parse_ons_csv(await resp.text())
     except Exception as e:
         logger.warning("ONS CPI fetch failed: %s", e)
 

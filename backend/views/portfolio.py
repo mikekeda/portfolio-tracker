@@ -4,7 +4,6 @@ from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, Optional
 
-import aiohttp
 from fastapi import APIRouter, Depends
 from sqlalchemy import and_, func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +17,6 @@ from backend.utils.valuation import valuation_metrics
 from backend.utils.form13f import _get_form13f_for_instruments
 from backend.utils.market_breadth import compute_live_rolling_breadth
 from utils.market_data import (
-    SSL_CONTEXT,
     gen_buffett_indicator,
     gen_fear_greed_index,
     gen_market_breadth_indicator,
@@ -27,6 +25,7 @@ from utils.market_data import (
     get_hy_oas,
     get_real_yield_10y,
     get_yield_spread,
+    market_http_session,
 )
 from backend.utils.piotroski import get_piotroski_f_score
 from backend.utils.roic import get_roic, get_roic_history, get_roic_ttm_series
@@ -644,7 +643,7 @@ async def get_current_portfolio(
 async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     """Get portfolio summary statistics including total value, profit, and win rate."""
     # Get the latest portfolio snapshot
-    result = await session.execute(select(PortfolioDaily).order_by(PortfolioDaily.date.desc()))
+    result = await session.execute(select(PortfolioDaily).order_by(PortfolioDaily.date.desc()).limit(1))
     latest_snapshot = result.scalars().first()
 
     if not latest_snapshot:
@@ -661,9 +660,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
     alpha = latest_snapshot.jensens_alpha
 
     # Get holdings for the same date to calculate win rate
-    async with aiohttp.ClientSession(
-        connector=aiohttp.TCPConnector(ssl=SSL_CONTEXT), raise_for_status=True
-    ) as aiohttp_session:
+    async with market_http_session() as aiohttp_session:
         (
             holdings_result,
             vix_result,
@@ -741,7 +738,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
 async def get_portfolio_allocations(session: AsyncSession = Depends(get_db_session)) -> dict[str, Any]:
     """Get portfolio allocations by sector and country."""
     # Get the latest portfolio snapshot
-    result = await session.execute(select(PortfolioDaily).order_by(PortfolioDaily.date.desc()))
+    result = await session.execute(select(PortfolioDaily).order_by(PortfolioDaily.date.desc()).limit(1))
     latest_snapshot = result.scalars().first()
 
     if not latest_snapshot:

@@ -21,6 +21,15 @@ UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
 
 # macOS framework Pythons ship without system CA certs; certifi's bundle verifies everywhere.
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+# These calls run inside page loads; past this the page renders without the value.
+HTTP_TIMEOUT = aiohttp.ClientTimeout(total=10)
+
+
+def market_http_session() -> aiohttp.ClientSession:
+    """HTTP session for API-time upstream fetches: verified TLS, bounded wait, HTTP errors raised."""
+    return aiohttp.ClientSession(
+        connector=aiohttp.TCPConnector(ssl=SSL_CONTEXT), timeout=HTTP_TIMEOUT, raise_for_status=True
+    )
 
 
 async def gen_sp500_above_sma200(session: AsyncSession) -> float:

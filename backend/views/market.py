@@ -2,7 +2,6 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Any
 
-import aiohttp
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app import get_db_session
 from backend.utils.market_breadth import rolled_breadth_series
-from utils.market_data import gen_fred_latest
+from utils.market_data import gen_fred_latest, market_http_session
 from backend.views._shared import get_rates
 from config import TIMEZONE
 from models import HoldingDaily, Instrument, MarketMetricsDaily, Pie, PieInstrument
@@ -167,7 +166,7 @@ async def get_consumer_sentiment_history(months: int = 36) -> list[dict[str, Any
     months=0 returns ~10 years (120 observations).
     """
     limit = 120 if months == 0 else max(3, months)
-    async with aiohttp.ClientSession() as http_session:
+    async with market_http_session() as http_session:
         obs = await gen_fred_latest(http_session, "UMCSENT", limit=limit)
     if not obs:
         return []
