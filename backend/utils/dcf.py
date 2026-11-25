@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import EQUITY_RISK_PREMIUM, RISK_FREE_RATE, SPY, TERMINAL_GROWTH_RATE, TIMEZONE
 from models import CurrencyRateDaily, Instrument, PricesDaily
-from utils.market_data import get_risk_free_rates
+from utils.market_data import SSL_CONTEXT, get_risk_free_rates
 from backend.utils.fcf import operating_cashflow
 from backend.utils.fx import latest_rates_to_gbp
 from backend.utils.technical import PRICE_COLUMN
@@ -653,7 +653,7 @@ async def get_dcf_analyses(
     stocks. Build the dict with :func:`get_effective_betas`.
     """
     async with aiohttp.ClientSession(
-        connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
+        connector=aiohttp.TCPConnector(ssl=SSL_CONTEXT), raise_for_status=True
     ) as aiohttp_session:
         risk_free_rates = await get_risk_free_rates(aiohttp_session)
     fx_to_gbp = await _get_fx_to_gbp(session)

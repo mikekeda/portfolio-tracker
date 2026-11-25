@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,11 @@ from config import TIMEZONE
 from models import EarningsReport, HoldingDaily, Instrument, PricesDaily
 
 router = APIRouter()
+
+FILINGS_DIR = Path(__file__).parent.parent.parent / "data" / "filings"
+# Both segments become a path and a glob: no dot-dot, separators or wildcards.
+SYMBOL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.\-]{0,19}")
+REPORT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 @router.get("/api/earnings/calendar")
@@ -210,12 +216,10 @@ async def get_earnings_calendar(
 
 @router.get("/api/earnings-report/{symbol}/{report_date}", response_class=HTMLResponse)
 async def get_earnings_report_html(symbol: str, report_date: str) -> HTMLResponse:
-    """
-    Get the full HTML earnings report file for a given symbol and date.
-    For local dev server only - production should use nginx to serve static files directly.
-    """
-    project_root = Path(__file__).parent.parent.parent
-    filings_dir = project_root / "data" / "filings" / symbol
+    """Get the cached HTML earnings report file for a given symbol and date."""
+    if not SYMBOL_RE.fullmatch(symbol) or not REPORT_DATE_RE.fullmatch(report_date):
+        raise HTTPException(status_code=404, detail="Report not found")
+    filings_dir = FILINGS_DIR / symbol
 
     if not filings_dir.exists():
         raise HTTPException(status_code=404, detail=f"Report directory not found for {symbol}")

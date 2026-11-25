@@ -18,6 +18,7 @@ from backend.utils.valuation import valuation_metrics
 from backend.utils.form13f import _get_form13f_for_instruments
 from backend.utils.market_breadth import compute_live_rolling_breadth
 from utils.market_data import (
+    SSL_CONTEXT,
     gen_buffett_indicator,
     gen_fear_greed_index,
     gen_market_breadth_indicator,
@@ -661,7 +662,7 @@ async def get_portfolio_summary(session: AsyncSession = Depends(get_db_session))
 
     # Get holdings for the same date to calculate win rate
     async with aiohttp.ClientSession(
-        connector=aiohttp.TCPConnector(ssl=False), raise_for_status=True
+        connector=aiohttp.TCPConnector(ssl=SSL_CONTEXT), raise_for_status=True
     ) as aiohttp_session:
         (
             holdings_result,

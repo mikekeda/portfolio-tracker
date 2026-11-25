@@ -1,3 +1,4 @@
+import hmac
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import AsyncGenerator
@@ -5,9 +6,13 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from config import API_TOKEN, DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER, DOMAIN, logger
+
+# The API is read-only by design: nothing the UI sends may change state.
+READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 app = FastAPI(title="Trading212 Portfolio API", description="API for accessing portfolio data", version="1.0.0")
 
@@ -23,28 +28,27 @@ async def exception_handler(request: Request, exc: Exception):
 
 @app.middleware("http")
 async def check_api_token(request: Request, call_next):
-    auth_header = request.headers.get("Authorization")
+    """Reject every non-read method, then require the shared bearer token.
 
-    if not auth_header:
-        # If no auth header, return 401
+    Fails closed when API_TOKEN is unset, and answers a malformed header with 401.
+    """
+    if request.method not in READ_METHODS:
         return JSONResponse(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"detail": "Authorization header missing"},
+            status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+            content={"detail": "The API is read-only"},
+            headers={"Allow": ", ".join(sorted(READ_METHODS))},
         )
 
-    # TODO: Expect "Bearer YOUR_TOKEN", could crash on malformed token
-    scheme, token = auth_header.split()
-    if scheme.lower() != "bearer" or token != API_TOKEN:
+    parts = request.headers.get("Authorization", "").split()
+    token = parts[1] if len(parts) == 2 and parts[0].lower() == "bearer" else ""
+    if not (API_TOKEN and token and hmac.compare_digest(token.encode(), API_TOKEN.encode())):
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content={"detail": "Invalid authorization header"},
+            content={"detail": "Invalid or missing bearer token"},
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # If the token is valid, proceed with the request
-    response = await call_next(request)
-
-    return response
+    return await call_next(request)
 
 
 # Add CORS middleware - allow localhost, local network IPs, and configured DOMAIN
@@ -99,6 +103,14 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency for database sessions."""
-    async with get_session() as session:
-        yield session
+    """FastAPI dependency: a read-only session, always rolled back.
+
+    Postgres rejects any INSERT/UPDATE/DELETE in it, so no endpoint can change
+    state even by mistake. Writers (scripts, Celery) use get_session() instead.
+    """
+    async with _get_session_factory()() as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        try:
+            yield session
+        finally:
+            await session.rollback()

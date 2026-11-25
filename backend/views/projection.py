@@ -12,12 +12,10 @@ Monte Carlo itself runs client-side (see frontend/src/components/Projection.js);
 this endpoint only returns the inputs.
 """
 
-import ssl
 import time
 from typing import Any, Optional
 
 import aiohttp
-import certifi
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +30,7 @@ from config import (
     logger,
 )
 from models import PortfolioDaily
-from utils.market_data import UA
+from utils.market_data import SSL_CONTEXT, UA
 
 router = APIRouter()
 
@@ -49,10 +47,6 @@ CPI_CACHE_TTL_SECONDS = 24 * 3600
 
 _cpi_cache: dict[str, Any] = {"obs": None, "fetched_at": 0.0}
 
-# macOS framework Pythons ship without system CA certs, which makes aiohttp's
-# default SSL context reject ons.gov.uk; certifi's bundle works everywhere.
-_SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
-
 
 async def _get_cpi_observations() -> Optional[list[dict[str, Any]]]:
     """UK CPI observations (newest first) with a daily in-process cache.
@@ -66,7 +60,7 @@ async def _get_cpi_observations() -> Optional[list[dict[str, Any]]]:
 
     obs = None
     try:
-        connector = aiohttp.TCPConnector(ssl=_SSL_CONTEXT)
+        connector = aiohttp.TCPConnector(ssl=SSL_CONTEXT)
         async with aiohttp.ClientSession(connector=connector) as http_session:
             async with http_session.get(ONS_CPI_URL, headers={"User-Agent": UA}) as resp:
                 if resp.status == 200:

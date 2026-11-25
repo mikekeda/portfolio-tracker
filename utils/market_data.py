@@ -1,10 +1,12 @@
 import asyncio
+import ssl
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from io import StringIO
 from typing import Optional, Union
 
 import aiohttp
+import certifi
 import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +18,9 @@ from models import PricesDaily
 PRICE_COLUMN = getattr(PricesDaily, PRICE_FIELD.lower().replace(" ", "_") + "_price").label("price")
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+
+# macOS framework Pythons ship without system CA certs; certifi's bundle verifies everywhere.
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 async def gen_sp500_above_sma200(session: AsyncSession) -> float:
