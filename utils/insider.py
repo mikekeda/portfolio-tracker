@@ -101,7 +101,8 @@ def compute_insider_signal(
     window and the signed net value of all open-market trades (positive => net
     buying). Empty/malformed input returns zeros — callers can distinguish "no
     activity" from "no coverage" via NULL-vs-0 in the column itself, since
-    ingestion writes NULL when the yfinance fetch fails.
+    ingestion never calls this when the yfinance fetch fails (the column stays
+    NULL, or keeps that day's earlier value).
     """
     cutoff = as_of - timedelta(days=WINDOW_DAYS)
 

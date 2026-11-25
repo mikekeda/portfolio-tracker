@@ -524,7 +524,7 @@ class ScreenerConfig:
             ),
             # Insider Cluster Buying (Lakonishok-Lee).
             # Yahoo proxies SEC Form 3/4, so coverage is effectively US-only — UK/EU
-            # holdings will simply not pass this rule (insider_buy_count_90d=0).
+            # holdings will simply not pass this rule (insider_buy_count_90d 0 or NULL).
             "insider_buying": ScreenerDefinition(
                 id="insider_buying",
                 name="Insider Cluster Buying",

@@ -265,6 +265,20 @@ def test_splits_do_not_depend_on_flaky_modules_or_block_them():
     assert payload["splits"] == {} and payload["income_stmt"]
 
 
+def test_failed_insider_fetch_is_not_stored_as_no_activity():
+    failed = _profile_ticker(insider_transactions=property(_raise(RuntimeError("holders 404"))))
+    assert module.fetch_profile_for_ticker(failed, {}, set())[1]["insider_transactions"] is None
+    empty = _profile_ticker(insider_transactions=pd.DataFrame())
+    assert module.fetch_profile_for_ticker(empty, {}, set())[1]["insider_transactions"] == []
+    etf = _profile_ticker(info={"quoteType": "ETF"})
+    assert module.fetch_profile_for_ticker(etf, {}, set())[1]["insider_transactions"] is None
+
+    assert module._insider_columns(None, date(2026, 11, 25)) == {}
+    assert module._insider_columns([], date(2026, 11, 25)) == {
+        "insider_buy_count_90d": 0, "insider_sell_count_90d": 0, "insider_net_value_90d": 0.0,
+    }
+
+
 def test_update_failure_clears_cached_holdings(monkeypatch):
     monkeypatch.setattr(module, "update_currency_rates", Mock(side_effect=RuntimeError("offline")))
     holdings = Mock()
