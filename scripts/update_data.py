@@ -19,6 +19,7 @@ import pandas as pd
 import requests
 from curl_cffi import CurlError
 import yfinance as yf  # type: ignore[import-untyped]
+from yfinance.exceptions import YFException  # type: ignore[import-untyped]
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import case, create_engine, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert  # Added for bulk upsert
@@ -1025,6 +1026,12 @@ def fetch_profile_for_ticker(
             # ETF don't have cashflow, earnings, recommendations, analyst_price_targets, splits
             return ticker.ticker, yahoo_data
 
+        # Ahead of the flaky modules: the split-refetch window in update_prices needs it promptly.
+        try:
+            yahoo_data["splits"] = scrub_for_json(ticker.splits.to_dict())
+        except Exception as exc:  # noqa: BLE001 — yfinance raises a wide variety here
+            logger.warning("Failed splits for %s; keeping cached splits: %s", ticker.ticker, exc)
+
         data = ticker.cashflow.to_dict()
         yahoo_data["cashflow"] = scrub_for_json(data)
 
@@ -1082,19 +1089,14 @@ def fetch_profile_for_ticker(
 
         yahoo_data["analyst_price_targets"] = ticker.analyst_price_targets
 
-        # Fetch and store splits
-        splits_data = ticker.splits.to_dict()
-        yahoo_data["splits"] = scrub_for_json(splits_data)
-
         # Fetch and store news
         yahoo_data["news"] = ticker.get_news()
     except (ValueError, AttributeError) as e:
         logger.warning("Problem with parsing DataFrame %s: %s", ticker.ticker, e)
-    except CurlError as e:
-        # Yahoo throttles/times out sporadically; return the partial profile so one
-        # slow symbol doesn't abort the whole batch (the consumer keeps cached blobs
-        # for the missing pieces and the refresh queue retries next run).
-        logger.warning("Network error fetching %s: %s", ticker.ticker, e)
+    except (CurlError, YFException) as e:
+        # Throttling or a Yahoo outage: return the partial profile (the consumer keeps cached
+        # blobs) so one symbol, or Yahoo being down, can't abort the T212 snapshot.
+        logger.warning("Yahoo error fetching %s: %s", ticker.ticker, e)
 
     return ticker.ticker, yahoo_data
 

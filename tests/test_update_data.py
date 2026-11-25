@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pandas as pd
 import pytest
+from yfinance.exceptions import YFDataException
 
 from scripts import update_data as module
 
@@ -223,6 +224,45 @@ def test_failed_quarterly_module_does_not_discard_other_statements(monkeypatch):
     assert payload["quarterly_cashflow"] == {}
     assert "2026-06-30" in payload["quarterly_balance_sheet"]
     assert "2026-06-30" in payload["quarterly_income_stmt"]
+
+
+def _raise(exc):
+    def fail(self, *args, **kwargs):
+        raise exc
+    return fail
+
+
+def _profile_ticker(**overrides):
+    frame = pd.DataFrame({pd.Timestamp("2026-06-30"): {"value": 1}})
+    attrs = {
+        "ticker": "TEST",
+        "info": {"quoteType": "EQUITY", "mostRecentQuarter": 1782777600},
+        "splits": pd.Series({pd.Timestamp("2026-09-14"): 2.0}),
+        "cashflow": frame, "balance_sheet": frame, "income_stmt": frame,
+        "quarterly_cashflow": frame, "quarterly_balance_sheet": frame, "quarterly_income_stmt": frame,
+        "insider_transactions": None,
+        "recommendations": pd.DataFrame(columns=["period"]),
+        "analyst_price_targets": {},
+        "get_earnings_dates": lambda self, limit: None,
+        "get_news": lambda self: [],
+        **overrides,
+    }
+    return type("Ticker", (), attrs)()
+
+
+def test_yahoo_outage_returns_partial_profile_instead_of_aborting():
+    outage = YFDataException("*** YAHOO! FINANCE IS CURRENTLY DOWN! ***")
+    _, payload = module.fetch_profile_for_ticker(_profile_ticker(get_news=_raise(outage)), {}, set())
+    assert payload["income_stmt"] and payload["splits"] == {"2026-09-14": 2.0}
+    assert payload["news"] == []
+
+
+def test_splits_do_not_depend_on_flaky_modules_or_block_them():
+    _, payload = module.fetch_profile_for_ticker(_profile_ticker(recommendations=None), {}, set())
+    assert payload["splits"] == {"2026-09-14": 2.0}
+    broken_splits = _profile_ticker(splits=property(_raise(RuntimeError("history failed"))))
+    _, payload = module.fetch_profile_for_ticker(broken_splits, {}, set())
+    assert payload["splits"] == {} and payload["income_stmt"]
 
 
 def test_update_failure_clears_cached_holdings(monkeypatch):
